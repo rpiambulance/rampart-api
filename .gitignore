@@ -1,3 +1,6 @@
 .env
 storage/
 scripts/.env.deploy
+
+/dist
+/src/generated
