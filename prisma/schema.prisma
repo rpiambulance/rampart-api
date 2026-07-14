@@ -1,0 +1,623 @@
+// Rampart API — Prisma schema
+// Spec: rpiambulance/website docs/modernization-spec.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Members
+// ---------------------------------------------------------------------------
+
+model Member {
+  id              Int       @id @default(autoincrement())
+  legacyId        Int?      @unique // members.id from the old MySQL portal
+  keycloakSubject String?   @unique
+  firstName       String
+  lastName        String
+  dob             DateTime? @db.Date
+  email           String    @unique
+  personalEmail   String?
+  cellPhone       String?
+  homePhone       String?
+  localAddress    String?
+  homeAddress     String?
+  rcsId           String?
+  rin             String?
+  facilityId      String?
+  cardId          String?
+  slackId         String?   @unique
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  roles              MemberRole[]
+  credentials        MemberCredential[]
+  certifications     MemberCertification[]
+  verifiedCerts      MemberCertification[] @relation("CertVerifier")
+  evaluationsWritten Evaluation[]          @relation("Evaluator")
+  evaluationsAbout   Evaluation[]          @relation("EvalSubject")
+  promotionRequests  PromotionRequest[]
+  promotionVotes     PromotionVote[]       @relation("Voter")
+  proxiedVotes       PromotionVote[]       @relation("ProxyFor")
+  crewSlots          CrewSlot[]
+  eventSignups       EventSignup[]
+  fuelLogEntries     FuelLogEntry[]
+  radioAssignments   RadioAssignment[]
+  icsTokens          IcsToken[]
+  apiTokens          ApiToken[]
+  annualTrainings    MemberAnnualTraining[]
+  classAttendance    ClassAttendance[]
+}
+
+// ---------------------------------------------------------------------------
+// RBAC: permissions catalog (string keys defined in code) -> roles -> members
+// ---------------------------------------------------------------------------
+
+model Role {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
+  description String?
+  isOfficer   Boolean          @default(false)
+  permissions RolePermission[]
+  members     MemberRole[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model RolePermission {
+  roleId     Int
+  permission String // key from the permission catalog (src/permissions/catalog.ts)
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permission])
+}
+
+model MemberRole {
+  id        Int       @id @default(autoincrement())
+  memberId  Int
+  roleId    Int
+  startDate DateTime  @db.Date
+  endDate   DateTime? @db.Date // null = appointed / open-ended
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  role      Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([roleId])
+}
+
+// ---------------------------------------------------------------------------
+// Certifications (external, expiring documents)
+// ---------------------------------------------------------------------------
+
+model CertificationType {
+  id                    Int     @id @default(autoincrement())
+  name                  String  @unique
+  abbreviation          String
+  issuingOrg            String?
+  defaultValidityMonths Int? // null = non-expiring
+  active                Boolean @default(true)
+
+  memberCertifications  MemberCertification[]
+  credentialRequirements CredentialRequirement[]
+}
+
+enum CertStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+}
+
+model MemberCertification {
+  id              Int        @id @default(autoincrement())
+  memberId        Int
+  typeId          Int
+  identifier      String? // cert / license number
+  issuedAt        DateTime?  @db.Date
+  expiresAt       DateTime?  @db.Date
+  status          CertStatus @default(PENDING_VERIFICATION)
+  verifiedById    Int?
+  verifiedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  member     Member                  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  type       CertificationType       @relation(fields: [typeId], references: [id])
+  verifiedBy Member?                 @relation("CertVerifier", fields: [verifiedById], references: [id])
+  documents  CertificationDocument[]
+
+  @@index([memberId])
+  @@index([expiresAt])
+}
+
+model CertificationDocument {
+  id              Int      @id @default(autoincrement())
+  certificationId Int
+  storageKey      String // key in the object store (local driver or S3)
+  fileName        String
+  contentType     String
+  sizeBytes       Int
+  uploadedAt      DateTime @default(now())
+
+  certification MemberCertification @relation(fields: [certificationId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Credentials — progression tree (O -> A -> {A-D -> P-D -> D -> D-T | A-CC -> P-CC -> CC -> CC-T})
+// CC add-ons: FR-CC, EES. DS is a captain appointment (SDS = DS with a different title).
+// ---------------------------------------------------------------------------
+
+enum GrantMethod {
+  PROMOTION // TC unanimous vote + captain approval
+  APPOINTMENT // captain only (DS)
+}
+
+model CredentialType {
+  id          Int         @id @default(autoincrement())
+  key         String      @unique // O, A, A_D, P_D, D, D_T, A_CC, P_CC, CC, CC_T, FR_CC, EES, DS
+  name        String
+  grantMethod GrantMethod @default(PROMOTION)
+  isAddOn     Boolean     @default(false) // FR-CC, EES
+  active      Boolean     @default(true)
+
+  prerequisites   CredentialPrerequisite[] @relation("Prerequisites")
+  prerequisiteOf  CredentialPrerequisite[] @relation("PrerequisiteOf")
+  requirements    CredentialRequirement[]
+  memberCredentials MemberCredential[]
+  promotionRequests PromotionRequest[]
+}
+
+model CredentialPrerequisite {
+  credentialTypeId Int
+  requiresTypeId   Int
+  credentialType   CredentialType @relation("Prerequisites", fields: [credentialTypeId], references: [id], onDelete: Cascade)
+  requiresType     CredentialType @relation("PrerequisiteOf", fields: [requiresTypeId], references: [id], onDelete: Cascade)
+
+  @@id([credentialTypeId, requiresTypeId])
+}
+
+enum RequirementKind {
+  CERTIFICATION // a verified, unexpired cert of certificationTypeId
+  EVALUATION_COUNT // `count` signed evals on evalTemplateId
+  CLASS // completion of classId
+}
+
+model CredentialRequirement {
+  id                  Int             @id @default(autoincrement())
+  credentialTypeId    Int
+  kind                RequirementKind
+  certificationTypeId Int?
+  evalTemplateId      Int?
+  count               Int?
+  classId             Int?
+
+  credentialType    CredentialType     @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
+  certificationType CertificationType? @relation(fields: [certificationTypeId], references: [id])
+  evalTemplate      EvalFormTemplate?  @relation(fields: [evalTemplateId], references: [id])
+  class             TrainingClass?     @relation(fields: [classId], references: [id])
+}
+
+enum CredentialStatus {
+  ACTIVE
+  SUSPENDED // automatic: a required cert lapsed
+  REVOKED
+}
+
+model MemberCredential {
+  id           Int              @id @default(autoincrement())
+  memberId     Int
+  typeId       Int
+  status       CredentialStatus @default(ACTIVE)
+  title        String? // display-title override, e.g. "Senior Duty Supervisor" on a DS credential
+  grantedAt    DateTime         @default(now())
+  grantedViaId Int? // PromotionRequest id; null for appointments/corrections
+  revokedAt    DateTime?
+
+  member     Member            @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  type       CredentialType    @relation(fields: [typeId], references: [id])
+  grantedVia PromotionRequest? @relation(fields: [grantedViaId], references: [id])
+
+  @@unique([memberId, typeId])
+  @@index([typeId])
+}
+
+// ---------------------------------------------------------------------------
+// Training: eval form templates + evaluations
+// ---------------------------------------------------------------------------
+
+enum ScoreType {
+  SCALE_1_5
+  PASS_FAIL
+  TEXT
+}
+
+model EvalFormTemplate {
+  id        Int      @id @default(autoincrement())
+  name      String
+  version   Int      @default(1)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  items                  EvalFormItem[]
+  evaluations            Evaluation[]
+  credentialRequirements CredentialRequirement[]
+
+  @@unique([name, version])
+}
+
+model EvalFormItem {
+  id         Int       @id @default(autoincrement())
+  templateId Int
+  order      Int
+  prompt     String
+  scoreType  ScoreType
+
+  template EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  scores   EvalScore[]
+
+  @@unique([templateId, order])
+}
+
+enum EvalStatus {
+  DRAFT
+  SUBMITTED
+  SIGNED
+}
+
+model Evaluation {
+  id                Int        @id @default(autoincrement())
+  templateId        Int
+  evaluatorId       Int
+  subjectId         Int
+  status            EvalStatus @default(DRAFT)
+  shiftDate         DateTime?  @db.Date
+  notes             String?
+  signedByEvaluator DateTime?
+  signedBySubject   DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  template  EvalFormTemplate @relation(fields: [templateId], references: [id])
+  evaluator Member           @relation("Evaluator", fields: [evaluatorId], references: [id])
+  subject   Member           @relation("EvalSubject", fields: [subjectId], references: [id])
+  scores    EvalScore[]
+
+  @@index([subjectId])
+  @@index([evaluatorId])
+}
+
+model EvalScore {
+  evaluationId Int
+  itemId       Int
+  scaleValue   Int?
+  passed       Boolean?
+  textValue    String?
+
+  evaluation Evaluation   @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  item       EvalFormItem @relation(fields: [itemId], references: [id])
+
+  @@id([evaluationId, itemId])
+}
+
+// ---------------------------------------------------------------------------
+// Promotions: TC unanimous vote (no abstentions, proxies for conflicts) + captain approval
+// ---------------------------------------------------------------------------
+
+enum PromoStatus {
+  PENDING
+  IN_VOTE
+  TC_APPROVED // unanimous TC yes, awaiting captain
+  APPROVED
+  DENIED
+  WITHDRAWN
+}
+
+model PromotionRequest {
+  id               Int         @id @default(autoincrement())
+  memberId         Int
+  credentialTypeId Int
+  status           PromoStatus @default(PENDING)
+  createdAt        DateTime    @default(now())
+  resolvedAt       DateTime?
+
+  member             Member             @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  credentialType     CredentialType     @relation(fields: [credentialTypeId], references: [id])
+  votes              PromotionVote[]
+  captainApproval    PromotionApproval?
+  grantedCredentials MemberCredential[]
+
+  @@index([memberId])
+  @@index([status])
+}
+
+enum VoteChoice {
+  APPROVE
+  DENY
+}
+
+model PromotionVote {
+  id         Int        @id @default(autoincrement())
+  requestId  Int
+  voterId    Int // the member who cast the vote
+  proxyForId Int? // TC member of record when voterId is their appointed proxy
+  vote       VoteChoice
+  notes      String?
+  castAt     DateTime   @default(now())
+
+  request  PromotionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  voter    Member           @relation("Voter", fields: [voterId], references: [id])
+  proxyFor Member?          @relation("ProxyFor", fields: [proxyForId], references: [id])
+
+  @@unique([requestId, voterId, proxyForId])
+}
+
+model PromotionApproval {
+  requestId  Int      @id
+  approvedById Int
+  approved   Boolean
+  notes      String?
+  decidedAt  DateTime @default(now())
+
+  request PromotionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling: night crews
+// ---------------------------------------------------------------------------
+
+enum CrewPosition {
+  CC
+  DRIVER
+  ATTENDANT
+  OBSERVER
+  DUTY_SUP
+}
+
+model Crew {
+  id    Int      @id @default(autoincrement())
+  date  DateTime @unique @db.Date
+  slots CrewSlot[]
+}
+
+model CrewSlot {
+  id          Int          @id @default(autoincrement())
+  crewId      Int
+  position    CrewPosition
+  memberId    Int?
+  placeholder String? // e.g. "CLOSED" (replaces the old negative pseudo-member ids)
+
+  crew   Crew    @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  member Member? @relation(fields: [memberId], references: [id])
+
+  @@unique([crewId, position])
+  @@index([memberId])
+}
+
+model DefaultCrewTemplate {
+  id          Int          @id @default(autoincrement())
+  weekday     Int // 0 = Sunday ... 6 = Saturday
+  position    CrewPosition
+  memberId    Int?
+  placeholder String?
+
+  @@unique([weekday, position])
+}
+
+model SchedulingSetting {
+  key   String @id // minAgeYears, riderSignupOpen, rotationWeeks, dayOfUnlockTime, probationaryRequiresTrainer, dropDeadline, ...
+  value Json
+}
+
+// ---------------------------------------------------------------------------
+// Unified events (absorbs the old games + events)
+// ---------------------------------------------------------------------------
+
+model EventKind {
+  id       Int     @id @default(autoincrement())
+  name     String  @unique // Game, Detail, Meeting, Social, ...
+  defaults Json? // default position set etc.
+  active   Boolean @default(true)
+  events   Event[]
+}
+
+model Event {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  location    String?
+  startsAt    DateTime
+  endsAt      DateTime
+  kindId      Int
+  locked      Boolean  @default(false)
+  attendeeCap Int? // cap for the non-positional pool; null = unlimited
+  hidden      Boolean  @default(false)
+  gcalEventId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  kind      EventKind       @relation(fields: [kindId], references: [id])
+  positions EventPosition[]
+  signups   EventSignup[]
+
+  @@index([startsAt])
+}
+
+model EventPosition {
+  id                    Int    @id @default(autoincrement())
+  eventId               Int
+  position              String // cc, driver, attendant, observer, ees, ...
+  count                 Int
+  requiredCredentialKey String? // CredentialType.key gate; null = open
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, position])
+}
+
+model EventSignup {
+  id       Int     @id @default(autoincrement())
+  eventId  Int
+  memberId Int
+  position String? // null = plain attendee (counted against attendeeCap)
+  createdAt DateTime @default(now())
+
+  event  Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Annual trainings & classes
+// ---------------------------------------------------------------------------
+
+model AnnualTrainingRequirement {
+  id            Int     @id @default(autoincrement())
+  name          String
+  year          Int
+  alertOnLapse  Boolean @default(true) // per-training toggle: alert officers when a member lapses
+  active        Boolean @default(true)
+
+  completions MemberAnnualTraining[]
+
+  @@unique([name, year])
+}
+
+model MemberAnnualTraining {
+  requirementId Int
+  memberId      Int
+  completedAt   DateTime?
+
+  requirement AnnualTrainingRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  member      Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([requirementId, memberId])
+}
+
+model TrainingClass {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  sessionAt   DateTime?
+  location    String?
+
+  attendance             ClassAttendance[]
+  credentialRequirements CredentialRequirement[]
+}
+
+enum AttendanceStatus {
+  REGISTERED
+  ATTENDED
+  COMPLETED
+  NO_SHOW
+}
+
+model ClassAttendance {
+  classId  Int
+  memberId Int
+  status   AttendanceStatus @default(REGISTERED)
+
+  class  TrainingClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  member Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([classId, memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Ops logs
+// ---------------------------------------------------------------------------
+
+model FuelLogEntry {
+  id       Int      @id @default(autoincrement())
+  loggedAt DateTime
+  memberId Int
+  vehicle  String
+  amount   Decimal  @db.Decimal(6, 2)
+  mileage  Int
+
+  member Member @relation(fields: [memberId], references: [id])
+}
+
+model Radio {
+  id          Int     @id @default(autoincrement())
+  number      String  @unique
+  model       String?
+  serial      String?
+  accessories Json? // charger, tac mic, extra battery, ...
+  retired     Boolean @default(false)
+
+  assignments RadioAssignment[]
+}
+
+model RadioAssignment {
+  id         Int       @id @default(autoincrement())
+  radioId    Int
+  memberId   Int
+  issuedAt   DateTime  @default(now())
+  returnedAt DateTime?
+
+  radio  Radio  @relation(fields: [radioId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([radioId])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Tokens & audit
+// ---------------------------------------------------------------------------
+
+enum IcsScope {
+  MY_SCHEDULE
+  MY_SCHEDULE_AND_ALL_EVENTS
+}
+
+model IcsToken {
+  id        Int      @id @default(autoincrement())
+  memberId  Int
+  token     String   @unique
+  scope     IcsScope
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+}
+
+model ApiToken {
+  id          Int       @id @default(autoincrement())
+  name        String
+  tokenHash   String    @unique // sha256 of the secret (prefix rpa_); plaintext shown once
+  ownerId     Int
+  permissions String[] // explicit subset of the permission catalog
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  owner Member @relation(fields: [ownerId], references: [id])
+}
+
+enum ActorType {
+  MEMBER
+  API_TOKEN
+  SYSTEM
+}
+
+model AuditLog {
+  id        BigInt    @id @default(autoincrement())
+  actorType ActorType
+  actorId   Int?
+  action    String // e.g. credential.appoint, schedule.crews.assign
+  entity    String
+  entityId  String?
+  diff      Json?
+  at        DateTime  @default(now())
+
+  @@index([entity, entityId])
+  @@index([at])
+}

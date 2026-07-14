@@ -1,0 +1,25 @@
+# Local development stack: Postgres + Keycloak.
+# Run the API itself with `npm run start:dev` against these.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: rampart
+      POSTGRES_PASSWORD: rampart
+      POSTGRES_DB: rampart
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - '8082:8080'
+
+volumes:
+  pgdata:
