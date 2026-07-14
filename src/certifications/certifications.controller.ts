@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -27,6 +28,44 @@ class VerifyDto {
   @IsOptional()
   @IsString()
   reason?: string;
+}
+
+class CertTypeDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  abbreviation!: string;
+
+  @IsOptional()
+  @IsString()
+  issuingOrg?: string;
+
+  @IsOptional()
+  @IsInt()
+  defaultValidityMonths?: number | null;
+}
+
+class PatchCertTypeDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  abbreviation?: string;
+
+  @IsOptional()
+  @IsString()
+  issuingOrg?: string;
+
+  @IsOptional()
+  @IsInt()
+  defaultValidityMonths?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }
 
 class SubmitCertDto {
@@ -60,6 +99,21 @@ export class CertificationsController {
   @Get('types')
   types() {
     return this.certs.listTypes();
+  }
+
+  @Post('types')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  createType(@Body() body: CertTypeDto) {
+    return this.certs.createType(body);
+  }
+
+  @Patch('types/:id')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  updateType(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: PatchCertTypeDto,
+  ) {
+    return this.certs.updateType(id, body);
   }
 
   @Get('mine')

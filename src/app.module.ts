@@ -18,6 +18,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { RolesModule } from './roles/roles.module';
 import { TokensController } from './tokens/tokens.controller';
+import { TrainingsModule } from './trainings/trainings.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { TokensController } from './tokens/tokens.controller';
     CertificationsModule,
     EvalsModule,
     PromotionsModule,
+    TrainingsModule,
   ],
   controllers: [
     HealthController,

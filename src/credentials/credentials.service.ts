@@ -45,6 +45,37 @@ export class CredentialsService {
     });
   }
 
+  addRequirement(
+    credentialTypeId: number,
+    data: {
+      kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS';
+      certificationTypeId?: number;
+      evalTemplateId?: number;
+      count?: number;
+      classId?: number;
+    },
+  ) {
+    if (data.kind === 'CERTIFICATION' && !data.certificationTypeId) {
+      throw new BadRequestException('certificationTypeId required');
+    }
+    if (data.kind === 'EVALUATION_COUNT' && (!data.evalTemplateId || !data.count)) {
+      throw new BadRequestException('evalTemplateId and count required');
+    }
+    if (data.kind === 'CLASS' && !data.classId) {
+      throw new BadRequestException('classId required');
+    }
+    return this.prisma.credentialRequirement.create({
+      data: { credentialTypeId, ...data },
+    });
+  }
+
+  async removeRequirement(requirementId: number) {
+    await this.prisma.credentialRequirement.delete({
+      where: { id: requirementId },
+    });
+    return { ok: true };
+  }
+
   /** Requirement checklist for member × credential type (for My Training + promotion review). */
   async checklist(memberId: number, credentialTypeId: number): Promise<ChecklistItem[]> {
     const type = await this.prisma.credentialType.findUnique({

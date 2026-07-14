@@ -272,4 +272,20 @@ export class EventsService {
   listKinds() {
     return this.prisma.eventKind.findMany({ where: { active: true } });
   }
+
+  createKind(name: string, defaults?: Record<string, unknown>) {
+    return this.prisma.eventKind.create({
+      data: { name, defaults: defaults as object | undefined },
+    });
+  }
+
+  updateKind(
+    id: number,
+    data: Partial<{ name: string; defaults: Record<string, unknown>; active: boolean }>,
+  ) {
+    return this.prisma.eventKind.update({
+      where: { id },
+      data: { ...data, defaults: data.defaults as object | undefined },
+    });
+  }
 }

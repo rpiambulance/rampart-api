@@ -85,6 +85,27 @@ class SignupDto {
   position?: string | null;
 }
 
+class KindDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  defaults?: Record<string, unknown>;
+}
+
+class PatchKindDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  defaults?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
 function requireMember(auth: AuthContext): number {
   if (auth.kind !== 'member') {
     throw new ForbiddenException('This endpoint requires a member session');
@@ -104,6 +125,18 @@ export class EventsController {
   @Get('kinds')
   kinds() {
     return this.events.listKinds();
+  }
+
+  @Post('kinds')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  createKind(@Body() body: KindDto) {
+    return this.events.createKind(body.name, body.defaults);
+  }
+
+  @Patch('kinds/:id')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  updateKind(@Param('id', ParseIntPipe) id: number, @Body() body: PatchKindDto) {
+    return this.events.updateKind(id, body);
   }
 
   @Get(':id')

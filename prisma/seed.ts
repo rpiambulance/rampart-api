@@ -68,7 +68,7 @@ const ALL = [
   'members:read', 'members:write', 'members:deactivate', 'roles:manage',
   'settings:write', 'certs:read-all', 'certs:verify', 'credentials:grant',
   'credentials:appoint', 'evals:write', 'evals:manage-forms', 'evals:read-all',
-  'promotions:review', 'promotions:vote', 'promotions:captain-approve',
+  'promotions:review', 'promotions:vote', 'promotions:captain-approve', 'trainings:manage',
   'schedule:crews:assign', 'schedule:crews:manage-defaults', 'schedule:settings',
   'events:create', 'events:assign-others', 'events:lock', 'fuel:write',
   'radios:manage', 'tokens:manage', 'audit:read', 'integrations:manage',
@@ -92,6 +92,7 @@ const ROLES: Array<{ name: string; isOfficer: boolean; permissions: string[] }> 
     permissions: [
       'members:read', 'certs:read-all', 'certs:verify', 'evals:write',
       'evals:manage-forms', 'evals:read-all', 'promotions:review', 'promotions:vote',
+      'trainings:manage',
     ],
   },
   {

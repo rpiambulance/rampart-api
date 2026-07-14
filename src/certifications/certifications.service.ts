@@ -22,6 +22,28 @@ export class CertificationsService {
     return this.prisma.certificationType.findMany({ where: { active: true } });
   }
 
+  createType(data: {
+    name: string;
+    abbreviation: string;
+    issuingOrg?: string;
+    defaultValidityMonths?: number | null;
+  }) {
+    return this.prisma.certificationType.create({ data });
+  }
+
+  updateType(
+    id: number,
+    data: Partial<{
+      name: string;
+      abbreviation: string;
+      issuingOrg: string;
+      defaultValidityMonths: number | null;
+      active: boolean;
+    }>,
+  ) {
+    return this.prisma.certificationType.update({ where: { id }, data });
+  }
+
   listForMember(memberId: number) {
     return this.prisma.memberCertification.findMany({
       where: { memberId },

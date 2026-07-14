@@ -7,7 +7,7 @@ import {
   ParseIntPipe,
   Post,
 } from '@nestjs/common';
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -24,6 +24,27 @@ class GrantDto {
   @IsOptional()
   @IsString()
   title?: string;
+}
+
+class RequirementDto {
+  @IsIn(['CERTIFICATION', 'EVALUATION_COUNT', 'CLASS'])
+  kind!: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS';
+
+  @IsOptional()
+  @IsInt()
+  certificationTypeId?: number;
+
+  @IsOptional()
+  @IsInt()
+  evalTemplateId?: number;
+
+  @IsOptional()
+  @IsInt()
+  count?: number;
+
+  @IsOptional()
+  @IsInt()
+  classId?: number;
 }
 
 class AppointDto {
@@ -45,6 +66,21 @@ export class CredentialsController {
   @Get('types')
   types() {
     return this.credentials.listTypes();
+  }
+
+  @Post('types/:id/requirements')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  addRequirement(
+    @Param('id', ParseIntPipe) credentialTypeId: number,
+    @Body() body: RequirementDto,
+  ) {
+    return this.credentials.addRequirement(credentialTypeId, body);
+  }
+
+  @Delete('requirements/:requirementId')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  removeRequirement(@Param('requirementId', ParseIntPipe) requirementId: number) {
+    return this.credentials.removeRequirement(requirementId);
   }
 
   @Get('checklist/:memberId/:credentialTypeId')

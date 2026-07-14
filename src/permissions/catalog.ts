@@ -24,6 +24,7 @@ export const PERMISSIONS = {
   EVENTS_CREATE: 'events:create',
   EVENTS_ASSIGN_OTHERS: 'events:assign-others',
   EVENTS_LOCK: 'events:lock',
+  TRAININGS_MANAGE: 'trainings:manage',
   FUEL_WRITE: 'fuel:write',
   RADIOS_MANAGE: 'radios:manage',
   TOKENS_MANAGE: 'tokens:manage',
