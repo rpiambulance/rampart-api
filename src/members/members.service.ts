@@ -1,9 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
+import type { AuthContext } from '../auth/auth-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class MembersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   list(includeInactive = false) {
     return this.prisma.member.findMany({
@@ -16,6 +21,10 @@ export class MembersService {
         email: true,
         cellPhone: true,
         active: true,
+        credentials: {
+          where: { status: 'ACTIVE' },
+          select: { title: true, type: { select: { key: true, name: true } } },
+        },
       },
     });
   }
@@ -26,10 +35,63 @@ export class MembersService {
       include: {
         roles: { include: { role: true } },
         credentials: { include: { type: true } },
-        certifications: { include: { type: true } },
+        certifications: { include: { type: true, documents: true } },
       },
     });
     if (!member) throw new NotFoundException(`Member ${id} not found`);
+    return member;
+  }
+
+  async create(
+    auth: AuthContext,
+    data: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      dob?: string;
+      personalEmail?: string;
+      cellPhone?: string;
+      localAddress?: string;
+      homeAddress?: string;
+      rcsId?: string;
+      rin?: string;
+      keycloakSubject?: string;
+    },
+  ) {
+    const member = await this.prisma.member.create({
+      data: { ...data, dob: data.dob ? new Date(data.dob) : null },
+    });
+    await this.audit.log(auth, 'members.create', 'Member', member.id);
+    // TODO: provision the Keycloak user via the Admin API and store the subject
+    return member;
+  }
+
+  async update(
+    id: number,
+    data: Partial<{
+      firstName: string;
+      lastName: string;
+      email: string;
+      dob: string;
+      personalEmail: string;
+      cellPhone: string;
+      homePhone: string;
+      localAddress: string;
+      homeAddress: string;
+      rcsId: string;
+      rin: string;
+      keycloakSubject: string;
+      active: boolean;
+    }>,
+    auth?: AuthContext,
+  ) {
+    const member = await this.prisma.member.update({
+      where: { id },
+      data: { ...data, dob: data.dob ? new Date(data.dob) : undefined },
+    });
+    if (auth) {
+      await this.audit.log(auth, 'members.update', 'Member', id, data);
+    }
     return member;
   }
 }

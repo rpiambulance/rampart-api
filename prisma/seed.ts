@@ -2,9 +2,13 @@
  * Seeds reference data: the credential ladder, default scheduling settings,
  * event kinds, starter cert types, and seed roles. Idempotent (upserts).
  */
-import { PrismaClient, GrantMethod } from '@prisma/client';
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient, GrantMethod } from '../src/generated/prisma/client';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+});
 
 const CREDENTIALS: Array<{
   key: string;
@@ -57,6 +61,53 @@ const CERT_TYPES = [
   { name: 'NIMS ICS-200', abbreviation: 'NIMS 200', issuingOrg: 'FEMA', defaultValidityMonths: null },
   { name: 'NIMS IS-700', abbreviation: 'NIMS 700', issuingOrg: 'FEMA', defaultValidityMonths: null },
   { name: 'NIMS IS-800', abbreviation: 'NIMS 800', issuingOrg: 'FEMA', defaultValidityMonths: null },
+];
+
+// Seed roles (spec §10). Permission keys must match src/permissions/catalog.ts.
+const ALL = [
+  'members:read', 'members:write', 'members:deactivate', 'roles:manage',
+  'settings:write', 'certs:read-all', 'certs:verify', 'credentials:grant',
+  'credentials:appoint', 'evals:write', 'evals:manage-forms', 'evals:read-all',
+  'promotions:review', 'promotions:vote', 'promotions:captain-approve',
+  'schedule:crews:assign', 'schedule:crews:manage-defaults', 'schedule:settings',
+  'events:create', 'events:assign-others', 'events:lock', 'fuel:write',
+  'radios:manage', 'tokens:manage', 'audit:read', 'integrations:manage',
+];
+
+const ROLES: Array<{ name: string; isOfficer: boolean; permissions: string[] }> = [
+  { name: 'Admin', isOfficer: false, permissions: ALL },
+  {
+    name: 'Captain',
+    isOfficer: true,
+    permissions: [
+      'members:read', 'members:write', 'certs:read-all', 'credentials:grant',
+      'credentials:appoint', 'evals:read-all', 'promotions:review',
+      'promotions:captain-approve', 'schedule:crews:assign', 'events:create',
+      'events:assign-others', 'events:lock', 'audit:read',
+    ],
+  },
+  {
+    name: 'Training Committee',
+    isOfficer: false,
+    permissions: [
+      'members:read', 'certs:read-all', 'certs:verify', 'evals:write',
+      'evals:manage-forms', 'evals:read-all', 'promotions:review', 'promotions:vote',
+    ],
+  },
+  {
+    name: 'Scheduling Coordinator',
+    isOfficer: true,
+    permissions: [
+      'members:read', 'schedule:crews:assign', 'schedule:crews:manage-defaults',
+      'schedule:settings', 'events:create', 'events:assign-others', 'events:lock',
+    ],
+  },
+  {
+    name: 'Duty Supervisor Coordinator',
+    isOfficer: false,
+    permissions: ['members:read', 'schedule:crews:assign'],
+  },
+  { name: 'Officer', isOfficer: true, permissions: ['members:read', 'certs:read-all'] },
 ];
 
 async function main() {
@@ -119,6 +170,22 @@ async function main() {
       create: cert,
       update: {},
     });
+  }
+
+  // Roles
+  for (const role of ROLES) {
+    const created = await prisma.role.upsert({
+      where: { name: role.name },
+      create: { name: role.name, isOfficer: role.isOfficer },
+      update: { isOfficer: role.isOfficer },
+    });
+    for (const permission of role.permissions) {
+      await prisma.rolePermission.upsert({
+        where: { roleId_permission: { roleId: created.id, permission } },
+        create: { roleId: created.id, permission },
+        update: {},
+      });
+    }
   }
 
   console.log('Seed complete.');

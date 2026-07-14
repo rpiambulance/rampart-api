@@ -2,12 +2,13 @@
 // Spec: rpiambulance/website docs/modernization-spec.md
 
 generator client {
-  provider = "prisma-client-js"
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,8 @@ model Member {
   promotionRequests  PromotionRequest[]
   promotionVotes     PromotionVote[]       @relation("Voter")
   proxiedVotes       PromotionVote[]       @relation("ProxyFor")
+  proxyPrincipalOf   PromotionProxy[]      @relation("ProxyPrincipal")
+  proxyAgentOf       PromotionProxy[]      @relation("ProxyAgent")
   crewSlots          CrewSlot[]
   eventSignups       EventSignup[]
   fuelLogEntries     FuelLogEntry[]
@@ -329,6 +332,7 @@ model PromotionRequest {
   member             Member             @relation(fields: [memberId], references: [id], onDelete: Cascade)
   credentialType     CredentialType     @relation(fields: [credentialTypeId], references: [id])
   votes              PromotionVote[]
+  proxies            PromotionProxy[]
   captainApproval    PromotionApproval?
   grantedCredentials MemberCredential[]
 
@@ -355,6 +359,18 @@ model PromotionVote {
   proxyFor Member?          @relation("ProxyFor", fields: [proxyForId], references: [id])
 
   @@unique([requestId, voterId, proxyForId])
+}
+
+model PromotionProxy {
+  requestId   Int
+  principalId Int // the TC member of record with the conflict of interest
+  proxyId     Int // the member appointed to vote in their place
+
+  request   PromotionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  principal Member           @relation("ProxyPrincipal", fields: [principalId], references: [id])
+  proxy     Member           @relation("ProxyAgent", fields: [proxyId], references: [id])
+
+  @@id([requestId, principalId])
 }
 
 model PromotionApproval {

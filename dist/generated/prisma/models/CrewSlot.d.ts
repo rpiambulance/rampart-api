@@ -1,0 +1,695 @@
+import type * as runtime from "@prisma/client/runtime/client";
+import type * as $Enums from "../enums.js";
+import type * as Prisma from "../internal/prismaNamespace.js";
+export type CrewSlotModel = runtime.Types.Result.DefaultSelection<Prisma.$CrewSlotPayload>;
+export type AggregateCrewSlot = {
+    _count: CrewSlotCountAggregateOutputType | null;
+    _avg: CrewSlotAvgAggregateOutputType | null;
+    _sum: CrewSlotSumAggregateOutputType | null;
+    _min: CrewSlotMinAggregateOutputType | null;
+    _max: CrewSlotMaxAggregateOutputType | null;
+};
+export type CrewSlotAvgAggregateOutputType = {
+    id: number | null;
+    crewId: number | null;
+    memberId: number | null;
+};
+export type CrewSlotSumAggregateOutputType = {
+    id: number | null;
+    crewId: number | null;
+    memberId: number | null;
+};
+export type CrewSlotMinAggregateOutputType = {
+    id: number | null;
+    crewId: number | null;
+    position: $Enums.CrewPosition | null;
+    memberId: number | null;
+    placeholder: string | null;
+};
+export type CrewSlotMaxAggregateOutputType = {
+    id: number | null;
+    crewId: number | null;
+    position: $Enums.CrewPosition | null;
+    memberId: number | null;
+    placeholder: string | null;
+};
+export type CrewSlotCountAggregateOutputType = {
+    id: number;
+    crewId: number;
+    position: number;
+    memberId: number;
+    placeholder: number;
+    _all: number;
+};
+export type CrewSlotAvgAggregateInputType = {
+    id?: true;
+    crewId?: true;
+    memberId?: true;
+};
+export type CrewSlotSumAggregateInputType = {
+    id?: true;
+    crewId?: true;
+    memberId?: true;
+};
+export type CrewSlotMinAggregateInputType = {
+    id?: true;
+    crewId?: true;
+    position?: true;
+    memberId?: true;
+    placeholder?: true;
+};
+export type CrewSlotMaxAggregateInputType = {
+    id?: true;
+    crewId?: true;
+    position?: true;
+    memberId?: true;
+    placeholder?: true;
+};
+export type CrewSlotCountAggregateInputType = {
+    id?: true;
+    crewId?: true;
+    position?: true;
+    memberId?: true;
+    placeholder?: true;
+    _all?: true;
+};
+export type CrewSlotAggregateArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    where?: Prisma.CrewSlotWhereInput;
+    orderBy?: Prisma.CrewSlotOrderByWithRelationInput | Prisma.CrewSlotOrderByWithRelationInput[];
+    cursor?: Prisma.CrewSlotWhereUniqueInput;
+    take?: number;
+    skip?: number;
+    _count?: true | CrewSlotCountAggregateInputType;
+    _avg?: CrewSlotAvgAggregateInputType;
+    _sum?: CrewSlotSumAggregateInputType;
+    _min?: CrewSlotMinAggregateInputType;
+    _max?: CrewSlotMaxAggregateInputType;
+};
+export type GetCrewSlotAggregateType<T extends CrewSlotAggregateArgs> = {
+    [P in keyof T & keyof AggregateCrewSlot]: P extends '_count' | 'count' ? T[P] extends true ? number : Prisma.GetScalarType<T[P], AggregateCrewSlot[P]> : Prisma.GetScalarType<T[P], AggregateCrewSlot[P]>;
+};
+export type CrewSlotGroupByArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    where?: Prisma.CrewSlotWhereInput;
+    orderBy?: Prisma.CrewSlotOrderByWithAggregationInput | Prisma.CrewSlotOrderByWithAggregationInput[];
+    by: Prisma.CrewSlotScalarFieldEnum[] | Prisma.CrewSlotScalarFieldEnum;
+    having?: Prisma.CrewSlotScalarWhereWithAggregatesInput;
+    take?: number;
+    skip?: number;
+    _count?: CrewSlotCountAggregateInputType | true;
+    _avg?: CrewSlotAvgAggregateInputType;
+    _sum?: CrewSlotSumAggregateInputType;
+    _min?: CrewSlotMinAggregateInputType;
+    _max?: CrewSlotMaxAggregateInputType;
+};
+export type CrewSlotGroupByOutputType = {
+    id: number;
+    crewId: number;
+    position: $Enums.CrewPosition;
+    memberId: number | null;
+    placeholder: string | null;
+    _count: CrewSlotCountAggregateOutputType | null;
+    _avg: CrewSlotAvgAggregateOutputType | null;
+    _sum: CrewSlotSumAggregateOutputType | null;
+    _min: CrewSlotMinAggregateOutputType | null;
+    _max: CrewSlotMaxAggregateOutputType | null;
+};
+export type GetCrewSlotGroupByPayload<T extends CrewSlotGroupByArgs> = Prisma.PrismaPromise<Array<Prisma.PickEnumerable<CrewSlotGroupByOutputType, T['by']> & {
+    [P in ((keyof T) & (keyof CrewSlotGroupByOutputType))]: P extends '_count' ? T[P] extends boolean ? number : Prisma.GetScalarType<T[P], CrewSlotGroupByOutputType[P]> : Prisma.GetScalarType<T[P], CrewSlotGroupByOutputType[P]>;
+}>>;
+export type CrewSlotWhereInput = {
+    AND?: Prisma.CrewSlotWhereInput | Prisma.CrewSlotWhereInput[];
+    OR?: Prisma.CrewSlotWhereInput[];
+    NOT?: Prisma.CrewSlotWhereInput | Prisma.CrewSlotWhereInput[];
+    id?: Prisma.IntFilter<"CrewSlot"> | number;
+    crewId?: Prisma.IntFilter<"CrewSlot"> | number;
+    position?: Prisma.EnumCrewPositionFilter<"CrewSlot"> | $Enums.CrewPosition;
+    memberId?: Prisma.IntNullableFilter<"CrewSlot"> | number | null;
+    placeholder?: Prisma.StringNullableFilter<"CrewSlot"> | string | null;
+    crew?: Prisma.XOR<Prisma.CrewScalarRelationFilter, Prisma.CrewWhereInput>;
+    member?: Prisma.XOR<Prisma.MemberNullableScalarRelationFilter, Prisma.MemberWhereInput> | null;
+};
+export type CrewSlotOrderByWithRelationInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    position?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrderInput | Prisma.SortOrder;
+    placeholder?: Prisma.SortOrderInput | Prisma.SortOrder;
+    crew?: Prisma.CrewOrderByWithRelationInput;
+    member?: Prisma.MemberOrderByWithRelationInput;
+};
+export type CrewSlotWhereUniqueInput = Prisma.AtLeast<{
+    id?: number;
+    crewId_position?: Prisma.CrewSlotCrewIdPositionCompoundUniqueInput;
+    AND?: Prisma.CrewSlotWhereInput | Prisma.CrewSlotWhereInput[];
+    OR?: Prisma.CrewSlotWhereInput[];
+    NOT?: Prisma.CrewSlotWhereInput | Prisma.CrewSlotWhereInput[];
+    crewId?: Prisma.IntFilter<"CrewSlot"> | number;
+    position?: Prisma.EnumCrewPositionFilter<"CrewSlot"> | $Enums.CrewPosition;
+    memberId?: Prisma.IntNullableFilter<"CrewSlot"> | number | null;
+    placeholder?: Prisma.StringNullableFilter<"CrewSlot"> | string | null;
+    crew?: Prisma.XOR<Prisma.CrewScalarRelationFilter, Prisma.CrewWhereInput>;
+    member?: Prisma.XOR<Prisma.MemberNullableScalarRelationFilter, Prisma.MemberWhereInput> | null;
+}, "id" | "crewId_position">;
+export type CrewSlotOrderByWithAggregationInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    position?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrderInput | Prisma.SortOrder;
+    placeholder?: Prisma.SortOrderInput | Prisma.SortOrder;
+    _count?: Prisma.CrewSlotCountOrderByAggregateInput;
+    _avg?: Prisma.CrewSlotAvgOrderByAggregateInput;
+    _max?: Prisma.CrewSlotMaxOrderByAggregateInput;
+    _min?: Prisma.CrewSlotMinOrderByAggregateInput;
+    _sum?: Prisma.CrewSlotSumOrderByAggregateInput;
+};
+export type CrewSlotScalarWhereWithAggregatesInput = {
+    AND?: Prisma.CrewSlotScalarWhereWithAggregatesInput | Prisma.CrewSlotScalarWhereWithAggregatesInput[];
+    OR?: Prisma.CrewSlotScalarWhereWithAggregatesInput[];
+    NOT?: Prisma.CrewSlotScalarWhereWithAggregatesInput | Prisma.CrewSlotScalarWhereWithAggregatesInput[];
+    id?: Prisma.IntWithAggregatesFilter<"CrewSlot"> | number;
+    crewId?: Prisma.IntWithAggregatesFilter<"CrewSlot"> | number;
+    position?: Prisma.EnumCrewPositionWithAggregatesFilter<"CrewSlot"> | $Enums.CrewPosition;
+    memberId?: Prisma.IntNullableWithAggregatesFilter<"CrewSlot"> | number | null;
+    placeholder?: Prisma.StringNullableWithAggregatesFilter<"CrewSlot"> | string | null;
+};
+export type CrewSlotCreateInput = {
+    position: $Enums.CrewPosition;
+    placeholder?: string | null;
+    crew: Prisma.CrewCreateNestedOneWithoutSlotsInput;
+    member?: Prisma.MemberCreateNestedOneWithoutCrewSlotsInput;
+};
+export type CrewSlotUncheckedCreateInput = {
+    id?: number;
+    crewId: number;
+    position: $Enums.CrewPosition;
+    memberId?: number | null;
+    placeholder?: string | null;
+};
+export type CrewSlotUpdateInput = {
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+    crew?: Prisma.CrewUpdateOneRequiredWithoutSlotsNestedInput;
+    member?: Prisma.MemberUpdateOneWithoutCrewSlotsNestedInput;
+};
+export type CrewSlotUncheckedUpdateInput = {
+    id?: Prisma.IntFieldUpdateOperationsInput | number;
+    crewId?: Prisma.IntFieldUpdateOperationsInput | number;
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    memberId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotCreateManyInput = {
+    id?: number;
+    crewId: number;
+    position: $Enums.CrewPosition;
+    memberId?: number | null;
+    placeholder?: string | null;
+};
+export type CrewSlotUpdateManyMutationInput = {
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotUncheckedUpdateManyInput = {
+    id?: Prisma.IntFieldUpdateOperationsInput | number;
+    crewId?: Prisma.IntFieldUpdateOperationsInput | number;
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    memberId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotListRelationFilter = {
+    every?: Prisma.CrewSlotWhereInput;
+    some?: Prisma.CrewSlotWhereInput;
+    none?: Prisma.CrewSlotWhereInput;
+};
+export type CrewSlotOrderByRelationAggregateInput = {
+    _count?: Prisma.SortOrder;
+};
+export type CrewSlotCrewIdPositionCompoundUniqueInput = {
+    crewId: number;
+    position: $Enums.CrewPosition;
+};
+export type CrewSlotCountOrderByAggregateInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    position?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrder;
+    placeholder?: Prisma.SortOrder;
+};
+export type CrewSlotAvgOrderByAggregateInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrder;
+};
+export type CrewSlotMaxOrderByAggregateInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    position?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrder;
+    placeholder?: Prisma.SortOrder;
+};
+export type CrewSlotMinOrderByAggregateInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    position?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrder;
+    placeholder?: Prisma.SortOrder;
+};
+export type CrewSlotSumOrderByAggregateInput = {
+    id?: Prisma.SortOrder;
+    crewId?: Prisma.SortOrder;
+    memberId?: Prisma.SortOrder;
+};
+export type CrewSlotCreateNestedManyWithoutMemberInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutMemberInput, Prisma.CrewSlotUncheckedCreateWithoutMemberInput> | Prisma.CrewSlotCreateWithoutMemberInput[] | Prisma.CrewSlotUncheckedCreateWithoutMemberInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutMemberInput | Prisma.CrewSlotCreateOrConnectWithoutMemberInput[];
+    createMany?: Prisma.CrewSlotCreateManyMemberInputEnvelope;
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+};
+export type CrewSlotUncheckedCreateNestedManyWithoutMemberInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutMemberInput, Prisma.CrewSlotUncheckedCreateWithoutMemberInput> | Prisma.CrewSlotCreateWithoutMemberInput[] | Prisma.CrewSlotUncheckedCreateWithoutMemberInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutMemberInput | Prisma.CrewSlotCreateOrConnectWithoutMemberInput[];
+    createMany?: Prisma.CrewSlotCreateManyMemberInputEnvelope;
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+};
+export type CrewSlotUpdateManyWithoutMemberNestedInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutMemberInput, Prisma.CrewSlotUncheckedCreateWithoutMemberInput> | Prisma.CrewSlotCreateWithoutMemberInput[] | Prisma.CrewSlotUncheckedCreateWithoutMemberInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutMemberInput | Prisma.CrewSlotCreateOrConnectWithoutMemberInput[];
+    upsert?: Prisma.CrewSlotUpsertWithWhereUniqueWithoutMemberInput | Prisma.CrewSlotUpsertWithWhereUniqueWithoutMemberInput[];
+    createMany?: Prisma.CrewSlotCreateManyMemberInputEnvelope;
+    set?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    disconnect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    delete?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    update?: Prisma.CrewSlotUpdateWithWhereUniqueWithoutMemberInput | Prisma.CrewSlotUpdateWithWhereUniqueWithoutMemberInput[];
+    updateMany?: Prisma.CrewSlotUpdateManyWithWhereWithoutMemberInput | Prisma.CrewSlotUpdateManyWithWhereWithoutMemberInput[];
+    deleteMany?: Prisma.CrewSlotScalarWhereInput | Prisma.CrewSlotScalarWhereInput[];
+};
+export type CrewSlotUncheckedUpdateManyWithoutMemberNestedInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutMemberInput, Prisma.CrewSlotUncheckedCreateWithoutMemberInput> | Prisma.CrewSlotCreateWithoutMemberInput[] | Prisma.CrewSlotUncheckedCreateWithoutMemberInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutMemberInput | Prisma.CrewSlotCreateOrConnectWithoutMemberInput[];
+    upsert?: Prisma.CrewSlotUpsertWithWhereUniqueWithoutMemberInput | Prisma.CrewSlotUpsertWithWhereUniqueWithoutMemberInput[];
+    createMany?: Prisma.CrewSlotCreateManyMemberInputEnvelope;
+    set?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    disconnect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    delete?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    update?: Prisma.CrewSlotUpdateWithWhereUniqueWithoutMemberInput | Prisma.CrewSlotUpdateWithWhereUniqueWithoutMemberInput[];
+    updateMany?: Prisma.CrewSlotUpdateManyWithWhereWithoutMemberInput | Prisma.CrewSlotUpdateManyWithWhereWithoutMemberInput[];
+    deleteMany?: Prisma.CrewSlotScalarWhereInput | Prisma.CrewSlotScalarWhereInput[];
+};
+export type CrewSlotCreateNestedManyWithoutCrewInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutCrewInput, Prisma.CrewSlotUncheckedCreateWithoutCrewInput> | Prisma.CrewSlotCreateWithoutCrewInput[] | Prisma.CrewSlotUncheckedCreateWithoutCrewInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutCrewInput | Prisma.CrewSlotCreateOrConnectWithoutCrewInput[];
+    createMany?: Prisma.CrewSlotCreateManyCrewInputEnvelope;
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+};
+export type CrewSlotUncheckedCreateNestedManyWithoutCrewInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutCrewInput, Prisma.CrewSlotUncheckedCreateWithoutCrewInput> | Prisma.CrewSlotCreateWithoutCrewInput[] | Prisma.CrewSlotUncheckedCreateWithoutCrewInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutCrewInput | Prisma.CrewSlotCreateOrConnectWithoutCrewInput[];
+    createMany?: Prisma.CrewSlotCreateManyCrewInputEnvelope;
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+};
+export type CrewSlotUpdateManyWithoutCrewNestedInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutCrewInput, Prisma.CrewSlotUncheckedCreateWithoutCrewInput> | Prisma.CrewSlotCreateWithoutCrewInput[] | Prisma.CrewSlotUncheckedCreateWithoutCrewInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutCrewInput | Prisma.CrewSlotCreateOrConnectWithoutCrewInput[];
+    upsert?: Prisma.CrewSlotUpsertWithWhereUniqueWithoutCrewInput | Prisma.CrewSlotUpsertWithWhereUniqueWithoutCrewInput[];
+    createMany?: Prisma.CrewSlotCreateManyCrewInputEnvelope;
+    set?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    disconnect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    delete?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    update?: Prisma.CrewSlotUpdateWithWhereUniqueWithoutCrewInput | Prisma.CrewSlotUpdateWithWhereUniqueWithoutCrewInput[];
+    updateMany?: Prisma.CrewSlotUpdateManyWithWhereWithoutCrewInput | Prisma.CrewSlotUpdateManyWithWhereWithoutCrewInput[];
+    deleteMany?: Prisma.CrewSlotScalarWhereInput | Prisma.CrewSlotScalarWhereInput[];
+};
+export type CrewSlotUncheckedUpdateManyWithoutCrewNestedInput = {
+    create?: Prisma.XOR<Prisma.CrewSlotCreateWithoutCrewInput, Prisma.CrewSlotUncheckedCreateWithoutCrewInput> | Prisma.CrewSlotCreateWithoutCrewInput[] | Prisma.CrewSlotUncheckedCreateWithoutCrewInput[];
+    connectOrCreate?: Prisma.CrewSlotCreateOrConnectWithoutCrewInput | Prisma.CrewSlotCreateOrConnectWithoutCrewInput[];
+    upsert?: Prisma.CrewSlotUpsertWithWhereUniqueWithoutCrewInput | Prisma.CrewSlotUpsertWithWhereUniqueWithoutCrewInput[];
+    createMany?: Prisma.CrewSlotCreateManyCrewInputEnvelope;
+    set?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    disconnect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    delete?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    connect?: Prisma.CrewSlotWhereUniqueInput | Prisma.CrewSlotWhereUniqueInput[];
+    update?: Prisma.CrewSlotUpdateWithWhereUniqueWithoutCrewInput | Prisma.CrewSlotUpdateWithWhereUniqueWithoutCrewInput[];
+    updateMany?: Prisma.CrewSlotUpdateManyWithWhereWithoutCrewInput | Prisma.CrewSlotUpdateManyWithWhereWithoutCrewInput[];
+    deleteMany?: Prisma.CrewSlotScalarWhereInput | Prisma.CrewSlotScalarWhereInput[];
+};
+export type EnumCrewPositionFieldUpdateOperationsInput = {
+    set?: $Enums.CrewPosition;
+};
+export type CrewSlotCreateWithoutMemberInput = {
+    position: $Enums.CrewPosition;
+    placeholder?: string | null;
+    crew: Prisma.CrewCreateNestedOneWithoutSlotsInput;
+};
+export type CrewSlotUncheckedCreateWithoutMemberInput = {
+    id?: number;
+    crewId: number;
+    position: $Enums.CrewPosition;
+    placeholder?: string | null;
+};
+export type CrewSlotCreateOrConnectWithoutMemberInput = {
+    where: Prisma.CrewSlotWhereUniqueInput;
+    create: Prisma.XOR<Prisma.CrewSlotCreateWithoutMemberInput, Prisma.CrewSlotUncheckedCreateWithoutMemberInput>;
+};
+export type CrewSlotCreateManyMemberInputEnvelope = {
+    data: Prisma.CrewSlotCreateManyMemberInput | Prisma.CrewSlotCreateManyMemberInput[];
+    skipDuplicates?: boolean;
+};
+export type CrewSlotUpsertWithWhereUniqueWithoutMemberInput = {
+    where: Prisma.CrewSlotWhereUniqueInput;
+    update: Prisma.XOR<Prisma.CrewSlotUpdateWithoutMemberInput, Prisma.CrewSlotUncheckedUpdateWithoutMemberInput>;
+    create: Prisma.XOR<Prisma.CrewSlotCreateWithoutMemberInput, Prisma.CrewSlotUncheckedCreateWithoutMemberInput>;
+};
+export type CrewSlotUpdateWithWhereUniqueWithoutMemberInput = {
+    where: Prisma.CrewSlotWhereUniqueInput;
+    data: Prisma.XOR<Prisma.CrewSlotUpdateWithoutMemberInput, Prisma.CrewSlotUncheckedUpdateWithoutMemberInput>;
+};
+export type CrewSlotUpdateManyWithWhereWithoutMemberInput = {
+    where: Prisma.CrewSlotScalarWhereInput;
+    data: Prisma.XOR<Prisma.CrewSlotUpdateManyMutationInput, Prisma.CrewSlotUncheckedUpdateManyWithoutMemberInput>;
+};
+export type CrewSlotScalarWhereInput = {
+    AND?: Prisma.CrewSlotScalarWhereInput | Prisma.CrewSlotScalarWhereInput[];
+    OR?: Prisma.CrewSlotScalarWhereInput[];
+    NOT?: Prisma.CrewSlotScalarWhereInput | Prisma.CrewSlotScalarWhereInput[];
+    id?: Prisma.IntFilter<"CrewSlot"> | number;
+    crewId?: Prisma.IntFilter<"CrewSlot"> | number;
+    position?: Prisma.EnumCrewPositionFilter<"CrewSlot"> | $Enums.CrewPosition;
+    memberId?: Prisma.IntNullableFilter<"CrewSlot"> | number | null;
+    placeholder?: Prisma.StringNullableFilter<"CrewSlot"> | string | null;
+};
+export type CrewSlotCreateWithoutCrewInput = {
+    position: $Enums.CrewPosition;
+    placeholder?: string | null;
+    member?: Prisma.MemberCreateNestedOneWithoutCrewSlotsInput;
+};
+export type CrewSlotUncheckedCreateWithoutCrewInput = {
+    id?: number;
+    position: $Enums.CrewPosition;
+    memberId?: number | null;
+    placeholder?: string | null;
+};
+export type CrewSlotCreateOrConnectWithoutCrewInput = {
+    where: Prisma.CrewSlotWhereUniqueInput;
+    create: Prisma.XOR<Prisma.CrewSlotCreateWithoutCrewInput, Prisma.CrewSlotUncheckedCreateWithoutCrewInput>;
+};
+export type CrewSlotCreateManyCrewInputEnvelope = {
+    data: Prisma.CrewSlotCreateManyCrewInput | Prisma.CrewSlotCreateManyCrewInput[];
+    skipDuplicates?: boolean;
+};
+export type CrewSlotUpsertWithWhereUniqueWithoutCrewInput = {
+    where: Prisma.CrewSlotWhereUniqueInput;
+    update: Prisma.XOR<Prisma.CrewSlotUpdateWithoutCrewInput, Prisma.CrewSlotUncheckedUpdateWithoutCrewInput>;
+    create: Prisma.XOR<Prisma.CrewSlotCreateWithoutCrewInput, Prisma.CrewSlotUncheckedCreateWithoutCrewInput>;
+};
+export type CrewSlotUpdateWithWhereUniqueWithoutCrewInput = {
+    where: Prisma.CrewSlotWhereUniqueInput;
+    data: Prisma.XOR<Prisma.CrewSlotUpdateWithoutCrewInput, Prisma.CrewSlotUncheckedUpdateWithoutCrewInput>;
+};
+export type CrewSlotUpdateManyWithWhereWithoutCrewInput = {
+    where: Prisma.CrewSlotScalarWhereInput;
+    data: Prisma.XOR<Prisma.CrewSlotUpdateManyMutationInput, Prisma.CrewSlotUncheckedUpdateManyWithoutCrewInput>;
+};
+export type CrewSlotCreateManyMemberInput = {
+    id?: number;
+    crewId: number;
+    position: $Enums.CrewPosition;
+    placeholder?: string | null;
+};
+export type CrewSlotUpdateWithoutMemberInput = {
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+    crew?: Prisma.CrewUpdateOneRequiredWithoutSlotsNestedInput;
+};
+export type CrewSlotUncheckedUpdateWithoutMemberInput = {
+    id?: Prisma.IntFieldUpdateOperationsInput | number;
+    crewId?: Prisma.IntFieldUpdateOperationsInput | number;
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotUncheckedUpdateManyWithoutMemberInput = {
+    id?: Prisma.IntFieldUpdateOperationsInput | number;
+    crewId?: Prisma.IntFieldUpdateOperationsInput | number;
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotCreateManyCrewInput = {
+    id?: number;
+    position: $Enums.CrewPosition;
+    memberId?: number | null;
+    placeholder?: string | null;
+};
+export type CrewSlotUpdateWithoutCrewInput = {
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+    member?: Prisma.MemberUpdateOneWithoutCrewSlotsNestedInput;
+};
+export type CrewSlotUncheckedUpdateWithoutCrewInput = {
+    id?: Prisma.IntFieldUpdateOperationsInput | number;
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    memberId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotUncheckedUpdateManyWithoutCrewInput = {
+    id?: Prisma.IntFieldUpdateOperationsInput | number;
+    position?: Prisma.EnumCrewPositionFieldUpdateOperationsInput | $Enums.CrewPosition;
+    memberId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null;
+    placeholder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null;
+};
+export type CrewSlotSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
+    id?: boolean;
+    crewId?: boolean;
+    position?: boolean;
+    memberId?: boolean;
+    placeholder?: boolean;
+    crew?: boolean | Prisma.CrewDefaultArgs<ExtArgs>;
+    member?: boolean | Prisma.CrewSlot$memberArgs<ExtArgs>;
+}, ExtArgs["result"]["crewSlot"]>;
+export type CrewSlotSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
+    id?: boolean;
+    crewId?: boolean;
+    position?: boolean;
+    memberId?: boolean;
+    placeholder?: boolean;
+    crew?: boolean | Prisma.CrewDefaultArgs<ExtArgs>;
+    member?: boolean | Prisma.CrewSlot$memberArgs<ExtArgs>;
+}, ExtArgs["result"]["crewSlot"]>;
+export type CrewSlotSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
+    id?: boolean;
+    crewId?: boolean;
+    position?: boolean;
+    memberId?: boolean;
+    placeholder?: boolean;
+    crew?: boolean | Prisma.CrewDefaultArgs<ExtArgs>;
+    member?: boolean | Prisma.CrewSlot$memberArgs<ExtArgs>;
+}, ExtArgs["result"]["crewSlot"]>;
+export type CrewSlotSelectScalar = {
+    id?: boolean;
+    crewId?: boolean;
+    position?: boolean;
+    memberId?: boolean;
+    placeholder?: boolean;
+};
+export type CrewSlotOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "crewId" | "position" | "memberId" | "placeholder", ExtArgs["result"]["crewSlot"]>;
+export type CrewSlotInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    crew?: boolean | Prisma.CrewDefaultArgs<ExtArgs>;
+    member?: boolean | Prisma.CrewSlot$memberArgs<ExtArgs>;
+};
+export type CrewSlotIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    crew?: boolean | Prisma.CrewDefaultArgs<ExtArgs>;
+    member?: boolean | Prisma.CrewSlot$memberArgs<ExtArgs>;
+};
+export type CrewSlotIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    crew?: boolean | Prisma.CrewDefaultArgs<ExtArgs>;
+    member?: boolean | Prisma.CrewSlot$memberArgs<ExtArgs>;
+};
+export type $CrewSlotPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    name: "CrewSlot";
+    objects: {
+        crew: Prisma.$CrewPayload<ExtArgs>;
+        member: Prisma.$MemberPayload<ExtArgs> | null;
+    };
+    scalars: runtime.Types.Extensions.GetPayloadResult<{
+        id: number;
+        crewId: number;
+        position: $Enums.CrewPosition;
+        memberId: number | null;
+        placeholder: string | null;
+    }, ExtArgs["result"]["crewSlot"]>;
+    composites: {};
+};
+export type CrewSlotGetPayload<S extends boolean | null | undefined | CrewSlotDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload, S>;
+export type CrewSlotCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = Omit<CrewSlotFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+    select?: CrewSlotCountAggregateInputType | true;
+};
+export interface CrewSlotDelegate<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> {
+    [K: symbol]: {
+        types: Prisma.TypeMap<ExtArgs>['model']['CrewSlot'];
+        meta: {
+            name: 'CrewSlot';
+        };
+    };
+    findUnique<T extends CrewSlotFindUniqueArgs>(args: Prisma.SelectSubset<T, CrewSlotFindUniqueArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "findUnique", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>;
+    findUniqueOrThrow<T extends CrewSlotFindUniqueOrThrowArgs>(args: Prisma.SelectSubset<T, CrewSlotFindUniqueOrThrowArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>;
+    findFirst<T extends CrewSlotFindFirstArgs>(args?: Prisma.SelectSubset<T, CrewSlotFindFirstArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "findFirst", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>;
+    findFirstOrThrow<T extends CrewSlotFindFirstOrThrowArgs>(args?: Prisma.SelectSubset<T, CrewSlotFindFirstOrThrowArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "findFirstOrThrow", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>;
+    findMany<T extends CrewSlotFindManyArgs>(args?: Prisma.SelectSubset<T, CrewSlotFindManyArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "findMany", GlobalOmitOptions>>;
+    create<T extends CrewSlotCreateArgs>(args: Prisma.SelectSubset<T, CrewSlotCreateArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "create", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>;
+    createMany<T extends CrewSlotCreateManyArgs>(args?: Prisma.SelectSubset<T, CrewSlotCreateManyArgs<ExtArgs>>): Prisma.PrismaPromise<Prisma.BatchPayload>;
+    createManyAndReturn<T extends CrewSlotCreateManyAndReturnArgs>(args?: Prisma.SelectSubset<T, CrewSlotCreateManyAndReturnArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "createManyAndReturn", GlobalOmitOptions>>;
+    delete<T extends CrewSlotDeleteArgs>(args: Prisma.SelectSubset<T, CrewSlotDeleteArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "delete", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>;
+    update<T extends CrewSlotUpdateArgs>(args: Prisma.SelectSubset<T, CrewSlotUpdateArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "update", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>;
+    deleteMany<T extends CrewSlotDeleteManyArgs>(args?: Prisma.SelectSubset<T, CrewSlotDeleteManyArgs<ExtArgs>>): Prisma.PrismaPromise<Prisma.BatchPayload>;
+    updateMany<T extends CrewSlotUpdateManyArgs>(args: Prisma.SelectSubset<T, CrewSlotUpdateManyArgs<ExtArgs>>): Prisma.PrismaPromise<Prisma.BatchPayload>;
+    updateManyAndReturn<T extends CrewSlotUpdateManyAndReturnArgs>(args: Prisma.SelectSubset<T, CrewSlotUpdateManyAndReturnArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "updateManyAndReturn", GlobalOmitOptions>>;
+    upsert<T extends CrewSlotUpsertArgs>(args: Prisma.SelectSubset<T, CrewSlotUpsertArgs<ExtArgs>>): Prisma.Prisma__CrewSlotClient<runtime.Types.Result.GetResult<Prisma.$CrewSlotPayload<ExtArgs>, T, "upsert", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>;
+    count<T extends CrewSlotCountArgs>(args?: Prisma.Subset<T, CrewSlotCountArgs>): Prisma.PrismaPromise<T extends runtime.Types.Utils.Record<'select', any> ? T['select'] extends true ? number : Prisma.GetScalarType<T['select'], CrewSlotCountAggregateOutputType> : number>;
+    aggregate<T extends CrewSlotAggregateArgs>(args: Prisma.Subset<T, CrewSlotAggregateArgs>): Prisma.PrismaPromise<GetCrewSlotAggregateType<T>>;
+    groupBy<T extends CrewSlotGroupByArgs, HasSelectOrTake extends Prisma.Or<Prisma.Extends<'skip', Prisma.Keys<T>>, Prisma.Extends<'take', Prisma.Keys<T>>>, OrderByArg extends Prisma.True extends HasSelectOrTake ? {
+        orderBy: CrewSlotGroupByArgs['orderBy'];
+    } : {
+        orderBy?: CrewSlotGroupByArgs['orderBy'];
+    }, OrderFields extends Prisma.ExcludeUnderscoreKeys<Prisma.Keys<Prisma.MaybeTupleToUnion<T['orderBy']>>>, ByFields extends Prisma.MaybeTupleToUnion<T['by']>, ByValid extends Prisma.Has<ByFields, OrderFields>, HavingFields extends Prisma.GetHavingFields<T['having']>, HavingValid extends Prisma.Has<ByFields, HavingFields>, ByEmpty extends T['by'] extends never[] ? Prisma.True : Prisma.False, InputErrors extends ByEmpty extends Prisma.True ? `Error: "by" must not be empty.` : HavingValid extends Prisma.False ? {
+        [P in HavingFields]: P extends ByFields ? never : P extends string ? `Error: Field "${P}" used in "having" needs to be provided in "by".` : [
+            Error,
+            'Field ',
+            P,
+            ` in "having" needs to be provided in "by"`
+        ];
+    }[HavingFields] : 'take' extends Prisma.Keys<T> ? 'orderBy' extends Prisma.Keys<T> ? ByValid extends Prisma.True ? {} : {
+        [P in OrderFields]: P extends ByFields ? never : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+    }[OrderFields] : 'Error: If you provide "take", you also need to provide "orderBy"' : 'skip' extends Prisma.Keys<T> ? 'orderBy' extends Prisma.Keys<T> ? ByValid extends Prisma.True ? {} : {
+        [P in OrderFields]: P extends ByFields ? never : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+    }[OrderFields] : 'Error: If you provide "skip", you also need to provide "orderBy"' : ByValid extends Prisma.True ? {} : {
+        [P in OrderFields]: P extends ByFields ? never : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+    }[OrderFields]>(args: Prisma.SubsetIntersection<T, CrewSlotGroupByArgs, OrderByArg> & InputErrors): {} extends InputErrors ? GetCrewSlotGroupByPayload<T> : Prisma.PrismaPromise<InputErrors>;
+    readonly fields: CrewSlotFieldRefs;
+}
+export interface Prisma__CrewSlotClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
+    readonly [Symbol.toStringTag]: "PrismaPromise";
+    crew<T extends Prisma.CrewDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.CrewDefaultArgs<ExtArgs>>): Prisma.Prisma__CrewClient<runtime.Types.Result.GetResult<Prisma.$CrewPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>;
+    member<T extends Prisma.CrewSlot$memberArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.CrewSlot$memberArgs<ExtArgs>>): Prisma.Prisma__MemberClient<runtime.Types.Result.GetResult<Prisma.$MemberPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>;
+    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): runtime.Types.Utils.JsPromise<TResult1 | TResult2>;
+    catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): runtime.Types.Utils.JsPromise<T | TResult>;
+    finally(onfinally?: (() => void) | undefined | null): runtime.Types.Utils.JsPromise<T>;
+}
+export interface CrewSlotFieldRefs {
+    readonly id: Prisma.FieldRef<"CrewSlot", 'Int'>;
+    readonly crewId: Prisma.FieldRef<"CrewSlot", 'Int'>;
+    readonly position: Prisma.FieldRef<"CrewSlot", 'CrewPosition'>;
+    readonly memberId: Prisma.FieldRef<"CrewSlot", 'Int'>;
+    readonly placeholder: Prisma.FieldRef<"CrewSlot", 'String'>;
+}
+export type CrewSlotFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where: Prisma.CrewSlotWhereUniqueInput;
+};
+export type CrewSlotFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where: Prisma.CrewSlotWhereUniqueInput;
+};
+export type CrewSlotFindFirstArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where?: Prisma.CrewSlotWhereInput;
+    orderBy?: Prisma.CrewSlotOrderByWithRelationInput | Prisma.CrewSlotOrderByWithRelationInput[];
+    cursor?: Prisma.CrewSlotWhereUniqueInput;
+    take?: number;
+    skip?: number;
+    distinct?: Prisma.CrewSlotScalarFieldEnum | Prisma.CrewSlotScalarFieldEnum[];
+};
+export type CrewSlotFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where?: Prisma.CrewSlotWhereInput;
+    orderBy?: Prisma.CrewSlotOrderByWithRelationInput | Prisma.CrewSlotOrderByWithRelationInput[];
+    cursor?: Prisma.CrewSlotWhereUniqueInput;
+    take?: number;
+    skip?: number;
+    distinct?: Prisma.CrewSlotScalarFieldEnum | Prisma.CrewSlotScalarFieldEnum[];
+};
+export type CrewSlotFindManyArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where?: Prisma.CrewSlotWhereInput;
+    orderBy?: Prisma.CrewSlotOrderByWithRelationInput | Prisma.CrewSlotOrderByWithRelationInput[];
+    cursor?: Prisma.CrewSlotWhereUniqueInput;
+    take?: number;
+    skip?: number;
+    distinct?: Prisma.CrewSlotScalarFieldEnum | Prisma.CrewSlotScalarFieldEnum[];
+};
+export type CrewSlotCreateArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    data: Prisma.XOR<Prisma.CrewSlotCreateInput, Prisma.CrewSlotUncheckedCreateInput>;
+};
+export type CrewSlotCreateManyArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    data: Prisma.CrewSlotCreateManyInput | Prisma.CrewSlotCreateManyInput[];
+    skipDuplicates?: boolean;
+};
+export type CrewSlotCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelectCreateManyAndReturn<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    data: Prisma.CrewSlotCreateManyInput | Prisma.CrewSlotCreateManyInput[];
+    skipDuplicates?: boolean;
+    include?: Prisma.CrewSlotIncludeCreateManyAndReturn<ExtArgs> | null;
+};
+export type CrewSlotUpdateArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    data: Prisma.XOR<Prisma.CrewSlotUpdateInput, Prisma.CrewSlotUncheckedUpdateInput>;
+    where: Prisma.CrewSlotWhereUniqueInput;
+};
+export type CrewSlotUpdateManyArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    data: Prisma.XOR<Prisma.CrewSlotUpdateManyMutationInput, Prisma.CrewSlotUncheckedUpdateManyInput>;
+    where?: Prisma.CrewSlotWhereInput;
+    limit?: number;
+};
+export type CrewSlotUpdateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelectUpdateManyAndReturn<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    data: Prisma.XOR<Prisma.CrewSlotUpdateManyMutationInput, Prisma.CrewSlotUncheckedUpdateManyInput>;
+    where?: Prisma.CrewSlotWhereInput;
+    limit?: number;
+    include?: Prisma.CrewSlotIncludeUpdateManyAndReturn<ExtArgs> | null;
+};
+export type CrewSlotUpsertArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where: Prisma.CrewSlotWhereUniqueInput;
+    create: Prisma.XOR<Prisma.CrewSlotCreateInput, Prisma.CrewSlotUncheckedCreateInput>;
+    update: Prisma.XOR<Prisma.CrewSlotUpdateInput, Prisma.CrewSlotUncheckedUpdateInput>;
+};
+export type CrewSlotDeleteArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+    where: Prisma.CrewSlotWhereUniqueInput;
+};
+export type CrewSlotDeleteManyArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    where?: Prisma.CrewSlotWhereInput;
+    limit?: number;
+};
+export type CrewSlot$memberArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.MemberSelect<ExtArgs> | null;
+    omit?: Prisma.MemberOmit<ExtArgs> | null;
+    include?: Prisma.MemberInclude<ExtArgs> | null;
+    where?: Prisma.MemberWhereInput;
+};
+export type CrewSlotDefaultArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+    select?: Prisma.CrewSlotSelect<ExtArgs> | null;
+    omit?: Prisma.CrewSlotOmit<ExtArgs> | null;
+    include?: Prisma.CrewSlotInclude<ExtArgs> | null;
+};
