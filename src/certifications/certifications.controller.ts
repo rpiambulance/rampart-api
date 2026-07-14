@@ -13,12 +13,21 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { CertificationsService } from './certifications.service';
+
+class VerifyDto {
+  @IsBoolean()
+  approve!: boolean;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
 
 class SubmitCertDto {
   @IsInt()
@@ -111,7 +120,7 @@ export class CertificationsController {
   verify(
     @CurrentAuth() auth: AuthContext,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { approve: boolean; reason?: string },
+    @Body() body: VerifyDto,
   ) {
     return this.certs.verify(auth, id, body);
   }

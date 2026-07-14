@@ -125,6 +125,17 @@ export class RolesController {
     return role;
   }
 
+  @Delete(':id')
+  @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
+  async remove(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.prisma.role.delete({ where: { id } });
+    await this.audit.log(auth, 'roles.delete', 'Role', id);
+    return { ok: true };
+  }
+
   @Post(':id/assignments')
   @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
   async assign(
