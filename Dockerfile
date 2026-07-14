@@ -5,7 +5,10 @@ COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci
 COPY . .
-RUN npx prisma generate && npm run build && npm prune --omit=dev
+# prisma.config.ts resolves DATABASE_URL at load time; generate doesn't
+# connect, so a placeholder satisfies it during the image build.
+RUN DATABASE_URL=postgresql://build:build@localhost:5432/build \
+    npx prisma generate && npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
 WORKDIR /app
