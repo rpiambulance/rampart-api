@@ -23,6 +23,9 @@ function requireMember(auth: AuthContext): number {
   return auth.memberId;
 }
 
+const ICS_UID_DOMAIN =
+  process.env.ICS_UID_DOMAIN ?? 'rampart.rpiambulance.com';
+
 function icsEscape(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
 }
@@ -102,7 +105,7 @@ export class CalendarController {
       const date = fromDbDate(slot.crew.date).replace(/-/g, '');
       lines.push(
         'BEGIN:VEVENT',
-        `UID:crew-${slot.crew.id}-${slot.position}@rampart.rpiambulance.com`,
+        `UID:crew-${slot.crew.id}-${slot.position}@${ICS_UID_DOMAIN}`,
         `DTSTART;VALUE=DATE:${date}`,
         `SUMMARY:${icsEscape(`Night Crew — ${slot.position}`)}`,
         'END:VEVENT',
@@ -119,7 +122,7 @@ export class CalendarController {
     for (const event of events) {
       lines.push(
         'BEGIN:VEVENT',
-        `UID:event-${event.id}@rampart.rpiambulance.com`,
+        `UID:event-${event.id}@${ICS_UID_DOMAIN}`,
         `DTSTART:${fmtUtc(event.startsAt)}`,
         `DTEND:${fmtUtc(event.endsAt)}`,
         `SUMMARY:${icsEscape(event.title)}`,

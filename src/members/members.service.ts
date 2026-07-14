@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
+import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly keycloak: KeycloakAdminService,
   ) {}
 
   list(includeInactive = false) {
@@ -58,11 +60,22 @@ export class MembersService {
       keycloakSubject?: string;
     },
   ) {
+    let keycloakSubject = data.keycloakSubject ?? null;
+    if (!keycloakSubject) {
+      keycloakSubject = await this.keycloak.provisionUser({
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+      });
+    }
     const member = await this.prisma.member.create({
-      data: { ...data, dob: data.dob ? new Date(data.dob) : null },
+      data: {
+        ...data,
+        keycloakSubject,
+        dob: data.dob ? new Date(data.dob) : null,
+      },
     });
     await this.audit.log(auth, 'members.create', 'Member', member.id);
-    // TODO: provision the Keycloak user via the Admin API and store the subject
     return member;
   }
 

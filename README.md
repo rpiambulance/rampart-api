@@ -27,6 +27,31 @@ npm run start:dev                                 # API on :3001
 - **Scheduling:** night `Crew`s (5 slots/date, generated weekly from `DefaultCrewTemplate`, rules driven by `SchedulingSetting` knobs) and unified `Event`s (optional positional slots + optional attendee cap).
 - **Training:** eval form templates → draft/submit/sign evaluations → promotion requests with unanimous TC votes (no abstentions, proxy support for conflicts) + captain approval; DS granted by captain appointment.
 
+## Integrations (all optional, env-driven)
+
+Unset variables disable the integration gracefully — see [.env.example](.env.example):
+
+- **Email** — `SMTP_URL` + `EMAIL_FROM` (cert-expiry reminders, promotion outcomes)
+- **Slack** — `SLACK_BOT_TOKEN` (+ `SLACK_OFFICERS_CHANNEL` for officer broadcasts, `SLACK_WHOSON_CHANNEL` for the nightly 17:00 who's-on post; member DMs use `Member.slackId`)
+- **Google Calendar** — `GOOGLE_CALENDAR_ID` + service account JSON (events sync on create/update/delete)
+- **Keycloak provisioning** — `KEYCLOAK_ADMIN_CLIENT_ID`/`SECRET` (creates the Keycloak user when an officer creates a member)
+
+## Legacy migration
+
+One-shot, idempotent ETL from the old portal's MySQL (spec §8):
+
+```bash
+LEGACY_MYSQL_URL=mysql://user:pass@host:3306/ambulanc_web npx tsx scripts/migrate-legacy.ts
+```
+
+Maps members (flags → ladder credentials, officer flags → roles, cert fields → verified certifications), crews + weekly defaults (negative pseudo-members become placeholders), games/events → unified events with signups, fuel/radio logs. Run migrations + seed first.
+
+## Tests
+
+```bash
+npm run test:e2e   # crews-engine suite; needs the dev Postgres running
+```
+
 ## Deploy
 
 ```bash

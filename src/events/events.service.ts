@@ -8,6 +8,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { CredentialGraphService } from '../credentials/credential-graph.service';
+import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface EventPositionInput {
@@ -34,6 +35,7 @@ export class EventsService {
     private readonly prisma: PrismaService,
     private readonly graph: CredentialGraphService,
     private readonly audit: AuditService,
+    private readonly gcal: GoogleCalendarService,
   ) {}
 
   list(opts: { from?: string; to?: string; includeHidden?: boolean }) {
@@ -119,7 +121,16 @@ export class EventsService {
       include: { positions: true },
     });
     await this.audit.log(auth, 'events.create', 'Event', event.id);
-    // TODO: Google Calendar sync (spec §5.3) — store gcalEventId
+    if (!event.hidden) {
+      const gcalEventId = await this.gcal.upsertEvent(null, event);
+      if (gcalEventId) {
+        return this.prisma.event.update({
+          where: { id: event.id },
+          data: { gcalEventId },
+          include: { positions: true },
+        });
+      }
+    }
     return event;
   }
 
@@ -158,6 +169,13 @@ export class EventsService {
       });
     }
     await this.audit.log(auth, 'events.update', 'Event', eventId);
+    const gcalEventId = await this.gcal.upsertEvent(event.gcalEventId, event);
+    if (gcalEventId && gcalEventId !== event.gcalEventId) {
+      await this.prisma.event.update({
+        where: { id: eventId },
+        data: { gcalEventId },
+      });
+    }
     return event;
   }
 
@@ -168,7 +186,10 @@ export class EventsService {
   }
 
   async remove(auth: AuthContext, eventId: number) {
-    await this.prisma.event.delete({ where: { id: eventId } });
+    const event = await this.prisma.event.delete({ where: { id: eventId } });
+    if (event.gcalEventId) {
+      await this.gcal.deleteEvent(event.gcalEventId);
+    }
     await this.audit.log(auth, 'events.delete', 'Event', eventId);
     return { ok: true };
   }

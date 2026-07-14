@@ -454,6 +454,7 @@ model Event {
   attendeeCap Int? // cap for the non-positional pool; null = unlimited
   hidden      Boolean  @default(false)
   gcalEventId String?
+  legacyKey   String?  @unique // "game-<id>" / "event-<id>" from the old MySQL portal
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
