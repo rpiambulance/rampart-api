@@ -18,12 +18,22 @@ docker compose up -d --build      # Postgres :5433, Keycloak :8080, API :3001 (m
 docker compose run --rm seed      # reference data + a dev member (Keycloak login dev/dev)
 ```
 
-One-time host setup for anything that talks to Keycloak from your machine
-(browser logins, running the API on the host): add `127.0.0.1 keycloak` to
-`/etc/hosts`. The Keycloak container pins its issuer to `http://keycloak:8080`
-so tokens validate identically inside and outside Docker. A dev realm
-(`rampart`, client `rampart-web` / secret `dev-secret`, user `dev`/`dev`) is
-imported automatically from [keycloak/realm-rampart.json](keycloak/realm-rampart.json).
+A dev realm (`rampart`, client `rampart-web` / secret `dev-secret`, user
+`dev`/`dev`, 8-hour access tokens) is imported automatically from
+[keycloak/realm-rampart.json](keycloak/realm-rampart.json).
+
+**Calling the API without any browser login:**
+
+```bash
+TOKEN=$(./scripts/dev-token.sh)        # password grant as dev/dev — no /etc/hosts needed
+curl -H "Authorization: Bearer $TOKEN" localhost:3001/v1/members/me
+```
+
+(The web app has the same shortcut: its compose sets `AUTH_DEV_LOGIN=true`,
+enabling a dashboard username/password form that does this exchange
+server-side.) The Keycloak container pins its issuer to `http://keycloak:8080`
+so tokens validate identically inside and outside Docker; only the full
+browser OIDC redirect flow needs `127.0.0.1 keycloak` in `/etc/hosts`.
 
 The `seed` service uses the image's `dev` target (full source + tsx), so the
 legacy ETL also runs in Docker:

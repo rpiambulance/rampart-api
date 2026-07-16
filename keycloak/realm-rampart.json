@@ -12,8 +12,12 @@
       "secret": "dev-secret",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
-      "redirectUris": ["http://localhost:3000/*"],
-      "webOrigins": ["http://localhost:3000"],
+      "redirectUris": [
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
       "protocolMappers": [
         {
           "name": "rampart-api-audience",
@@ -38,7 +42,14 @@
       "emailVerified": true,
       "firstName": "Dev",
       "lastName": "Member",
-      "credentials": [{ "type": "password", "value": "dev", "temporary": false }]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev",
+          "temporary": false
+        }
+      ]
     }
-  ]
+  ],
+  "accessTokenLifespan": 28800
 }
