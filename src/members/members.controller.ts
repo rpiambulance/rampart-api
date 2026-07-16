@@ -128,8 +128,11 @@ export class MembersController {
   }
 
   @Get('me')
-  me(@CurrentAuth() auth: AuthContext) {
-    return this.members.get(requireMember(auth));
+  async me(@CurrentAuth() auth: AuthContext) {
+    const member = await this.members.get(requireMember(auth));
+    // Effective permission set (union of currently-held roles) so clients
+    // can tailor navigation/affordances. Enforcement stays server-side.
+    return { ...member, permissions: [...auth.permissions].sort() };
   }
 
   @Patch('me')
