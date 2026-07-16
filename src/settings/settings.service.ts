@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface SchedulingKnobs {
   minAgeYears: number;
+  publicWeeks: number; // rolling window of weeks visible/signable to members
   riderSignupOpen: { weekday: number; time: string }; // weekday 0 = Sunday
   rotationWeeks: number;
   dayOfUnlockTime: string;
@@ -12,6 +13,7 @@ export interface SchedulingKnobs {
 
 const DEFAULTS: SchedulingKnobs = {
   minAgeYears: 18,
+  publicWeeks: 2,
   riderSignupOpen: { weekday: 0, time: '16:00' },
   rotationWeeks: 2,
   dayOfUnlockTime: '12:00',

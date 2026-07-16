@@ -60,6 +60,32 @@ export class NotificationsService {
     }
   }
 
+  /** Raw email to an outside address (e.g. coverage requesters). */
+  async sendEmail(to: string, subject: string, body: string): Promise<boolean> {
+    if (!this.mailer) {
+      this.logger.log(`email (no transport) to=${to} :: ${subject} — ${body}`);
+      return false;
+    }
+    try {
+      await this.mailer.sendMail({ from: this.emailFrom, to, subject, text: body });
+      return true;
+    } catch (error) {
+      this.logger.error(`email to ${to} failed: ${error}`);
+      return false;
+    }
+  }
+
+  /** Broadcast to every active member (availability requests). */
+  async notifyAllActiveMembers(subject: string, body: string) {
+    const members = await this.prisma.member.findMany({
+      where: { active: true },
+      select: { id: true },
+    });
+    for (const member of members) {
+      await this.notifyMember(member.id, subject, body);
+    }
+  }
+
   async notifyOfficers(subject: string, body: string) {
     if (this.slackToken && this.officersChannel) {
       const ok = await this.postSlack(this.officersChannel, `*${subject}*\n${body}`);

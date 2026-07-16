@@ -15,6 +15,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -64,6 +65,10 @@ class CreateEventDto {
 
   @IsOptional()
   @IsInt()
+  tierId?: number | null;
+
+  @IsOptional()
+  @IsInt()
   attendeeCap?: number | null;
 
   @IsOptional()
@@ -83,6 +88,54 @@ class SignupDto {
   @IsOptional()
   @IsString()
   position?: string | null;
+}
+
+class WorkflowDto {
+  @IsIn(['REQUEST_AVAILABILITY', 'SUBMIT_FOR_APPROVAL', 'APPROVE', 'DENY', 'CANCEL'])
+  action!: 'REQUEST_AVAILABILITY' | 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'DENY' | 'CANCEL';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+class AvailabilityDto {
+  @IsArray()
+  @IsString({ each: true })
+  positions!: string[];
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+class TierDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  defaults?: Record<string, unknown>;
+}
+
+class PatchTierDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  defaults?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }
 
 class KindDto {
@@ -125,6 +178,23 @@ export class EventsController {
   @Get('kinds')
   kinds() {
     return this.events.listKinds();
+  }
+
+  @Get('tiers')
+  tiers() {
+    return this.events.listTiers();
+  }
+
+  @Post('tiers')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  createTier(@Body() body: TierDto) {
+    return this.events.createTier(body);
+  }
+
+  @Patch('tiers/:id')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  updateTier(@Param('id', ParseIntPipe) id: number, @Body() body: PatchTierDto) {
+    return this.events.updateTier(id, body);
   }
 
   @Post('kinds')
@@ -177,6 +247,44 @@ export class EventsController {
   @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
   remove(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
     return this.events.remove(auth, id);
+  }
+
+  /** Advance the coverage workflow. APPROVE/DENY need events:approve. */
+  @Post(':id/workflow')
+  @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
+  workflow(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: WorkflowDto,
+  ) {
+    if (
+      (body.action === 'APPROVE' || body.action === 'DENY') &&
+      !auth.permissions.has(PERMISSIONS.EVENTS_APPROVE)
+    ) {
+      throw new ForbiddenException('Missing permission: events:approve');
+    }
+    return this.events.advanceWorkflow(auth, id, body.action, body.notes);
+  }
+
+  /** "I can work this" — member availability during the workflow. */
+  @Post(':id/availability')
+  respondAvailability(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: AvailabilityDto,
+  ) {
+    return this.events.respondAvailability(
+      requireMember(auth),
+      id,
+      body.positions,
+      body.note,
+    );
+  }
+
+  @Get(':id/availability')
+  @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
+  listAvailability(@Param('id', ParseIntPipe) id: number) {
+    return this.events.listAvailability(id);
   }
 
   @Post(':id/signup')

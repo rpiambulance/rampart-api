@@ -60,6 +60,13 @@ export class CrewEligibilityService {
     if (day.memberOnThisDate) {
       return { eligible: false, reason: 'Already on this crew' };
     }
+    const publicWindowEnd = addDays(
+      startOfWeek(now.dateStr),
+      7 * knobs.publicWeeks,
+    );
+    if (dateStr >= publicWindowEnd) {
+      return { eligible: false, reason: 'Signups not yet open' };
+    }
 
     switch (position) {
       case 'CC': {

@@ -16,6 +16,7 @@ import {
   toDbDate,
   weekdayOf,
 } from '../common/dates';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
@@ -63,14 +64,19 @@ export class CrewsService {
     private readonly graph: CredentialGraphService,
     private readonly eligibility: CrewEligibilityService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------- queries
 
-  async getWeeks(memberId: number, viewDate?: string) {
+  async getWeeks(memberId: number, viewDate?: string, canViewAll = false) {
     const now = nyNow();
     const knobs = await this.settings.scheduling();
-    const weekStart = startOfWeek(viewDate ?? now.dateStr);
+    let weekStart = startOfWeek(viewDate ?? now.dateStr);
+    if (!canViewAll) {
+      // Members only see the rolling public window.
+      weekStart = startOfWeek(now.dateStr);
+    }
 
     await this.ensureCrewsExist(weekStart, 14);
 
@@ -287,6 +293,14 @@ export class CrewsService {
     });
     const have = new Set(existing.map((c) => fromDbDate(c.date)));
     const template = await this.prisma.defaultCrewTemplate.findMany();
+    const absences = await this.prisma.crewAbsence.findMany({
+      where: {
+        date: { gte: toDbDate(fromDate), lt: toDbDate(addDays(fromDate, days)) },
+      },
+    });
+    const absentOn = new Set(
+      absences.map((a) => `${fromDbDate(a.date)}:${a.memberId}`),
+    );
 
     for (let i = 0; i < days; i++) {
       const dateStr = addDays(fromDate, i);
@@ -300,9 +314,14 @@ export class CrewsService {
               const dflt = template.find(
                 (t) => t.weekday === weekday && t.position === position,
               );
+              // Declared absences suppress default-template placement.
+              const defaultMember =
+                dflt?.memberId && !absentOn.has(`${dateStr}:${dflt.memberId}`)
+                  ? dflt.memberId
+                  : null;
               return {
                 position,
-                memberId: dflt?.memberId ?? null,
+                memberId: defaultMember,
                 placeholder: dflt?.placeholder ?? null,
               };
             }),
@@ -310,6 +329,127 @@ export class CrewsService {
         },
       });
     }
+  }
+
+  /** Scheduler assignment to any future date — creates the week on demand. */
+  async assignByDate(
+    auth: AuthContext,
+    dateStr: string,
+    position: CrewPosition,
+    target: { memberId?: number | null; placeholder?: string | null },
+  ) {
+    await this.ensureCrewsExist(startOfWeek(dateStr), 7);
+    const crew = await this.prisma.crew.findUniqueOrThrow({
+      where: { date: toDbDate(dateStr) },
+    });
+    return this.assign(auth, crew.id, position, target);
+  }
+
+  /** The caller's own upcoming shifts, including not-yet-public weeks. */
+  async myUpcoming(memberId: number) {
+    const slots = await this.prisma.crewSlot.findMany({
+      where: {
+        memberId,
+        crew: { date: { gte: toDbDate(nyNow().dateStr) } },
+      },
+      include: { crew: true },
+      orderBy: { crew: { date: 'asc' } },
+    });
+    const knobs = await this.settings.scheduling();
+    const publicEnd = addDays(startOfWeek(nyNow().dateStr), 7 * knobs.publicWeeks);
+    return slots.map((slot) => ({
+      crewId: slot.crewId,
+      date: fromDbDate(slot.crew.date),
+      position: slot.position,
+      isPublic: fromDbDate(slot.crew.date) < publicEnd,
+    }));
+  }
+
+  // ------------------------------------------------------------- absences
+
+  listAbsences(memberId: number) {
+    return this.prisma.crewAbsence.findMany({
+      where: { memberId, date: { gte: toDbDate(nyNow().dateStr) } },
+      orderBy: { date: 'asc' },
+    });
+  }
+
+  /**
+   * Declare unavailability for a future date. Clears any slot already held
+   * that day; within the public window the normal drop deadline applies,
+   * beyond it the drop is free. The scheduling team is notified.
+   */
+  async declareAbsence(memberId: number, dateStr: string, note?: string) {
+    const now = nyNow();
+    if (dateStr <= now.dateStr) {
+      throw new ForbiddenException('Absences must be for a future date');
+    }
+    const knobs = await this.settings.scheduling();
+    const publicEnd = addDays(startOfWeek(now.dateStr), 7 * knobs.publicWeeks);
+
+    const crew = await this.prisma.crew.findUnique({
+      where: { date: toDbDate(dateStr) },
+      include: { slots: true },
+    });
+    const heldSlots =
+      crew?.slots.filter((slot) => slot.memberId === memberId) ?? [];
+
+    if (heldSlots.length && dateStr < publicEnd) {
+      if (
+        !isBeforeDeadline(
+          now,
+          dateStr,
+          knobs.dropDeadline.daysBefore,
+          knobs.dropDeadline.time,
+        )
+      ) {
+        throw new ForbiddenException(
+          `Drops close at ${knobs.dropDeadline.time}, ${knobs.dropDeadline.daysBefore} days before the shift. Contact the scheduling coordinator.`,
+        );
+      }
+    }
+
+    for (const slot of heldSlots) {
+      await this.prisma.crewSlot.update({
+        where: { id: slot.id },
+        data: { memberId: null },
+      });
+    }
+
+    const absence = await this.prisma.crewAbsence.upsert({
+      where: { memberId_date: { memberId, date: toDbDate(dateStr) } },
+      create: { memberId, date: toDbDate(dateStr), note: note ?? null },
+      update: { note: note ?? null },
+    });
+
+    const member = await this.prisma.member.findUniqueOrThrow({
+      where: { id: memberId },
+      select: { firstName: true, lastName: true },
+    });
+    const weekday = WEEKDAY_NAMES[weekdayOf(dateStr)];
+    const onDefault = await this.prisma.defaultCrewTemplate.findFirst({
+      where: { memberId, weekday: weekdayOf(dateStr) },
+    });
+    if (heldSlots.length || onDefault) {
+      await this.notifications.notifyOfficers(
+        `Crew absence: ${member.firstName} ${member.lastName} — ${weekday} ${dateStr}`,
+        heldSlots.length
+          ? `Vacated ${heldSlots.map((s) => s.position).join(', ')}${note ? ` — "${note}"` : ''}`
+          : `Will be skipped by the default template${note ? ` — "${note}"` : ''}`,
+      );
+    }
+    return absence;
+  }
+
+  async removeAbsence(memberId: number, absenceId: number) {
+    const absence = await this.prisma.crewAbsence.findUnique({
+      where: { id: absenceId },
+    });
+    if (!absence || absence.memberId !== memberId) {
+      throw new ForbiddenException('Not your absence');
+    }
+    await this.prisma.crewAbsence.delete({ where: { id: absenceId } });
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------- helpers

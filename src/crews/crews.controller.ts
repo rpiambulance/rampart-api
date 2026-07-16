@@ -30,6 +30,15 @@ class AssignDto {
   placeholder?: string | null;
 }
 
+class AbsenceDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  date!: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
 class DefaultSlotDto {
   @IsInt()
   @Min(0)
@@ -71,7 +80,49 @@ export class CrewsController {
     if (viewDate && !/^\d{4}-\d{2}-\d{2}$/.test(viewDate)) {
       viewDate = undefined;
     }
-    return this.crews.getWeeks(requireMember(auth), viewDate);
+    // Schedulers may page to any week; members are clamped to the public window.
+    const canViewAll = auth.permissions.has(PERMISSIONS.SCHEDULE_CREWS_ASSIGN);
+    return this.crews.getWeeks(requireMember(auth), viewDate, canViewAll);
+  }
+
+  @Get('mine')
+  myUpcoming(@CurrentAuth() auth: AuthContext) {
+    return this.crews.myUpcoming(requireMember(auth));
+  }
+
+  // ---- absences (distant-shift drops / default-template exceptions) ----
+
+  @Get('absences/mine')
+  myAbsences(@CurrentAuth() auth: AuthContext) {
+    return this.crews.listAbsences(requireMember(auth));
+  }
+
+  @Post('absences')
+  declareAbsence(@CurrentAuth() auth: AuthContext, @Body() body: AbsenceDto) {
+    return this.crews.declareAbsence(requireMember(auth), body.date, body.note);
+  }
+
+  @Delete('absences/:id')
+  removeAbsence(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.crews.removeAbsence(requireMember(auth), id);
+  }
+
+  /** Scheduler assignment for any future date, public or not. */
+  @Put('by-date/:date/slots/:position')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_ASSIGN)
+  assignByDate(
+    @CurrentAuth() auth: AuthContext,
+    @Param('date') date: string,
+    @Param('position') position: CrewPosition,
+    @Body() body: AssignDto,
+  ) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new ForbiddenException('Invalid date');
+    }
+    return this.crews.assignByDate(auth, date, position, body);
   }
 
   @Post(':crewId/slots/:position/signup')

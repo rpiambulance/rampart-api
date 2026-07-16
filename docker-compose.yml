@@ -55,6 +55,7 @@ services:
       KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-rampart-api}
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /data/storage
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
     volumes:
       - apistorage:/data/storage
     depends_on:

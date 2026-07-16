@@ -56,6 +56,12 @@ model Member {
   apiTokens          ApiToken[]
   annualTrainings    MemberAnnualTraining[]
   classAttendance    ClassAttendance[]
+  crewAbsences       CrewAbsence[]
+  pollInvites        AvailabilityPollInvite[]
+  availability       AvailabilityResponse[]
+  pollsCreated       AvailabilityPoll[]
+  eventAvailability  EventAvailability[]
+  coverageMessages   CoverageMessage[]
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +431,70 @@ model DefaultCrewTemplate {
   @@unique([weekday, position])
 }
 
+// Declared unavailability for a specific future date. Within the public
+// window it clears an existing slot (drop deadline enforced); beyond it,
+// weekly generation skips placing the member from the default template.
+model CrewAbsence {
+  id        Int      @id @default(autoincrement())
+  memberId  Int
+  date      DateTime @db.Date
+  note      String?
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, date])
+  @@index([date])
+}
+
+// ---- weekly availability polls (input to the default schedule) ----
+
+enum PollStatus {
+  OPEN
+  CLOSED
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  UNAVAILABLE
+  IF_NEEDED
+}
+
+model AvailabilityPoll {
+  id          Int        @id @default(autoincrement())
+  name        String // e.g. "Fall 2026"
+  status      PollStatus @default(OPEN)
+  createdById Int
+  createdAt   DateTime   @default(now())
+  closedAt    DateTime?
+
+  createdBy Member                   @relation(fields: [createdById], references: [id])
+  invites   AvailabilityPollInvite[]
+  responses AvailabilityResponse[]
+}
+
+model AvailabilityPollInvite {
+  pollId   Int
+  memberId Int
+
+  poll   AvailabilityPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  member Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([pollId, memberId])
+}
+
+model AvailabilityResponse {
+  pollId   Int
+  memberId Int
+  weekday  Int // 0 = Sunday
+  status   AvailabilityStatus
+
+  poll   AvailabilityPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  member Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([pollId, memberId, weekday])
+}
+
 model SchedulingSetting {
   key   String @id // minAgeYears, riderSignupOpen, rotationWeeks, dayOfUnlockTime, probationaryRequiresTrainer, dropDeadline, ...
   value Json
@@ -442,6 +512,26 @@ model EventKind {
   events   Event[]
 }
 
+model EventTier {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  description String?
+  defaults    Json? // e.g. default crew requirements for the tier
+  active      Boolean @default(true)
+  events      Event[]
+}
+
+// Coverage-event workflow (spec: request -> details -> availability ->
+// approval -> requester notified). Ordinary internal events stay APPROVED.
+enum EventWorkflowStatus {
+  DRAFT
+  AVAILABILITY_REQUESTED
+  PENDING_APPROVAL
+  APPROVED
+  DENIED
+  CANCELLED
+}
+
 model Event {
   id          Int      @id @default(autoincrement())
   title       String
@@ -455,12 +545,17 @@ model Event {
   hidden      Boolean  @default(false)
   gcalEventId String?
   legacyKey   String?  @unique // "game-<id>" / "event-<id>" from the old MySQL portal
+  workflowStatus EventWorkflowStatus @default(APPROVED)
+  tierId      Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   kind      EventKind       @relation(fields: [kindId], references: [id])
+  tier      EventTier?      @relation(fields: [tierId], references: [id])
   positions EventPosition[]
   signups   EventSignup[]
+  availabilityResponses EventAvailability[]
+  coverageRequest        CoverageRequest?
 
   @@index([startsAt])
 }
@@ -488,6 +583,55 @@ model EventSignup {
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, memberId])
+}
+
+/** "I can work this" responses gathered during AVAILABILITY_REQUESTED. */
+model EventAvailability {
+  eventId   Int
+  memberId  Int
+  positions String[] // positions the member offers to fill
+  note      String?
+  createdAt DateTime @default(now())
+
+  event  Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, memberId])
+}
+
+// Public coverage intake: outside requesters get a tokenized status link.
+model CoverageRequest {
+  id             Int       @id @default(autoincrement())
+  token          String    @unique
+  requesterName  String
+  requesterOrg   String?
+  requesterEmail String
+  requesterPhone String?
+  description    String
+  requestedDate  DateTime? @db.Date
+  location       String?
+  createdAt      DateTime  @default(now())
+  eventId        Int?      @unique
+
+  event    Event?            @relation(fields: [eventId], references: [id])
+  messages CoverageMessage[]
+}
+
+enum MessageDirection {
+  FROM_REQUESTER
+  TO_REQUESTER
+}
+
+model CoverageMessage {
+  id        Int              @id @default(autoincrement())
+  requestId Int
+  direction MessageDirection
+  body      String
+  authorId  Int? // staff member for TO_REQUESTER
+  createdAt DateTime         @default(now())
+
+  request CoverageRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  author  Member?         @relation(fields: [authorId], references: [id])
 }
 
 // ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ const CREDENTIALS: Array<{
 
 const SCHEDULING_SETTINGS: Record<string, unknown> = {
   minAgeYears: 18,
+  publicWeeks: 2,
   riderSignupOpen: { weekday: 0, time: '16:00' }, // Sunday 1600
   rotationWeeks: 2,
   dayOfUnlockTime: '12:00',
@@ -51,6 +52,13 @@ const SCHEDULING_SETTINGS: Record<string, unknown> = {
 };
 
 const EVENT_KINDS = ['Game', 'Detail', 'Meeting', 'Social'];
+
+// Placeholder tiers — rename/extend in the admin settings UI.
+const EVENT_TIERS = [
+  { name: 'Tier 1 — Basic standby', description: 'Single BLS crew on standby' },
+  { name: 'Tier 2 — Enhanced coverage', description: 'Multiple crews or extended duration' },
+  { name: 'Tier 3 — Special event', description: 'Large event; supervisor + multiple crews' },
+];
 
 const CERT_TYPES = [
   { name: 'CPR — BLS Provider', abbreviation: 'CPR', issuingOrg: 'AHA', defaultValidityMonths: 24 },
@@ -70,7 +78,7 @@ const ALL = [
   'credentials:appoint', 'evals:write', 'evals:manage-forms', 'evals:read-all',
   'promotions:review', 'promotions:vote', 'promotions:captain-approve', 'trainings:manage',
   'schedule:crews:assign', 'schedule:crews:manage-defaults', 'schedule:settings',
-  'events:create', 'events:assign-others', 'events:lock', 'fuel:write',
+  'events:create', 'events:assign-others', 'events:lock', 'events:approve', 'fuel:write',
   'radios:manage', 'tokens:manage', 'audit:read', 'integrations:manage',
 ];
 
@@ -83,7 +91,7 @@ const ROLES: Array<{ name: string; isOfficer: boolean; permissions: string[] }> 
       'members:read', 'members:write', 'certs:read-all', 'credentials:grant',
       'credentials:appoint', 'evals:read-all', 'promotions:review',
       'promotions:captain-approve', 'schedule:crews:assign', 'events:create',
-      'events:assign-others', 'events:lock', 'audit:read',
+      'events:assign-others', 'events:lock', 'events:approve', 'audit:read',
     ],
   },
   {
@@ -160,6 +168,15 @@ async function main() {
     await prisma.eventKind.upsert({
       where: { name },
       create: { name },
+      update: {},
+    });
+  }
+
+  // Event tiers
+  for (const tier of EVENT_TIERS) {
+    await prisma.eventTier.upsert({
+      where: { name: tier.name },
+      create: tier,
       update: {},
     });
   }
