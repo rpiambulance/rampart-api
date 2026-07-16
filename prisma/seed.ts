@@ -189,6 +189,40 @@ async function main() {
     }
   }
 
+  // Local-dev member linked to the Keycloak user imported from
+  // keycloak/realm-rampart.json (dev/dev). Never enable in production.
+  if (process.env.SEED_DEV_MEMBER === 'true') {
+    const dev = await prisma.member.upsert({
+      where: { email: 'dev@rpiambulance.test' },
+      create: {
+        keycloakSubject: '11111111-1111-1111-1111-111111111111',
+        firstName: 'Dev',
+        lastName: 'Member',
+        email: 'dev@rpiambulance.test',
+        dob: new Date('1990-01-15T00:00:00Z'),
+      },
+      update: { keycloakSubject: '11111111-1111-1111-1111-111111111111' },
+    });
+    const admin = await prisma.role.findUniqueOrThrow({ where: { name: 'Admin' } });
+    const hasRole = await prisma.memberRole.findFirst({
+      where: { memberId: dev.id, roleId: admin.id },
+    });
+    if (!hasRole) {
+      await prisma.memberRole.create({
+        data: { memberId: dev.id, roleId: admin.id, startDate: new Date() },
+      });
+    }
+    for (const key of ['O', 'A', 'A_CC', 'P_CC', 'CC']) {
+      const type = await prisma.credentialType.findUniqueOrThrow({ where: { key } });
+      await prisma.memberCredential.upsert({
+        where: { memberId_typeId: { memberId: dev.id, typeId: type.id } },
+        create: { memberId: dev.id, typeId: type.id },
+        update: {},
+      });
+    }
+    console.log('Dev member seeded (Keycloak login: dev / dev).');
+  }
+
   console.log('Seed complete.');
 }
 

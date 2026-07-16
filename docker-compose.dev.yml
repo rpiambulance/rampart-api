@@ -1,5 +1,6 @@
-# Local development stack: Postgres + Keycloak.
-# Run the API itself with `npm run start:dev` against these.
+# Infra-only stack for running the API on the host (`npm run start:dev`).
+# For the fully Dockerized stack (API container included), use the default
+# docker-compose.yml instead.
 services:
   postgres:
     image: postgres:17
@@ -11,15 +12,23 @@ services:
       - '5433:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rampart -d rampart']
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
-    command: start-dev
+    command: start-dev --import-realm
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://keycloak:8080
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
     ports:
-      - '8082:8080'
+      - '8080:8080'
 
 volumes:
   pgdata:

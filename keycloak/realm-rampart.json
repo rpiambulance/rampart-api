@@ -1,0 +1,44 @@
+{
+  "realm": "rampart",
+  "enabled": true,
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "rampart-web",
+      "name": "Rampart Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "protocolMappers": [
+        {
+          "name": "rampart-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "rampart-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "username": "dev",
+      "enabled": true,
+      "email": "dev@rpiambulance.test",
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "Member",
+      "credentials": [{ "type": "password", "value": "dev", "temporary": false }]
+    }
+  ]
+}

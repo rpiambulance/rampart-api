@@ -11,11 +11,32 @@ The API for the RPI Ambulance member portal (members.rpiambulance.com). NestJS +
 - **Auth:** Keycloak OIDC JWTs (validated via realm JWKS) for members; `rpa_`-prefixed API tokens (hashed, permission-scoped) for machine clients. Both handled by the global `AuthGuard`; authorization by `PermissionsGuard` + `@RequirePermissions(...)` against the catalog in [`src/permissions/catalog.ts`](src/permissions/catalog.ts).
 - **Storage:** local-volume object storage by default, pluggable S3 driver (`STORAGE_DRIVER`).
 
-## Development
+## Run locally — fully in Docker
+
+```bash
+docker compose up -d --build      # Postgres :5433, Keycloak :8080, API :3001 (migrations run on start)
+docker compose run --rm seed      # reference data + a dev member (Keycloak login dev/dev)
+```
+
+One-time host setup for anything that talks to Keycloak from your machine
+(browser logins, running the API on the host): add `127.0.0.1 keycloak` to
+`/etc/hosts`. The Keycloak container pins its issuer to `http://keycloak:8080`
+so tokens validate identically inside and outside Docker. A dev realm
+(`rampart`, client `rampart-web` / secret `dev-secret`, user `dev`/`dev`) is
+imported automatically from [keycloak/realm-rampart.json](keycloak/realm-rampart.json).
+
+The `seed` service uses the image's `dev` target (full source + tsx), so the
+legacy ETL also runs in Docker:
+
+```bash
+docker compose run --rm -e LEGACY_MYSQL_URL=mysql://... seed npx tsx scripts/migrate-legacy.ts
+```
+
+## Development (API on the host)
 
 ```bash
 cp .env.example .env
-docker compose -f docker-compose.dev.yml up -d   # Postgres :5432, Keycloak :8082
+docker compose -f docker-compose.dev.yml up -d   # infra only: Postgres :5433, Keycloak :8080
 npx prisma migrate dev                            # create/apply migrations
 npx prisma db seed                                # credential ladder, knobs, cert types
 npm run start:dev                                 # API on :3001

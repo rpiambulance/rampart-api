@@ -1,0 +1,82 @@
+# Full local stack in Docker: Postgres + Keycloak (dev realm imported) + the API.
+#
+#   docker compose up -d --build       # everything
+#   docker compose run --rm seed       # migrate is automatic; seed reference data
+#                                      #   (+ a dev member linked to the Keycloak
+#                                      #   "dev"/"dev" user when SEED_DEV_MEMBER=true)
+#
+# Browser logins through the web app need the Keycloak issuer to resolve on
+# your host too — add `127.0.0.1 keycloak` to /etc/hosts (one time).
+#
+# For infra-only (running the API with npm run start:dev), use
+# docker-compose.dev.yml instead.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: rampart
+      POSTGRES_PASSWORD: rampart
+      POSTGRES_DB: rampart
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rampart -d rampart']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Fixed hostname so the token issuer is identical for containers
+      # (service DNS) and the browser (/etc/hosts entry).
+      KC_HOSTNAME: http://keycloak:8080
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - '8080:8080'
+
+  api:
+    build:
+      context: .
+      target: prod
+    ports:
+      - '3001:3001'
+    environment:
+      DATABASE_URL: postgresql://rampart:rampart@postgres:5432/rampart
+      PORT: 3001
+      WEB_ORIGIN: http://localhost:3000
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://keycloak:8080/realms/rampart}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-rampart-api}
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_PATH: /data/storage
+    volumes:
+      - apistorage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot jobs (dev image has tsx + full source):
+  #   docker compose run --rm seed
+  #   docker compose run --rm -e LEGACY_MYSQL_URL=... seed npx tsx scripts/migrate-legacy.ts
+  seed:
+    profiles: ['tools']
+    build:
+      context: .
+      target: dev
+    command: npx tsx prisma/seed.ts
+    environment:
+      DATABASE_URL: postgresql://rampart:rampart@postgres:5432/rampart
+      SEED_DEV_MEMBER: ${SEED_DEV_MEMBER:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  apistorage:
