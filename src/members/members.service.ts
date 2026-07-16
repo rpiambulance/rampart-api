@@ -91,6 +91,7 @@ export class MembersService {
       homePhone: string;
       localAddress: string;
       homeAddress: string;
+      navLayout: string;
       rcsId: string;
       rin: string;
       keycloakSubject: string;

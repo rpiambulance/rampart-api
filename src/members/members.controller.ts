@@ -13,6 +13,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEmail,
+  IsIn,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -23,6 +24,10 @@ import { PERMISSIONS } from '../permissions/catalog';
 import { MembersService } from './members.service';
 
 class SelfEditDto {
+  @IsOptional()
+  @IsIn(['sidebar', 'topnav'])
+  navLayout?: 'sidebar' | 'topnav';
+
   @IsOptional()
   @IsEmail()
   personalEmail?: string;
