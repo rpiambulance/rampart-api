@@ -238,7 +238,7 @@ export class EventsService {
         const held = await this.graph.heldKeys(memberId);
         if (!(await this.graph.satisfies(held, posDef.requiredCredentialKey))) {
           throw new ForbiddenException(
-            `Requires ${posDef.requiredCredentialKey} credential`,
+            `Requires ${posDef.requiredCredentialKey.replace(/_/g, '-')} credential`,
           );
         }
       }
