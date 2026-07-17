@@ -18,6 +18,7 @@ export const PERMISSIONS = {
   PROMOTIONS_REVIEW: 'promotions:review',
   PROMOTIONS_VOTE: 'promotions:vote',
   PROMOTIONS_CAPTAIN_APPROVE: 'promotions:captain-approve',
+  PROMOTIONS_ADJUST: 'promotions:adjust-requirements',
   SCHEDULE_CREWS_ASSIGN: 'schedule:crews:assign',
   SCHEDULE_CREWS_MANAGE_DEFAULTS: 'schedule:crews:manage-defaults',
   SCHEDULE_SETTINGS: 'schedule:settings',

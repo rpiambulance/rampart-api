@@ -12,11 +12,33 @@ import { CredentialGraphService } from './credential-graph.service';
 
 export const SDS_TITLE = 'Senior Duty Supervisor';
 
+function requirementLabelFor(req: {
+  kind: string;
+  count: number | null;
+  certificationType: { name: string } | null;
+  evalTemplate: { name: string } | null;
+  class: { name: string } | null;
+}): string {
+  if (req.kind === 'CERTIFICATION' && req.certificationType) {
+    return `Verified ${req.certificationType.name}`;
+  }
+  if (req.kind === 'EVALUATION_COUNT' && req.evalTemplate) {
+    return `${req.count} signed “${req.evalTemplate.name}” evaluations`;
+  }
+  if (req.kind === 'CLASS' && req.class) {
+    return `Complete ${req.class.name}`;
+  }
+  return 'Requirement';
+}
+
 export interface ChecklistItem {
-  kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'PREREQUISITE';
+  kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'PREREQUISITE' | 'CUSTOM';
   label: string;
   satisfied: boolean;
   detail?: string;
+  waived?: boolean;
+  adjustmentId?: number; // present for waived/additional items
+  requirementId?: number; // present for base requirements (waive target)
 }
 
 @Injectable()
@@ -110,6 +132,19 @@ export class CredentialsService {
     if (!type) throw new NotFoundException('Credential type not found');
 
     const held = await this.graph.heldKeys(memberId);
+    const adjustments = await this.prisma.promotionRequirementAdjustment.findMany({
+      where: { memberId, credentialTypeId },
+      include: {
+        certificationType: true,
+        evalTemplate: true,
+        class: true,
+      },
+    });
+    const waivers = new Map(
+      adjustments
+        .filter((a) => a.kind === 'WAIVER' && a.requirementId != null)
+        .map((a) => [a.requirementId!, a]),
+    );
     const items: ChecklistItem[] = [];
 
     for (const prereq of type.prerequisites) {
@@ -122,6 +157,19 @@ export class CredentialsService {
 
     const today = new Date();
     for (const req of type.requirements) {
+      const waiver = waivers.get(req.id);
+      if (waiver) {
+        items.push({
+          kind: req.kind as ChecklistItem['kind'],
+          label: `${requirementLabelFor(req)} — waived`,
+          satisfied: true,
+          waived: true,
+          detail: waiver.note ?? undefined,
+          adjustmentId: waiver.id,
+          requirementId: req.id,
+        });
+        continue;
+      }
       if (req.kind === 'CERTIFICATION' && req.certificationType) {
         const cert = await this.prisma.memberCertification.findFirst({
           where: {
@@ -135,6 +183,7 @@ export class CredentialsService {
           kind: 'CERTIFICATION',
           label: `Verified ${req.certificationType.name}`,
           satisfied: !!cert,
+          requirementId: req.id,
         });
       } else if (req.kind === 'EVALUATION_COUNT' && req.evalTemplate) {
         const count = await this.prisma.evaluation.count({
@@ -149,6 +198,7 @@ export class CredentialsService {
           label: `${req.count} signed “${req.evalTemplate.name}” evaluations`,
           satisfied: count >= (req.count ?? 1),
           detail: `${count}/${req.count}`,
+          requirementId: req.id,
         });
       } else if (req.kind === 'CLASS' && req.class) {
         const attendance = await this.prisma.classAttendance.findUnique({
@@ -158,6 +208,62 @@ export class CredentialsService {
           kind: 'CLASS',
           label: `Complete ${req.class.name}`,
           satisfied: attendance?.status === 'COMPLETED',
+          requirementId: req.id,
+        });
+      }
+    }
+
+    // Member-specific additional requirements
+    for (const adjustment of adjustments.filter((a) => a.kind === 'ADDITIONAL')) {
+      if (adjustment.reqKind === 'CERTIFICATION' && adjustment.certificationType) {
+        const cert = await this.prisma.memberCertification.findFirst({
+          where: {
+            memberId,
+            typeId: adjustment.certificationTypeId!,
+            status: 'VERIFIED',
+            OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
+          },
+        });
+        items.push({
+          kind: 'CERTIFICATION',
+          label: `Additional: verified ${adjustment.certificationType.name}`,
+          satisfied: !!cert,
+          adjustmentId: adjustment.id,
+        });
+      } else if (adjustment.reqKind === 'EVALUATION_COUNT' && adjustment.evalTemplate) {
+        const count = await this.prisma.evaluation.count({
+          where: {
+            subjectId: memberId,
+            templateId: adjustment.evalTemplateId!,
+            status: 'SIGNED',
+          },
+        });
+        items.push({
+          kind: 'EVALUATION_COUNT',
+          label: `Additional: ${adjustment.count} signed “${adjustment.evalTemplate.name}” evaluations`,
+          satisfied: count >= (adjustment.count ?? 1),
+          detail: `${count}/${adjustment.count}`,
+          adjustmentId: adjustment.id,
+        });
+      } else if (adjustment.reqKind === 'CLASS' && adjustment.class) {
+        const attendance = await this.prisma.classAttendance.findUnique({
+          where: {
+            classId_memberId: { classId: adjustment.classId!, memberId },
+          },
+        });
+        items.push({
+          kind: 'CLASS',
+          label: `Additional: complete ${adjustment.class.name}`,
+          satisfied: attendance?.status === 'COMPLETED',
+          adjustmentId: adjustment.id,
+        });
+      } else {
+        // free-text requirement, checked off manually
+        items.push({
+          kind: 'CUSTOM',
+          label: adjustment.note ?? 'Additional requirement',
+          satisfied: adjustment.satisfiedAt != null,
+          adjustmentId: adjustment.id,
         });
       }
     }

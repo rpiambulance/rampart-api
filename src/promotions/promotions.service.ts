@@ -338,6 +338,107 @@ export class PromotionsService {
     return { ok: true, status: approved ? 'APPROVED' : 'DENIED' };
   }
 
+  // ---------------------------------------------- requirement adjustments
+
+  listAdjustments(memberId: number, credentialTypeId: number) {
+    return this.prisma.promotionRequirementAdjustment.findMany({
+      where: { memberId, credentialTypeId },
+      include: {
+        requirement: {
+          include: { certificationType: true, evalTemplate: true, class: true },
+        },
+        certificationType: true,
+        evalTemplate: true,
+        class: true,
+        createdBy: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async createAdjustment(
+    auth: AuthContext & { kind: 'member' },
+    input: {
+      memberId: number;
+      credentialTypeId: number;
+      kind: 'WAIVER' | 'ADDITIONAL';
+      requirementId?: number;
+      reqKind?: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS';
+      certificationTypeId?: number;
+      evalTemplateId?: number;
+      count?: number;
+      classId?: number;
+      note?: string;
+    },
+  ) {
+    if (input.kind === 'WAIVER') {
+      if (!input.requirementId) {
+        throw new BadRequestException('requirementId required for a waiver');
+      }
+      const requirement = await this.prisma.credentialRequirement.findUnique({
+        where: { id: input.requirementId },
+      });
+      if (!requirement || requirement.credentialTypeId !== input.credentialTypeId) {
+        throw new BadRequestException(
+          'Requirement does not belong to that credential',
+        );
+      }
+    } else if (input.reqKind) {
+      if (input.reqKind === 'CERTIFICATION' && !input.certificationTypeId) {
+        throw new BadRequestException('certificationTypeId required');
+      }
+      if (input.reqKind === 'EVALUATION_COUNT' && (!input.evalTemplateId || !input.count)) {
+        throw new BadRequestException('evalTemplateId and count required');
+      }
+      if (input.reqKind === 'CLASS' && !input.classId) {
+        throw new BadRequestException('classId required');
+      }
+    } else if (!input.note?.trim()) {
+      throw new BadRequestException(
+        'A free-text additional requirement needs a note',
+      );
+    }
+
+    const adjustment = await this.prisma.promotionRequirementAdjustment.create({
+      data: {
+        memberId: input.memberId,
+        credentialTypeId: input.credentialTypeId,
+        kind: input.kind,
+        requirementId: input.requirementId,
+        reqKind: input.reqKind,
+        certificationTypeId: input.certificationTypeId,
+        evalTemplateId: input.evalTemplateId,
+        count: input.count,
+        classId: input.classId,
+        note: input.note,
+        createdById: auth.memberId,
+      },
+    });
+    await this.audit.log(auth, 'promotions.adjustment.create', 'PromotionRequirementAdjustment', adjustment.id, input);
+    return adjustment;
+  }
+
+  async setAdjustmentSatisfied(
+    auth: AuthContext,
+    adjustmentId: number,
+    satisfied: boolean,
+  ) {
+    const adjustment = await this.prisma.promotionRequirementAdjustment.update({
+      where: { id: adjustmentId },
+      data: { satisfiedAt: satisfied ? new Date() : null },
+    });
+    await this.audit.log(auth, 'promotions.adjustment.satisfy', 'PromotionRequirementAdjustment', adjustmentId, { satisfied });
+    return adjustment;
+  }
+
+  async removeAdjustment(auth: AuthContext, adjustmentId: number) {
+    await this.prisma.promotionRequirementAdjustment.delete({
+      where: { id: adjustmentId },
+    });
+    await this.audit.log(auth, 'promotions.adjustment.remove', 'PromotionRequirementAdjustment', adjustmentId);
+    return { ok: true };
+  }
+
   async withdraw(memberId: number, requestId: number) {
     const request = await this.prisma.promotionRequest.findUnique({
       where: { id: requestId },

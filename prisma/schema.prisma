@@ -49,6 +49,8 @@ model Member {
   proxiedVotes       PromotionVote[]       @relation("ProxyFor")
   proxyPrincipalOf   PromotionProxy[]      @relation("ProxyPrincipal")
   proxyAgentOf       PromotionProxy[]      @relation("ProxyAgent")
+  requirementAdjustments PromotionRequirementAdjustment[] @relation("AdjustmentSubject")
+  adjustmentsCreated     PromotionRequirementAdjustment[] @relation("AdjustmentCreator")
   crewSlots          CrewSlot[]
   eventSignups       EventSignup[]
   fuelLogEntries     FuelLogEntry[]
@@ -116,6 +118,7 @@ model CertificationType {
 
   memberCertifications  MemberCertification[]
   credentialRequirements CredentialRequirement[]
+  requirementAdjustments PromotionRequirementAdjustment[]
 }
 
 enum CertStatus {
@@ -183,6 +186,7 @@ model CredentialType {
   requirements    CredentialRequirement[]
   memberCredentials MemberCredential[]
   promotionRequests PromotionRequest[]
+  requirementAdjustments PromotionRequirementAdjustment[]
 }
 
 // Holding this credential ACTIVE confers the linked role's permissions
@@ -225,6 +229,7 @@ model CredentialRequirement {
   certificationType CertificationType? @relation(fields: [certificationTypeId], references: [id])
   evalTemplate      EvalFormTemplate?  @relation(fields: [evalTemplateId], references: [id])
   class             TrainingClass?     @relation(fields: [classId], references: [id])
+  adjustments       PromotionRequirementAdjustment[]
 }
 
 enum CredentialStatus {
@@ -271,6 +276,7 @@ model EvalFormTemplate {
   items                  EvalFormItem[]
   evaluations            Evaluation[]
   credentialRequirements CredentialRequirement[]
+  requirementAdjustments PromotionRequirementAdjustment[]
 
   @@unique([name, version])
 }
@@ -340,6 +346,41 @@ enum PromoStatus {
   APPROVED
   DENIED
   WITHDRAWN
+}
+
+// Per-member tweaks to a credential's requirement checklist: waive a base
+// requirement, or add extra ones (structured, or free-text checked off
+// manually). Applied wherever the checklist is computed.
+enum AdjustmentKind {
+  WAIVER
+  ADDITIONAL
+}
+
+model PromotionRequirementAdjustment {
+  id                  Int             @id @default(autoincrement())
+  memberId            Int
+  credentialTypeId    Int
+  kind                AdjustmentKind
+  requirementId       Int? // WAIVER: the base requirement being waived
+  reqKind             RequirementKind? // ADDITIONAL structured requirement
+  certificationTypeId Int?
+  evalTemplateId      Int?
+  count               Int?
+  classId             Int?
+  note                String? // waiver reason, or the free-text requirement itself
+  satisfiedAt         DateTime? // manual completion for free-text ADDITIONAL items
+  createdById         Int
+  createdAt           DateTime        @default(now())
+
+  member            Member                 @relation("AdjustmentSubject", fields: [memberId], references: [id], onDelete: Cascade)
+  credentialType    CredentialType         @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
+  requirement       CredentialRequirement? @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  certificationType CertificationType?     @relation(fields: [certificationTypeId], references: [id])
+  evalTemplate      EvalFormTemplate?      @relation(fields: [evalTemplateId], references: [id])
+  class             TrainingClass?         @relation(fields: [classId], references: [id])
+  createdBy         Member                 @relation("AdjustmentCreator", fields: [createdById], references: [id])
+
+  @@index([memberId, credentialTypeId])
 }
 
 model PromotionRequest {
@@ -685,6 +726,7 @@ model TrainingClass {
 
   attendance             ClassAttendance[]
   credentialRequirements CredentialRequirement[]
+  requirementAdjustments PromotionRequirementAdjustment[]
 }
 
 enum AttendanceStatus {

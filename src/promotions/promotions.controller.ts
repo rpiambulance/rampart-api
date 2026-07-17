@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -28,6 +29,45 @@ class VoteDto {
 class ProxyDto {
   @IsInt()
   proxyId!: number;
+}
+
+class AdjustmentDto {
+  @IsInt()
+  memberId!: number;
+
+  @IsInt()
+  credentialTypeId!: number;
+
+  @IsIn(['WAIVER', 'ADDITIONAL'])
+  kind!: 'WAIVER' | 'ADDITIONAL';
+
+  @IsOptional()
+  @IsInt()
+  requirementId?: number;
+
+  @IsOptional()
+  @IsIn(['CERTIFICATION', 'EVALUATION_COUNT', 'CLASS'])
+  reqKind?: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS';
+
+  @IsOptional()
+  @IsInt()
+  certificationTypeId?: number;
+
+  @IsOptional()
+  @IsInt()
+  evalTemplateId?: number;
+
+  @IsOptional()
+  @IsInt()
+  count?: number;
+
+  @IsOptional()
+  @IsInt()
+  classId?: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 class CaptainDto {
@@ -110,6 +150,43 @@ export class PromotionsController {
       body.approved,
       body.notes,
     );
+  }
+
+  // ---- per-member requirement adjustments ----
+
+  @Get('adjustments/:memberId/:credentialTypeId')
+  @RequirePermissions(PERMISSIONS.PROMOTIONS_REVIEW)
+  listAdjustments(
+    @Param('memberId', ParseIntPipe) memberId: number,
+    @Param('credentialTypeId', ParseIntPipe) credentialTypeId: number,
+  ) {
+    return this.promotions.listAdjustments(memberId, credentialTypeId);
+  }
+
+  @Post('adjustments')
+  @RequirePermissions(PERMISSIONS.PROMOTIONS_ADJUST)
+  createAdjustment(@CurrentAuth() auth: AuthContext, @Body() body: AdjustmentDto) {
+    requireMember(auth);
+    return this.promotions.createAdjustment(
+      auth as AuthContext & { kind: 'member' },
+      body,
+    );
+  }
+
+  @Patch('adjustments/:id')
+  @RequirePermissions(PERMISSIONS.PROMOTIONS_ADJUST)
+  setAdjustmentSatisfied(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { satisfied: boolean },
+  ) {
+    return this.promotions.setAdjustmentSatisfied(auth, id, !!body.satisfied);
+  }
+
+  @Delete('adjustments/:id')
+  @RequirePermissions(PERMISSIONS.PROMOTIONS_ADJUST)
+  removeAdjustment(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+    return this.promotions.removeAdjustment(auth, id);
   }
 
   @Delete('requests/:id')
