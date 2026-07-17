@@ -709,15 +709,31 @@ model ClassAttendance {
 // Ops logs
 // ---------------------------------------------------------------------------
 
-model FuelLogEntry {
-  id       Int      @id @default(autoincrement())
-  loggedAt DateTime
-  memberId Int
-  vehicle  String
-  amount   Decimal  @db.Decimal(6, 2)
-  mileage  Int
+model Vehicle {
+  id     Int     @id @default(autoincrement())
+  name   String  @unique // e.g. "A-1", "Fly Car"
+  make   String?
+  model  String?
+  year   Int?
+  plate  String?
+  vin    String?
+  notes  String?
+  active Boolean @default(true)
 
-  member Member @relation(fields: [memberId], references: [id])
+  fuelEntries FuelLogEntry[]
+}
+
+model FuelLogEntry {
+  id        Int      @id @default(autoincrement())
+  loggedAt  DateTime
+  memberId  Int
+  vehicle   String // display label (kept for legacy-migrated rows)
+  vehicleId Int?
+  amount    Decimal  @db.Decimal(6, 2)
+  mileage   Int
+
+  member     Member   @relation(fields: [memberId], references: [id])
+  vehicleRef Vehicle? @relation(fields: [vehicleId], references: [id])
 }
 
 model Radio {

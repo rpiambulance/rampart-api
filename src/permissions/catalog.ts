@@ -28,6 +28,7 @@ export const PERMISSIONS = {
   TRAININGS_MANAGE: 'trainings:manage',
   FUEL_WRITE: 'fuel:write',
   RADIOS_MANAGE: 'radios:manage',
+  VEHICLES_MANAGE: 'vehicles:manage',
   TOKENS_MANAGE: 'tokens:manage',
   AUDIT_READ: 'audit:read',
   INTEGRATIONS_MANAGE: 'integrations:manage',

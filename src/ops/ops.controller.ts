@@ -6,10 +6,12 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
 import {
+  IsBoolean,
   IsDateString,
   IsInt,
   IsNumber,
@@ -27,14 +29,77 @@ class FuelEntryDto {
   @IsDateString()
   loggedAt!: string;
 
-  @IsString()
-  vehicle!: string;
+  @IsInt()
+  vehicleId!: number;
 
   @IsNumber()
   amount!: number;
 
   @IsInt()
   mileage!: number;
+}
+
+class VehicleDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  make?: string;
+
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @IsOptional()
+  @IsInt()
+  year?: number;
+
+  @IsOptional()
+  @IsString()
+  plate?: string;
+
+  @IsOptional()
+  @IsString()
+  vin?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+class PatchVehicleDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  make?: string;
+
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @IsOptional()
+  @IsInt()
+  year?: number;
+
+  @IsOptional()
+  @IsString()
+  plate?: string;
+
+  @IsOptional()
+  @IsString()
+  vin?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }
 
 class RadioDto {
@@ -82,16 +147,53 @@ export class OpsController {
   }
 
   @Post('fuel')
-  addFuel(@CurrentAuth() auth: AuthContext, @Body() body: FuelEntryDto) {
+  async addFuel(@CurrentAuth() auth: AuthContext, @Body() body: FuelEntryDto) {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: body.vehicleId },
+    });
+    if (!vehicle || !vehicle.active) {
+      throw new ForbiddenException('Unknown or retired vehicle');
+    }
     return this.prisma.fuelLogEntry.create({
       data: {
         loggedAt: new Date(body.loggedAt),
         memberId: requireMember(auth),
-        vehicle: body.vehicle,
+        vehicle: vehicle.name,
+        vehicleId: vehicle.id,
         amount: body.amount,
         mileage: body.mileage,
       },
     });
+  }
+
+  // ---- vehicles ----
+
+  @Get('vehicles')
+  vehicles(@Query('includeRetired') includeRetired?: string) {
+    return this.prisma.vehicle.findMany({
+      where: includeRetired === 'true' ? {} : { active: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  @Post('vehicles')
+  @RequirePermissions(PERMISSIONS.VEHICLES_MANAGE)
+  async addVehicle(@CurrentAuth() auth: AuthContext, @Body() body: VehicleDto) {
+    const vehicle = await this.prisma.vehicle.create({ data: body });
+    await this.audit.log(auth, 'vehicles.create', 'Vehicle', vehicle.id);
+    return vehicle;
+  }
+
+  @Patch('vehicles/:id')
+  @RequirePermissions(PERMISSIONS.VEHICLES_MANAGE)
+  async updateVehicle(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: PatchVehicleDto,
+  ) {
+    const vehicle = await this.prisma.vehicle.update({ where: { id }, data: body });
+    await this.audit.log(auth, 'vehicles.update', 'Vehicle', id, body);
+    return vehicle;
   }
 
   // ---- radios ----
