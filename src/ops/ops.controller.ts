@@ -255,10 +255,37 @@ export class OpsController {
 
   @Get('audit')
   @RequirePermissions(PERMISSIONS.AUDIT_READ)
-  auditLog(@Query('limit') limit?: string) {
-    return this.prisma.auditLog.findMany({
+  async auditLog(@Query('limit') limit?: string) {
+    const entries = await this.prisma.auditLog.findMany({
       orderBy: { at: 'desc' },
       take: limit ? Math.min(Number(limit), 500) : 100,
     });
+    // resolve member actors to names for display
+    const memberIds = [
+      ...new Set(
+        entries
+          .filter((e) => e.actorType === 'MEMBER' && e.actorId != null)
+          .map((e) => e.actorId!),
+      ),
+    ];
+    const members = memberIds.length
+      ? await this.prisma.member.findMany({
+          where: { id: { in: memberIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const names = new Map(
+      members.map((m) => [m.id, `${m.firstName} ${m.lastName}`]),
+    );
+    return entries.map((e) => ({
+      ...e,
+      id: String(e.id), // BigInt is not JSON-serializable
+      actorName:
+        e.actorType === 'MEMBER' && e.actorId != null
+          ? (names.get(e.actorId) ?? `member #${e.actorId}`)
+          : e.actorType === 'API_TOKEN'
+            ? `token #${e.actorId}`
+            : 'system',
+    }));
   }
 }
