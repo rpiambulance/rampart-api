@@ -76,6 +76,7 @@ model Role {
   isOfficer   Boolean          @default(false)
   permissions RolePermission[]
   members     MemberRole[]
+  credentialLinks CredentialTypeRole[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -176,11 +177,24 @@ model CredentialType {
   isAddOn     Boolean     @default(false) // FR-CC, EES
   active      Boolean     @default(true)
 
+  linkedRoles     CredentialTypeRole[] // roles conferred automatically while ACTIVE
   prerequisites   CredentialPrerequisite[] @relation("Prerequisites")
   prerequisiteOf  CredentialPrerequisite[] @relation("PrerequisiteOf")
   requirements    CredentialRequirement[]
   memberCredentials MemberCredential[]
   promotionRequests PromotionRequest[]
+}
+
+// Holding this credential ACTIVE confers the linked role's permissions
+// (additive with explicitly assigned roles; suspension removes them).
+model CredentialTypeRole {
+  credentialTypeId Int
+  roleId           Int
+
+  credentialType CredentialType @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
+  role           Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([credentialTypeId, roleId])
 }
 
 model CredentialPrerequisite {

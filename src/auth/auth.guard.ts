@@ -74,6 +74,18 @@ export class AuthGuard implements CanActivate {
         roles: {
           include: { role: { include: { permissions: true } } },
         },
+        credentials: {
+          where: { status: 'ACTIVE' },
+          include: {
+            type: {
+              include: {
+                linkedRoles: {
+                  include: { role: { include: { permissions: true } } },
+                },
+              },
+            },
+          },
+        },
       },
     });
     if (!member) {
@@ -98,6 +110,15 @@ export class AuthGuard implements CanActivate {
       const notEnded = !assignment.endDate || assignment.endDate >= today;
       if (started && notEnded) {
         for (const p of assignment.role.permissions) {
+          permissions.add(p.permission);
+        }
+      }
+    }
+    // Roles linked to ACTIVE credentials confer their permissions too
+    // (additive; automatic suspension removes them).
+    for (const credential of member.credentials) {
+      for (const link of credential.type.linkedRoles) {
+        for (const p of link.role.permissions) {
           permissions.add(p.permission);
         }
       }

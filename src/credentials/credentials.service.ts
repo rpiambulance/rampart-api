@@ -33,6 +33,7 @@ export class CredentialsService {
       where: { active: true },
       include: {
         prerequisites: { include: { requiresType: { select: { key: true } } } },
+        linkedRoles: { include: { role: { select: { id: true, name: true } } } },
         requirements: {
           include: {
             certificationType: true,
@@ -42,6 +43,21 @@ export class CredentialsService {
         },
       },
       orderBy: { id: 'asc' },
+    });
+  }
+
+  async setLinkedRoles(credentialTypeId: number, roleIds: number[]) {
+    await this.prisma.credentialTypeRole.deleteMany({
+      where: { credentialTypeId },
+    });
+    if (roleIds.length) {
+      await this.prisma.credentialTypeRole.createMany({
+        data: [...new Set(roleIds)].map((roleId) => ({ credentialTypeId, roleId })),
+      });
+    }
+    return this.prisma.credentialType.findUnique({
+      where: { id: credentialTypeId },
+      include: { linkedRoles: { include: { role: true } } },
     });
   }
 

@@ -6,8 +6,9 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Put,
 } from '@nestjs/common';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -24,6 +25,12 @@ class GrantDto {
   @IsOptional()
   @IsString()
   title?: string;
+}
+
+class LinkedRolesDto {
+  @IsArray()
+  @IsInt({ each: true })
+  roleIds!: number[];
 }
 
 class RequirementDto {
@@ -66,6 +73,16 @@ export class CredentialsController {
   @Get('types')
   types() {
     return this.credentials.listTypes();
+  }
+
+  /** Replace the roles conferred by holding this credential (roles:manage). */
+  @Put('types/:id/roles')
+  @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
+  setLinkedRoles(
+    @Param('id', ParseIntPipe) credentialTypeId: number,
+    @Body() body: LinkedRolesDto,
+  ) {
+    return this.credentials.setLinkedRoles(credentialTypeId, body.roleIds);
   }
 
   @Post('types/:id/requirements')
