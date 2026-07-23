@@ -11,7 +11,7 @@ USERNAME="${1:-dev}"
 PASSWORD="${2:-dev}"
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
 REALM="${KEYCLOAK_REALM:-rampart}"
-CLIENT_ID="${KEYCLOAK_CLIENT_ID:-rampart-web}"
+CLIENT_ID="${KEYCLOAK_CLIENT_ID:-central}"
 CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-dev-secret}"
 
 curl -sf -X POST "$KEYCLOAK_URL/realms/$REALM/protocol/openid-connect/token" \

@@ -4,8 +4,8 @@
   "registrationAllowed": false,
   "clients": [
     {
-      "clientId": "rampart-web",
-      "name": "Rampart Web",
+      "clientId": "central",
+      "name": "Central (member portal)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -17,6 +17,35 @@
       ],
       "webOrigins": [
         "http://localhost:3000"
+      ],
+      "protocolMappers": [
+        {
+          "name": "rampart-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "rampart-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "rampart-admin",
+      "name": "Rampart Admin console",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-secret-admin",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://localhost:3002/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3002"
       ],
       "protocolMappers": [
         {

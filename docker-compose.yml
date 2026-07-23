@@ -50,7 +50,7 @@ services:
     environment:
       DATABASE_URL: postgresql://rampart:rampart@postgres:5432/rampart
       PORT: 3001
-      WEB_ORIGIN: http://localhost:3000
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000,http://localhost:3002}
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://keycloak:8080/realms/rampart}
       KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-rampart-api}
       STORAGE_DRIVER: local
