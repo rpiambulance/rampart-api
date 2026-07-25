@@ -31,6 +31,8 @@ export const PERMISSIONS = {
   RADIOS_MANAGE: 'radios:manage',
   VEHICLES_MANAGE: 'vehicles:manage',
   TOKENS_MANAGE: 'tokens:manage',
+  DISPATCHES_INGEST: 'dispatches:ingest',
+  DISPATCHES_READ: 'dispatches:read',
   AUDIT_READ: 'audit:read',
   INTEGRATIONS_MANAGE: 'integrations:manage',
 } as const;

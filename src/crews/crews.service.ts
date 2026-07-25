@@ -89,6 +89,7 @@ export class CrewsService {
       select: { dob: true },
     });
     const heldKeys = await this.graph.heldKeys(memberId);
+    const outstandingTraining = await this.outstandingBlockingTraining(memberId);
 
     const weeks: Array<Array<Record<string, unknown>>> = [[], []];
     for (let i = 0; i < 14; i++) {
@@ -134,6 +135,7 @@ export class CrewsService {
             knobs,
             day,
             memberDatesInRotation: rotationDates,
+            outstandingTraining,
           });
           view.eligible = result.eligible;
           view.reason = result.reason;
@@ -208,6 +210,7 @@ export class CrewsService {
         dateStr,
         knobs.rotationWeeks,
       ),
+      outstandingTraining: await this.outstandingBlockingTraining(memberId),
     });
     if (!result.eligible) {
       throw new ForbiddenException(result.reason || 'Not eligible');
@@ -450,6 +453,21 @@ export class CrewsService {
     }
     await this.prisma.crewAbsence.delete({ where: { id: absenceId } });
     return { ok: true };
+  }
+
+  /** Name of an outstanding blocksScheduling annual training for the member. */
+  private async outstandingBlockingTraining(
+    memberId: number,
+  ): Promise<string | null> {
+    const year = Number(nyNow().dateStr.slice(0, 4));
+    const blocking = await this.prisma.annualTrainingRequirement.findMany({
+      where: { active: true, blocksScheduling: true, year },
+      include: { completions: { where: { memberId } } },
+    });
+    const outstanding = blocking.find(
+      (req) => !req.completions.some((c) => c.completedAt != null),
+    );
+    return outstanding?.name ?? null;
   }
 
   // ---------------------------------------------------------------- helpers

@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthGuard } from './auth/auth.guard';
 import { AvailabilityController } from './availability/availability.controller';
 import { CoverageController } from './coverage/coverage.controller';
+import { DispatchesController } from './dispatches/dispatches.controller';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { CalendarController } from './calendar/calendar.controller';
 import { CertificationsModule } from './certifications/certifications.module';
@@ -44,6 +45,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     HealthController,
     AvailabilityController,
     CoverageController,
+    DispatchesController,
     CalendarController,
     TokensController,
     OpsController,

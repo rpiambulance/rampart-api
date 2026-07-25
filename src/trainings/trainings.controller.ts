@@ -37,12 +37,20 @@ class AnnualTrainingDto {
   @IsOptional()
   @IsBoolean()
   alertOnLapse?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  blocksScheduling?: boolean;
 }
 
 class PatchAnnualTrainingDto {
   @IsOptional()
   @IsBoolean()
   alertOnLapse?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  blocksScheduling?: boolean;
 
   @IsOptional()
   @IsBoolean()

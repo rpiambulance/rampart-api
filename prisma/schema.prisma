@@ -695,11 +695,12 @@ model CoverageMessage {
 // ---------------------------------------------------------------------------
 
 model AnnualTrainingRequirement {
-  id            Int     @id @default(autoincrement())
-  name          String
-  year          Int
-  alertOnLapse  Boolean @default(true) // per-training toggle: alert officers when a member lapses
-  active        Boolean @default(true)
+  id               Int     @id @default(autoincrement())
+  name             String
+  year             Int
+  alertOnLapse     Boolean @default(true) // per-training toggle: alert officers when a member lapses
+  blocksScheduling Boolean @default(false) // outstanding completion blocks night-crew signup
+  active           Boolean @default(true)
 
   completions MemberAnnualTraining[]
 
@@ -801,6 +802,26 @@ model RadioAssignment {
 
   @@index([radioId])
   @@index([memberId])
+}
+
+// Parsed text-message dispatches ingested from Herald (techinems/herald).
+model Dispatch {
+  id             Int      @id @default(autoincrement())
+  receivedAt     DateTime @default(now())
+  determinant    String? // Alpha/Bravo/Charlie/Delta/Echo/Unknown
+  complaint      String?
+  location       String?
+  business       String?
+  additionalInfo String?
+  crossStreets   String?
+  units          String? // e.g. "E59"
+  responseAreas  String?
+  latitude       Float?
+  longitude      Float?
+  geocodedPlace  String?
+  raw            Json // the full payload as received, for reprocessing
+
+  @@index([receivedAt])
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,8 @@ export interface EligibilityInput {
   day: DayContext;
   /** Dates in the rotation window (target week + previous rotationWeeks-1 weeks) the member is already on. */
   memberDatesInRotation: string[];
+  /** Name of an outstanding blocksScheduling annual training, if any. */
+  outstandingTraining?: string | null;
 }
 
 export interface Eligibility {
@@ -59,6 +61,12 @@ export class CrewEligibilityService {
     }
     if (day.memberOnThisDate) {
       return { eligible: false, reason: 'Already on this crew' };
+    }
+    if (input.outstandingTraining) {
+      return {
+        eligible: false,
+        reason: `Outstanding required training: ${input.outstandingTraining}`,
+      };
     }
     const publicWindowEnd = addDays(
       startOfWeek(now.dateStr),
