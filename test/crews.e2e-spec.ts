@@ -642,6 +642,49 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('remembered events view', () => {
+    it('defaults to the list and remembers a chosen view', async () => {
+      const before = await request(app.getHttpServer())
+        .get('/v1/members/me')
+        .set(as(bob))
+        .expect(200);
+      expect(before.body.eventView).toBe('list');
+
+      await request(app.getHttpServer())
+        .patch('/v1/members/me')
+        .set(as(bob))
+        .send({ eventView: 'month' })
+        .expect(200);
+
+      const after = await request(app.getHttpServer())
+        .get('/v1/members/me')
+        .set(as(bob))
+        .expect(200);
+      expect(after.body.eventView).toBe('month');
+    });
+
+    it('rejects a view it does not have', async () => {
+      await request(app.getHttpServer())
+        .patch('/v1/members/me')
+        .set(as(bob))
+        .send({ eventView: 'agenda' })
+        .expect(400);
+    });
+
+    it('does not let the preference carry other fields in', async () => {
+      // SelfEditDto is whitelisted: a member must not flip their own active
+      // flag by piggybacking on a preference update.
+      await request(app.getHttpServer())
+        .patch('/v1/members/me')
+        .set(as(bob))
+        .send({ eventView: 'week', active: false })
+        .expect(200);
+      const member = await prisma.member.findUniqueOrThrow({ where: { id: bob } });
+      expect(member.active).toBe(true);
+      expect(member.eventView).toBe('week');
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

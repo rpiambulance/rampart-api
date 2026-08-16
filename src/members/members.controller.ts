@@ -31,6 +31,11 @@ class SelfEditDto {
   @IsIn(['sidebar', 'topnav'])
   navLayout?: 'sidebar' | 'topnav';
 
+  /** Remembered events view, so the tab you last chose is the one you land on. */
+  @IsOptional()
+  @IsIn(['list', 'day', 'week', 'month'])
+  eventView?: 'list' | 'day' | 'week' | 'month';
+
   @IsOptional()
   @IsEmail()
   personalEmail?: string;

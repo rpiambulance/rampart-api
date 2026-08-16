@@ -189,6 +189,7 @@ export class MembersService {
       localAddress: string;
       homeAddress: string;
       navLayout: string;
+      eventView: string;
       rcsId: string;
       rin: string;
       keycloakSubject: string;
