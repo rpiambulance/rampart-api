@@ -4,6 +4,12 @@
  */
 import * as mysql from 'mysql2/promise';
 import type { PrismaClient } from '../generated/prisma/client';
+import {
+  guardRecord,
+  writeWithConflictPrompt,
+  type ConflictContext,
+  type ConflictResolver,
+} from './conflicts';
 
 /** Accepts either the Nest PrismaService or a bare client. */
 export type LegacyPrisma = PrismaClient;
@@ -88,12 +94,24 @@ export async function runLegacyMigration(
   prisma: LegacyPrisma,
   mysqlUrl: string,
   log: (message: string) => void = () => {},
+  /**
+   * Called whenever legacy data violates a uniqueness constraint. The import
+   * never guesses and never aborts on a conflict — the administrator running
+   * it decides. See conflicts.ts.
+   */
+  resolveConflict: ConflictResolver = () => {
+    throw new Error(
+      'This legacy data has a uniqueness conflict, but no way to ask how to ' +
+        'resolve it was supplied. Run the migration from the admin console.',
+    );
+  },
 ): Promise<string[]> {
   const summary: string[] = [];
   const record = (m: string) => {
     summary.push(m);
     log(m);
   };
+  const ctx: ConflictContext = { resolve: resolveConflict, record };
   const host = mysqlUrl.replace(/^mysql:\/\/[^@]*@/, '').split('/')[0];
   let db: mysql.Connection;
   try {
@@ -138,83 +156,72 @@ export async function runLegacyMigration(
     legacyMembers.filter((m) => m.id <= 0).map((m) => [Number(m.id), m.last_name || 'CLOSED']),
   );
   const memberIdByLegacy = new Map<number, number>();
-
-  // Email is unique in Postgres but was not in the legacy schema, and rows
-  // may already exist here from the admin bootstrap. Track what we've claimed
-  // so a collision falls back to a synthetic address rather than aborting.
-  const claimedEmails = new Set<string>();
+  let skippedMembers = 0;
 
   for (const m of realMembers) {
     const legacyId = Number(m.id);
-    const fallbackEmail = `legacy-${m.id}@rpiambulance.invalid`;
-    let email =
-      (m.email || '').trim().toLowerCase() || fallbackEmail;
-    if (claimedEmails.has(email)) {
-      record(
-        `  ! legacy member ${m.id} repeats email ${email}; stored as ${fallbackEmail}`,
-      );
-      email = fallbackEmail;
+    const label = `legacy member ${m.id} (${
+      [m.first_name, m.last_name].filter(Boolean).join(' ') || 'unnamed'
+    })`;
+    // Legacy allowed a blank email; Postgres requires one. There is nothing to
+    // preserve and no conflict to resolve, so fill in a placeholder rather
+    // than asking the administrator about every address-less member.
+    const syntheticEmail = `legacy-${m.id}@rpiambulance.invalid`;
+    const email = (m.email || '').trim().toLowerCase() || syntheticEmail;
+    if (email === syntheticEmail) {
+      record(`  ${label}: no email in legacy data; stored as ${syntheticEmail}`);
     }
-    claimedEmails.add(email);
 
     let member = await prisma.member.findUnique({ where: { legacyId } });
     if (!member) {
-      // A member may already exist under this email without a legacyId —
-      // typically the bootstrapped administrator, who is the same person as
-      // their legacy record. Adopt that row instead of failing on the unique
-      // email; never overwrite fields they may have already edited.
-      const existing = await prisma.member.findUnique({ where: { email } });
-      if (existing && existing.legacyId === null) {
-        member = await prisma.member.update({
-          where: { id: existing.id },
-          data: { legacyId },
-        });
-        record(`  linked existing member ${existing.id} (${email}) to legacy ${m.id}`);
-      } else if (existing) {
-        // Already owned by a different legacy member — never steal the row.
-        record(
-          `  ! ${email} already belongs to legacy ${existing.legacyId}; legacy ${m.id} stored as ${fallbackEmail}`,
-        );
-        email = fallbackEmail;
-        member = await prisma.member.create({
-          data: {
-            legacyId,
-            firstName: m.first_name,
-            lastName: m.last_name,
-            dob: cleanDate(m.dob),
-            email,
-            cellPhone: m.cell_phone || null,
-            homePhone: m.home_phone || null,
-            localAddress: m.rpi_address || null,
-            homeAddress: m.home_address || null,
-            rcsId: m.rcs_id || null,
-            rin: m.rin ? String(m.rin) : null,
-            facilityId: m.facility_id || null,
-            cardId: m.card_id || null,
-            slackId: m.slackID || null,
-            active: m.active === 1 && m.access_revoked !== 1,
-          },
-        });
-      } else {
-        member = await prisma.member.create({
-          data: {
-            legacyId,
-            firstName: m.first_name,
-            lastName: m.last_name,
-            dob: cleanDate(m.dob),
-            email,
-            cellPhone: m.cell_phone || null,
-            homePhone: m.home_phone || null,
-            localAddress: m.rpi_address || null,
-            homeAddress: m.home_address || null,
-            rcsId: m.rcs_id || null,
-            rin: m.rin ? String(m.rin) : null,
-            facilityId: m.facility_id || null,
-            cardId: m.card_id || null,
-            slackId: m.slackID || null,
-            active: m.active === 1 && m.access_revoked !== 1,
-          },
-        });
+      member = await writeWithConflictPrompt(ctx, {
+        entity: 'Member',
+        label,
+        data: {
+          legacyId,
+          firstName: m.first_name,
+          lastName: m.last_name,
+          dob: cleanDate(m.dob),
+          email,
+          cellPhone: m.cell_phone || null,
+          homePhone: m.home_phone || null,
+          localAddress: m.rpi_address || null,
+          homeAddress: m.home_address || null,
+          rcsId: m.rcs_id || null,
+          rin: m.rin ? String(m.rin) : null,
+          facilityId: m.facility_id || null,
+          cardId: m.card_id || null,
+          slackId: m.slackID || null,
+          active: m.active === 1 && m.access_revoked !== 1,
+        },
+        write: (data) =>
+          prisma.member.create({ data: data as Parameters<typeof prisma.member.create>[0]['data'] }),
+        findExisting: async (field, value) => {
+          if (value === null || value === undefined || value === '') return null;
+          const row = await prisma.member.findFirst({
+            where: { [field]: value } as Record<string, unknown>,
+          });
+          if (!row) return null;
+          return {
+            id: row.id,
+            summary: `${row.firstName} ${row.lastName} <${row.email}>`,
+            // A row already claimed by another legacy member must never be
+            // re-pointed, or the earlier import would silently lose its record.
+            linkable: row.legacyId === null,
+          };
+        },
+        // Adopt the existing person (typically the bootstrapped administrator,
+        // who is the same human as this legacy record) without overwriting
+        // anything they have already edited here.
+        link: (existingId) =>
+          prisma.member.update({ where: { id: existingId }, data: { legacyId } }),
+        suggest: (field) => (field === 'email' ? syntheticEmail : undefined),
+        clearable: (field) => field !== 'email',
+      });
+      if (!member) {
+        // administrator chose to skip this member
+        skippedMembers++;
+        continue;
       }
     }
     memberIdByLegacy.set(legacyId, member.id);
@@ -295,7 +302,11 @@ export async function runLegacyMigration(
       }
     }
   }
-  record(`Members: ${realMembers.length} (+${placeholders.size} placeholders)`);
+  record(
+    `Members: ${realMembers.length - skippedMembers} imported` +
+      (skippedMembers ? `, ${skippedMembers} skipped` : '') +
+      ` (+${placeholders.size} placeholders)`,
+  );
 
   const slotValue = (legacy: number) => {
     if (!legacy || legacy === 0) return { memberId: null, placeholder: null };
@@ -310,6 +321,7 @@ export async function runLegacyMigration(
   for (const c of crews) {
     const date = cleanDate(c.date);
     if (!date) continue;
+    await guardRecord(ctx, 'Crew', `legacy crew ${c.date}`, async () => {
     const crew = await prisma.crew.upsert({
       where: { date },
       create: { date },
@@ -323,11 +335,13 @@ export async function runLegacyMigration(
         update: value,
       });
     }
+    });
   }
   record(`Crews: ${crews.length}`);
 
   const defaults = await query('SELECT * FROM default_crews');
   for (const d of defaults) {
+    await guardRecord(ctx, 'DefaultCrewTemplate', `legacy default crew weekday ${d.day}`, async () => {
     for (const [legacyCol, position] of CREW_POSITIONS) {
       const value = slotValue(Number(d[legacyCol]));
       await prisma.defaultCrewTemplate.upsert({
@@ -336,6 +350,7 @@ export async function runLegacyMigration(
         update: value,
       });
     }
+    });
   }
   record(`Default crew template: ${defaults.length} weekdays`);
 
@@ -355,6 +370,7 @@ export async function runLegacyMigration(
   const gamesCrews = await query('SELECT * FROM games_crews');
   for (const g of games) {
     if (!cleanDate(g.date)) continue;
+    await guardRecord(ctx, 'Event', `legacy game ${g.id} (${g.description || 'Game'})`, async () => {
     const signups = gamesCrews.filter((s) => Number(s.gameid) === Number(g.id));
     const positionCounts = new Map<string, number>();
     for (const s of signups) {
@@ -402,6 +418,7 @@ export async function runLegacyMigration(
         update: {},
       });
     }
+    });
   }
   record(`Games: ${games.length} (${gamesCrews.length} signups)`);
 
@@ -409,6 +426,7 @@ export async function runLegacyMigration(
   const attendees = await query('SELECT * FROM events_attendees');
   for (const e of events) {
     if (!cleanDate(e.date)) continue;
+    await guardRecord(ctx, 'Event', `legacy event ${e.id} (${e.description || 'Event'})`, async () => {
     const cap = Number(e.limit);
     const event = await prisma.event.upsert({
       where: { legacyKey: `event-${e.id}` },
@@ -434,6 +452,7 @@ export async function runLegacyMigration(
         update: {},
       });
     }
+    });
   }
   record(`Events: ${events.length} (${attendees.length} attendees)`);
 
@@ -443,6 +462,7 @@ export async function runLegacyMigration(
     if (!cleanDate(f.date)) continue;
     const memberId = memberIdByLegacy.get(Number(f.user));
     if (!memberId) continue;
+    await guardRecord(ctx, 'FuelLogEntry', `legacy fuel log ${f.date} ${f.vehicle}`, async () => {
     const loggedAt = nyToUtc(f.date, f.time || '00:00:00');
     const existing = await prisma.fuelLogEntry.findFirst({
       where: { loggedAt, memberId, vehicle: f.vehicle },
@@ -458,12 +478,14 @@ export async function runLegacyMigration(
         },
       });
     }
+    });
   }
   record(`Fuel log: ${fuel.length}`);
 
   const radios = await query('SELECT * FROM radios');
   const radioLog = await query('SELECT * FROM radio_log');
   for (const r of radios) {
+    await guardRecord(ctx, 'Radio', `legacy radio ${r.id}`, async () => {
     const radio = await prisma.radio.upsert({
       where: { number: String(r.id) },
       create: { number: String(r.id), model: r.model || null, serial: r.serial || null },
@@ -500,6 +522,7 @@ export async function runLegacyMigration(
         });
       }
     }
+    });
   }
   record(`Radios: ${radios.length} (${radioLog.length} log rows)`);
 

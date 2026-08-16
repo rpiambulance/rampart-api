@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -7,7 +8,7 @@ import {
   Logger,
   Post,
 } from '@nestjs/common';
-import { IsString, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { AuditService } from '../audit/audit.service';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -15,6 +16,25 @@ import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { runLegacyMigration } from './legacy-migration';
+import type {
+  ConflictAction,
+  ConflictResolution,
+  ConflictResolver,
+  MigrationConflict,
+} from './conflicts';
+
+class ResolveConflictDto {
+  @IsString()
+  conflictId!: string;
+
+  @IsIn(['link', 'replace', 'skip'])
+  action!: ConflictAction;
+
+  /** The new value, when action is 'replace'. Blank clears a nullable field. */
+  @IsOptional()
+  @IsString()
+  value?: string;
+}
 
 class StartMigrationDto {
   /** e.g. mysql://user:pass@host:3306/ambulanc_web */
@@ -26,12 +46,14 @@ class StartMigrationDto {
 }
 
 type RunState = {
-  status: 'idle' | 'running' | 'succeeded' | 'failed';
+  status: 'idle' | 'running' | 'awaiting-input' | 'succeeded' | 'failed';
   startedAt?: string;
   finishedAt?: string;
   startedBy?: string;
   progress: string[];
   error?: string;
+  /** Set while status is 'awaiting-input': the question blocking the import. */
+  pendingConflict?: MigrationConflict;
 };
 
 /**
@@ -49,11 +71,56 @@ class LegacyMigrationRunner {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  private pending?: {
+    conflict: MigrationConflict;
+    answer: (resolution: ConflictResolution) => void;
+  };
+
   isRunning(): boolean {
-    return this.state.status === 'running';
+    return this.state.status === 'running' || this.state.status === 'awaiting-input';
+  }
+
+  /**
+   * Parks the import until an administrator answers. The legacy schema had
+   * almost no uniqueness, so its data regularly collides with constraints we
+   * do enforce; rather than guessing or aborting, the run stops and asks.
+   */
+  private readonly resolver: ConflictResolver = (conflict) =>
+    new Promise<ConflictResolution>((answer) => {
+      this.pending = { conflict, answer };
+      this.state.pendingConflict = conflict;
+      this.state.status = 'awaiting-input';
+      this.logger.warn(
+        `Waiting for administrator: ${conflict.label} conflicts on ${conflict.fields.join(', ')}`,
+      );
+    });
+
+  /** Returns the conflict that was answered, for the audit trail. */
+  resolveConflict(dto: ResolveConflictDto): MigrationConflict {
+    const pending = this.pending;
+    if (!pending || this.state.status !== 'awaiting-input') {
+      throw new ConflictException('The migration is not waiting for input');
+    }
+    if (pending.conflict.id !== dto.conflictId) {
+      // Two admins on the page at once, or a stale form after a reload.
+      throw new ConflictException(
+        'That question has already been answered; reload for the current one',
+      );
+    }
+    if (!pending.conflict.options.some((o) => o.action === dto.action)) {
+      throw new BadRequestException(
+        `"${dto.action}" is not one of the available choices for this conflict`,
+      );
+    }
+    this.pending = undefined;
+    this.state.pendingConflict = undefined;
+    this.state.status = 'running';
+    pending.answer({ action: dto.action, value: dto.value });
+    return pending.conflict;
   }
 
   start(mysqlUrl: string, startedBy: string): void {
+    this.pending = undefined;
     this.state = {
       status: 'running',
       startedAt: new Date().toISOString(),
@@ -66,10 +133,15 @@ class LegacyMigrationRunner {
 
   private async run(mysqlUrl: string): Promise<void> {
     try {
-      await runLegacyMigration(this.prisma, mysqlUrl, (message) => {
-        this.logger.log(message);
-        this.state.progress.push(message);
-      });
+      await runLegacyMigration(
+        this.prisma,
+        mysqlUrl,
+        (message) => {
+          this.logger.log(message);
+          this.state.progress.push(message);
+        },
+        this.resolver,
+      );
       this.state.status = 'succeeded';
       this.logger.log('Legacy migration finished.');
     } catch (error) {
@@ -77,6 +149,8 @@ class LegacyMigrationRunner {
       this.state.error = error instanceof Error ? error.message : String(error);
       this.logger.error(`Legacy migration failed: ${this.state.error}`);
     } finally {
+      this.pending = undefined;
+      this.state.pendingConflict = undefined;
       this.state.finishedAt = new Date().toISOString();
     }
   }
@@ -113,6 +187,23 @@ export class LegacyMigrationController {
     });
     this.runner.start(body.mysqlUrl, startedBy);
     return { ok: true, status: 'running' };
+  }
+
+  @Post('resolve')
+  @RequirePermissions(PERMISSIONS.SYSTEM_MIGRATE_LEGACY)
+  async resolve(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: ResolveConflictDto,
+  ): Promise<{ ok: true }> {
+    const conflict = this.runner.resolveConflict(body);
+    await this.audit.log(auth, 'legacy.migration.resolve-conflict', 'System', undefined, {
+      entity: conflict.entity,
+      record: conflict.label,
+      fields: conflict.fields,
+      action: body.action,
+      value: body.action === 'replace' ? body.value : undefined,
+    });
+    return { ok: true };
   }
 }
 
