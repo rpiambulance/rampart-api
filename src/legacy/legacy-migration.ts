@@ -139,30 +139,85 @@ export async function runLegacyMigration(
   );
   const memberIdByLegacy = new Map<number, number>();
 
+  // Email is unique in Postgres but was not in the legacy schema, and rows
+  // may already exist here from the admin bootstrap. Track what we've claimed
+  // so a collision falls back to a synthetic address rather than aborting.
+  const claimedEmails = new Set<string>();
+
   for (const m of realMembers) {
-    const email = (m.email || '').trim().toLowerCase() || `legacy-${m.id}@rpiambulance.invalid`;
-    const member = await prisma.member.upsert({
-      where: { legacyId: m.id },
-      create: {
-        legacyId: m.id,
-        firstName: m.first_name,
-        lastName: m.last_name,
-        dob: cleanDate(m.dob),
-        email,
-        cellPhone: m.cell_phone || null,
-        homePhone: m.home_phone || null,
-        localAddress: m.rpi_address || null,
-        homeAddress: m.home_address || null,
-        rcsId: m.rcs_id || null,
-        rin: m.rin ? String(m.rin) : null,
-        facilityId: m.facility_id || null,
-        cardId: m.card_id || null,
-        slackId: m.slackID || null,
-        active: m.active === 1 && m.access_revoked !== 1,
-      },
-      update: {}, // never clobber a previously migrated/edited member
-    });
-    memberIdByLegacy.set(Number(m.id), member.id);
+    const legacyId = Number(m.id);
+    const fallbackEmail = `legacy-${m.id}@rpiambulance.invalid`;
+    let email =
+      (m.email || '').trim().toLowerCase() || fallbackEmail;
+    if (claimedEmails.has(email)) {
+      record(
+        `  ! legacy member ${m.id} repeats email ${email}; stored as ${fallbackEmail}`,
+      );
+      email = fallbackEmail;
+    }
+    claimedEmails.add(email);
+
+    let member = await prisma.member.findUnique({ where: { legacyId } });
+    if (!member) {
+      // A member may already exist under this email without a legacyId —
+      // typically the bootstrapped administrator, who is the same person as
+      // their legacy record. Adopt that row instead of failing on the unique
+      // email; never overwrite fields they may have already edited.
+      const existing = await prisma.member.findUnique({ where: { email } });
+      if (existing && existing.legacyId === null) {
+        member = await prisma.member.update({
+          where: { id: existing.id },
+          data: { legacyId },
+        });
+        record(`  linked existing member ${existing.id} (${email}) to legacy ${m.id}`);
+      } else if (existing) {
+        // Already owned by a different legacy member — never steal the row.
+        record(
+          `  ! ${email} already belongs to legacy ${existing.legacyId}; legacy ${m.id} stored as ${fallbackEmail}`,
+        );
+        email = fallbackEmail;
+        member = await prisma.member.create({
+          data: {
+            legacyId,
+            firstName: m.first_name,
+            lastName: m.last_name,
+            dob: cleanDate(m.dob),
+            email,
+            cellPhone: m.cell_phone || null,
+            homePhone: m.home_phone || null,
+            localAddress: m.rpi_address || null,
+            homeAddress: m.home_address || null,
+            rcsId: m.rcs_id || null,
+            rin: m.rin ? String(m.rin) : null,
+            facilityId: m.facility_id || null,
+            cardId: m.card_id || null,
+            slackId: m.slackID || null,
+            active: m.active === 1 && m.access_revoked !== 1,
+          },
+        });
+      } else {
+        member = await prisma.member.create({
+          data: {
+            legacyId,
+            firstName: m.first_name,
+            lastName: m.last_name,
+            dob: cleanDate(m.dob),
+            email,
+            cellPhone: m.cell_phone || null,
+            homePhone: m.home_phone || null,
+            localAddress: m.rpi_address || null,
+            homeAddress: m.home_address || null,
+            rcsId: m.rcs_id || null,
+            rin: m.rin ? String(m.rin) : null,
+            facilityId: m.facility_id || null,
+            cardId: m.card_id || null,
+            slackId: m.slackID || null,
+            active: m.active === 1 && m.access_revoked !== 1,
+          },
+        });
+      }
+    }
+    memberIdByLegacy.set(legacyId, member.id);
 
     // credentials
     for (const [flag, key] of CREDENTIAL_FLAGS) {
