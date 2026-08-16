@@ -20,14 +20,75 @@ const JUNK_DATES = new Set(['0000-00-00', '1000-01-01', '1970-01-01']);
 
 function cleanDate(value: string | null): Date | null {
   if (!value || JUNK_DATES.has(value)) return null;
-  return new Date(`${value}T00:00:00Z`);
+  const date = new Date(`${value}T00:00:00Z`);
+  // MySQL in non-strict mode accepts dates JS cannot represent; an invalid
+  // Date here would surface much later as an opaque "Invalid time value".
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Convert an America/New_York wall time to a UTC Date (DST-aware). */
-function nyToUtc(dateStr: string, timeStr: string): Date {
-  const guess = new Date(`${dateStr}T${timeStr || '00:00:00'}Z`);
+/**
+ * Parses a legacy TIME value. MySQL's TIME range is -838:59:59..838:59:59, so
+ * hours may legitimately fall outside 0-23 — an event running past midnight
+ * was stored as "24:30:00". Returns seconds since midnight, which the caller
+ * carries into the date.
+ *
+ * Values beyond a single overnight are rejected rather than carried: "838:59:59"
+ * is the column's maximum, i.e. corrupt data, and shifting a record five weeks
+ * to honor it would be worse than ignoring the time.
+ */
+const MAX_CARRY_SECONDS = 48 * 3600;
+
+function parseClock(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const match = /^(-?\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(String(value).trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const sign = hours < 0 ? -1 : 1;
+  const seconds =
+    hours * 3600 + sign * (Number(match[2]) * 60 + Number(match[3] ?? 0));
+  if (seconds < 0 || seconds >= MAX_CARRY_SECONDS) return null;
+  return seconds;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Convert an America/New_York wall time to a UTC Date (DST-aware).
+ * Returns null when the legacy row carries no usable date.
+ */
+function nyToUtc(
+  dateStr: string,
+  timeStr: unknown,
+  note: (message: string) => void = () => {},
+): Date | null {
+  const base = cleanDate(dateStr);
+  if (!base) return null;
+
+  // An unparseable time is not worth discarding the whole record over —
+  // fall back to midnight, but say so.
+  let seconds = parseClock(timeStr);
+  if (seconds === null) {
+    if (timeStr !== null && timeStr !== undefined && String(timeStr).trim() !== '') {
+      note(String(timeStr));
+    }
+    seconds = 0;
+  }
+  const dayOffset = Math.floor(seconds / 86_400);
+  const within = seconds - dayOffset * 86_400;
+
+  const shifted = new Date(base.getTime() + dayOffset * DAY_MS);
+  if (Number.isNaN(shifted.getTime())) return null;
+  const day = shifted.toISOString().slice(0, 10);
+  const hour = Math.floor(within / 3600);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const clock = `${pad(hour)}:${pad(Math.floor((within % 3600) / 60))}:${pad(within % 60)}`;
+
+  const guess = new Date(`${day}T${clock}Z`);
+  if (Number.isNaN(guess.getTime())) return null;
+
   for (const offsetMin of [240, 300]) {
     const candidate = new Date(guess.getTime() + offsetMin * 60_000);
+    if (Number.isNaN(candidate.getTime())) continue;
     const fmt = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/New_York',
       year: 'numeric', month: '2-digit', day: '2-digit',
@@ -37,8 +98,8 @@ function nyToUtc(dateStr: string, timeStr: string): Date {
       fmt.formatToParts(candidate).map((p) => [p.type, p.value]),
     );
     if (
-      `${parts.year}-${parts.month}-${parts.day}` === dateStr &&
-      Number(parts.hour) % 24 === Number(timeStr.slice(0, 2))
+      `${parts.year}-${parts.month}-${parts.day}` === day &&
+      Number(parts.hour) % 24 === hour
     ) {
       return candidate;
     }
@@ -172,6 +233,7 @@ export async function runLegacyMigration(
       record(`  ${label}: no email in legacy data; stored as ${syntheticEmail}`);
     }
 
+    try {
     let member = await prisma.member.findUnique({ where: { legacyId } });
     if (!member) {
       member = await writeWithConflictPrompt(ctx, {
@@ -301,6 +363,12 @@ export async function runLegacyMigration(
         });
       }
     }
+    } catch (error) {
+      if (error instanceof Error && !error.message.startsWith(label)) {
+        error.message = `${label}: ${error.message}`;
+      }
+      throw error;
+    }
   }
   record(
     `Members: ${realMembers.length - skippedMembers} imported` +
@@ -386,14 +454,32 @@ export async function runLegacyMigration(
         : []),
     ];
 
+    const startsAt = nyToUtc(g.date, g.start, (bad) =>
+      record(`  legacy game ${g.id}: unusable start time "${bad}"; used midnight`),
+    );
+    if (!startsAt) {
+      record(`  ! legacy game ${g.id}: unusable date/time (${g.date} ${g.start}); skipped`);
+      return;
+    }
+    let endsAt = nyToUtc(g.date, g.end, (bad) =>
+      record(`  legacy game ${g.id}: unusable end time "${bad}"; used midnight`),
+    );
+    if (!endsAt) {
+      record(`  legacy game ${g.id}: unusable end time (${g.end}); ended at start`);
+      endsAt = startsAt;
+    } else if (endsAt < startsAt) {
+      // The legacy portal stored an end past midnight as the next day's clock
+      // time on the same date, which reads as an event ending before it began.
+      endsAt = new Date(endsAt.getTime() + DAY_MS);
+    }
     const event = await prisma.event.upsert({
       where: { legacyKey: `game-${g.id}` },
       create: {
         legacyKey: `game-${g.id}`,
         title: g.description || 'Game',
         location: g.location || null,
-        startsAt: nyToUtc(g.date, g.start),
-        endsAt: nyToUtc(g.date, g.end),
+        startsAt,
+        endsAt,
         kindId: gameKind.id,
         locked: g.locked === 1,
         hidden: g.hide === 1,
@@ -428,14 +514,30 @@ export async function runLegacyMigration(
     if (!cleanDate(e.date)) continue;
     await guardRecord(ctx, 'Event', `legacy event ${e.id} (${e.description || 'Event'})`, async () => {
     const cap = Number(e.limit);
+    const startsAt = nyToUtc(e.date, e.start, (bad) =>
+      record(`  legacy event ${e.id}: unusable start time "${bad}"; used midnight`),
+    );
+    if (!startsAt) {
+      record(`  ! legacy event ${e.id}: unusable date/time (${e.date} ${e.start}); skipped`);
+      return;
+    }
+    let endsAt = nyToUtc(e.date, e.end, (bad) =>
+      record(`  legacy event ${e.id}: unusable end time "${bad}"; used midnight`),
+    );
+    if (!endsAt) {
+      record(`  legacy event ${e.id}: unusable end time (${e.end}); ended at start`);
+      endsAt = startsAt;
+    } else if (endsAt < startsAt) {
+      endsAt = new Date(endsAt.getTime() + DAY_MS);
+    }
     const event = await prisma.event.upsert({
       where: { legacyKey: `event-${e.id}` },
       create: {
         legacyKey: `event-${e.id}`,
         title: e.description || 'Event',
         location: e.location || null,
-        startsAt: nyToUtc(e.date, e.start),
-        endsAt: nyToUtc(e.date, e.end),
+        startsAt,
+        endsAt,
         kindId: generalKind.id,
         hidden: e.hide === 1,
         attendeeCap: cap === 0 ? null : cap,
@@ -463,7 +565,13 @@ export async function runLegacyMigration(
     const memberId = memberIdByLegacy.get(Number(f.user));
     if (!memberId) continue;
     await guardRecord(ctx, 'FuelLogEntry', `legacy fuel log ${f.date} ${f.vehicle}`, async () => {
-    const loggedAt = nyToUtc(f.date, f.time || '00:00:00');
+    const loggedAt = nyToUtc(f.date, f.time, (bad) =>
+      record(`  legacy fuel log ${f.date} ${f.vehicle}: unusable time "${bad}"; used midnight`),
+    );
+    if (!loggedAt) {
+      record(`  ! legacy fuel log ${f.date} ${f.vehicle}: unusable date/time; skipped`);
+      return;
+    }
     const existing = await prisma.fuelLogEntry.findFirst({
       where: { loggedAt, memberId, vehicle: f.vehicle },
     });

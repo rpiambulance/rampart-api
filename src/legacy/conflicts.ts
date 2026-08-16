@@ -229,7 +229,14 @@ export async function guardRecord<T>(
   try {
     return await fn();
   } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
+    if (!isUniqueViolation(error)) {
+      // Name the offending record. A bare "Invalid time value" raised deep in
+      // the ETL gives the administrator nothing to act on.
+      if (error instanceof Error && !error.message.startsWith(label)) {
+        error.message = `${label}: ${error.message}`;
+      }
+      throw error;
+    }
     const fields = conflictFields(error, {});
     const answer = await ctx.resolve({
       id: `c${++counter}`,
