@@ -10,6 +10,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { formatCredentialKey } from '../common/credential-format';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface EventPositionInput {
@@ -238,7 +239,7 @@ export class EventsService {
         const held = await this.graph.heldKeys(memberId);
         if (!(await this.graph.satisfies(held, posDef.requiredCredentialKey))) {
           throw new ForbiddenException(
-            `Requires ${posDef.requiredCredentialKey.replace(/_/g, '-')} credential`,
+            `Requires ${formatCredentialKey(posDef.requiredCredentialKey)} credential`,
           );
         }
       }

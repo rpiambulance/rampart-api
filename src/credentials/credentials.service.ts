@@ -151,7 +151,8 @@ export class CredentialsService {
       items.push({
         kind: 'PREREQUISITE',
         label: `Hold ${prereq.requiresType.name}`,
-        satisfied: held.has(prereq.requiresType.key),
+        // "or above" — holding a credential further up the chain counts.
+        satisfied: await this.graph.satisfies(held, prereq.requiresType.key),
       });
     }
 
@@ -377,9 +378,12 @@ export class CredentialsService {
       );
     }
     const held = await this.graph.heldKeys(memberId);
-    const missing = type.prerequisites
-      .filter((p) => !held.has(p.requiresType.key))
-      .map((p) => p.requiresType.name);
+    const missing: string[] = [];
+    for (const p of type.prerequisites) {
+      if (!(await this.graph.satisfies(held, p.requiresType.key))) {
+        missing.push(p.requiresType.name);
+      }
+    }
     if (missing.length) {
       throw new BadRequestException(
         `Member is missing prerequisites: ${missing.join(', ')}`,

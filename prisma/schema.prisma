@@ -178,6 +178,10 @@ model CredentialType {
   name        String
   grantMethod GrantMethod @default(PROMOTION)
   isAddOn     Boolean     @default(false) // FR-CC, EES
+  /// Satisfies every credential requirement regardless of the prerequisite
+  /// graph. A Duty Supervisor outranks the whole ladder, including add-ons
+  /// (FR-CC) that are not in its own prerequisite chain.
+  outranksAll Boolean     @default(false)
   active      Boolean     @default(true)
 
   linkedRoles     CredentialTypeRole[] // roles conferred automatically while ACTIVE

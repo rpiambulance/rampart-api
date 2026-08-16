@@ -4,7 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 /**
  * Answers credential-ladder questions. "Satisfies X" means: holds X, or holds
  * any credential whose prerequisite chain (transitively) includes X — i.e.
- * "X or above". Example: a CC satisfies P_CC, A_CC, A, and O.
+ * "X or above". Example: a CC satisfies P-CC, A-CC, A, and O.
+ *
+ * A credential flagged `outranksAll` satisfies everything, whether or not it
+ * descends from the requirement. Duty Supervisor is the case that matters: it
+ * requires CC-T, D-T and EES, so the graph alone would not have it satisfy the
+ * FR-CC add-on, which sits outside that chain.
  */
 @Injectable()
 export class CredentialGraphService {
@@ -12,6 +17,8 @@ export class CredentialGraphService {
     at: number;
     // typeKey -> set of type keys that satisfy it (itself + all descendants)
     satisfiedBy: Map<string, Set<string>>;
+    /** Keys flagged outranksAll. */
+    outranking: Set<string>;
     idToKey: Map<number, string>;
     keyToId: Map<string, number>;
   };
@@ -57,8 +64,15 @@ export class CredentialGraphService {
         satisfiedBy.get(ancestor)?.add(t.key);
       }
     }
+    // Supervisory credentials satisfy every requirement, including add-ons
+    // they do not descend from.
+    const outranking = new Set<string>();
+    for (const t of types.filter((type) => type.outranksAll)) {
+      outranking.add(t.key);
+      for (const satisfying of satisfiedBy.values()) satisfying.add(t.key);
+    }
 
-    this.cache = { at: Date.now(), satisfiedBy, idToKey, keyToId };
+    this.cache = { at: Date.now(), satisfiedBy, outranking, idToKey, keyToId };
     return this.cache;
   }
 
@@ -68,6 +82,13 @@ export class CredentialGraphService {
     const satisfying = satisfiedBy.get(requiredKey);
     if (!satisfying) return false;
     for (const key of heldKeys) if (satisfying.has(key)) return true;
+    return false;
+  }
+
+  /** Does the set include a credential that outranks the whole ladder (DS)? */
+  async outranksEverything(heldKeys: Set<string>): Promise<boolean> {
+    const { outranking } = await this.graph();
+    for (const key of heldKeys) if (outranking.has(key)) return true;
     return false;
   }
 

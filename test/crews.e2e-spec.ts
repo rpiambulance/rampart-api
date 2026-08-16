@@ -5,6 +5,9 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { AuthGuard } from '../src/auth/auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { CredentialGraphService } from '../src/credentials/credential-graph.service';
+import { CredentialsService } from '../src/credentials/credentials.service';
+import { PromotionsService } from '../src/promotions/promotions.service';
 import { addDays, nyNow, startOfWeek, toDbDate, weekdayOf } from '../src/common/dates';
 
 /**
@@ -272,6 +275,80 @@ describe('Night crews engine (e2e)', () => {
         .set(as(dana))
         .send({ effectiveAt: '2020-01-01' })
         .expect(403);
+    });
+  });
+
+  describe('credential ladder ("or above")', () => {
+    let sup: number; // Duty Supervisor
+    let cc: number; // plain Crew Chief
+
+    beforeAll(async () => {
+      // A DS holds the appointment plus its chain, but never FR_CC, which is
+      // a CC add-on outside that chain.
+      sup = await createMember('Sup', [
+        'O', 'A', 'A_CC', 'P_CC', 'CC', 'CC_T',
+        'A_D', 'P_D', 'D', 'D_T', 'EES', 'DS',
+      ]);
+      // Backfilled straight to CC without the rungs beneath it, which is what
+      // an admin-granted or legacy-imported credential looks like.
+      cc = await createMember('Casey', ['CC']);
+    });
+
+    it('treats a higher credential as satisfying a lower one', async () => {
+      const graph = app.get(CredentialGraphService);
+      const held = await graph.heldKeys(cc);
+      for (const lower of ['P_CC', 'A_CC', 'A', 'O']) {
+        expect(await graph.satisfies(held, lower)).toBe(true);
+      }
+      // ...but not sideways or upward.
+      expect(await graph.satisfies(held, 'CC_T')).toBe(false);
+      expect(await graph.satisfies(held, 'D')).toBe(false);
+    });
+
+    it('lets a Duty Supervisor satisfy every credential, add-ons included', async () => {
+      const graph = app.get(CredentialGraphService);
+      const held = await graph.heldKeys(sup);
+      for (const key of [
+        'O', 'A', 'A_CC', 'P_CC', 'CC', 'CC_T', 'A_D', 'P_D', 'D', 'D_T',
+        'EES', 'FR_CC', 'DS',
+      ]) {
+        expect([key, await graph.satisfies(held, key)]).toEqual([key, true]);
+      }
+    });
+
+    it('offers a DS no promotions, and a backfilled CC only what is above it', async () => {
+      const promotions = app.get(PromotionsService);
+      const forSup = await promotions.eligibleRequests(sup);
+      expect(forSup.map((r) => r.key)).toEqual([]);
+
+      // Casey holds CC without P_CC beneath it; CC_T must still be offered.
+      const forCasey = await promotions.eligibleRequests(cc);
+      expect(forCasey.map((r) => r.key)).toContain('CC_T');
+      // Nothing already satisfied should be offered back.
+      for (const key of ['P_CC', 'A_CC', 'A', 'O']) {
+        expect(forCasey.map((r) => r.key)).not.toContain(key);
+      }
+    });
+
+    it('counts a prerequisite as met when held via a higher credential', async () => {
+      const credentials = app.get(CredentialsService);
+      const ccT = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'CC_T' },
+      });
+      const checklist = await credentials.checklist(cc, ccT.id);
+      const prereq = checklist.find((i) => i.kind === 'PREREQUISITE');
+      expect(prereq?.satisfied).toBe(true);
+    });
+
+    it('lets a Duty Supervisor take every night crew position', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/crews')
+        .set(as(sup))
+        .expect(200);
+      const day = res.body.nextWeek[3];
+      for (const position of ['CC', 'DRIVER', 'ATTENDANT', 'OBSERVER', 'DUTY_SUP']) {
+        expect([position, day.slots[position].eligible]).toEqual([position, true]);
+      }
     });
   });
 

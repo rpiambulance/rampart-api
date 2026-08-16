@@ -67,10 +67,21 @@ export class PromotionsService {
       requestable: boolean;
     }> = [];
     for (const type of types) {
-      if (held.has(type.key) || openIds.has(type.id)) continue;
-      const prereqsMet = type.prerequisites.every((p) =>
-        held.has(p.requiresType.key),
-      );
+      // "or above": someone who already satisfies a credential (by holding it
+      // or something above it) is not offered it again.
+      if (
+        (await this.graph.satisfies(held, type.key)) ||
+        openIds.has(type.id)
+      ) {
+        continue;
+      }
+      let prereqsMet = true;
+      for (const p of type.prerequisites) {
+        if (!(await this.graph.satisfies(held, p.requiresType.key))) {
+          prereqsMet = false;
+          break;
+        }
+      }
       if (!prereqsMet) continue;
       const checklist = await this.credentials.checklist(memberId, type.id);
       out.push({

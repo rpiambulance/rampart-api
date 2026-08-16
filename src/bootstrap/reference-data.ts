@@ -24,6 +24,7 @@ export const CREDENTIALS: Array<{
   requires: string[];
   grantMethod?: GrantMethod;
   isAddOn?: boolean;
+  outranksAll?: boolean;
 }> = [
   { key: 'O', name: 'Observer', requires: [] },
   { key: 'A', name: 'Attendant', requires: ['O'] },
@@ -46,6 +47,8 @@ export const CREDENTIALS: Array<{
     name: 'Duty Supervisor',
     requires: ['CC_T', 'D_T', 'EES'],
     grantMethod: GrantMethod.APPOINTMENT,
+    // A DS may take any position in any event or crew.
+    outranksAll: true,
   },
 ];
 
@@ -154,9 +157,17 @@ export async function ensureReferenceData(
           name: cred.name,
           grantMethod: cred.grantMethod ?? GrantMethod.PROMOTION,
           isAddOn: cred.isAddOn ?? false,
+          outranksAll: cred.outranksAll ?? false,
         },
       });
       created.push(`credential ${cred.key}`);
+    } else if (existing.outranksAll !== (cred.outranksAll ?? false)) {
+      // Code-owned, not admin-editable: keep it in step on existing rows.
+      await prisma.credentialType.update({
+        where: { id: existing.id },
+        data: { outranksAll: cred.outranksAll ?? false },
+      });
+      created.push(`credential ${cred.key} (outranksAll)`);
     }
   }
   for (const cred of CREDENTIALS) {

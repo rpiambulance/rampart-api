@@ -130,13 +130,14 @@ export class CrewEligibilityService {
       return { eligible: false, reason: `Signups open at ${hhmm} Sunday` };
     }
 
-    // Rider fairness: credentialed members (P-D/P-CC or above, or DS) ride
-    // freely; others get one rider shift per rotation window until the
-    // day-of unlock time.
+    // Rider fairness: credentialed members (P-D/P-CC or above, or a Duty
+    // Supervisor) ride freely; others get one rider shift per rotation window
+    // until the day-of unlock time.
+    const outranksAll = await this.graph.outranksEverything(held);
     const credentialed =
       (await this.graph.satisfies(held, 'P_D')) ||
       (await this.graph.satisfies(held, 'P_CC')) ||
-      held.has('DS');
+      outranksAll;
     if (!credentialed) {
       const timesOn = input.memberDatesInRotation.filter(
         (d) => d !== dateStr,
@@ -160,8 +161,9 @@ export class CrewEligibilityService {
       }
       return { eligible: false, reason: 'Attendant credential required' };
     }
-    // OBSERVER: attendants are steered to the attendant slot until it's filled.
-    if (!isAttendantCredentialed || day.attendantFilled) {
+    // OBSERVER: attendants are steered to the attendant slot until it's
+    // filled. A Duty Supervisor is exempt — they may take any seat.
+    if (!isAttendantCredentialed || day.attendantFilled || outranksAll) {
       return { eligible: true, reason: '' };
     }
     return { eligible: false, reason: 'Please take the attendant slot' };
