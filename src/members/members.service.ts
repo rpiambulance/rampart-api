@@ -79,6 +79,103 @@ export class MembersService {
     return member;
   }
 
+  /**
+   * Active members with no night crew or event participation on or after
+   * `since`. The window deliberately runs to the end of time, so anyone
+   * already scheduled ahead is treated as participating and never appears —
+   * which also means a deactivation from this list can never orphan a future
+   * assignment.
+   */
+  async inactivityReview(since: Date, excludeMemberId?: number) {
+    const [recentCrew, recentEvent] = await Promise.all([
+      this.prisma.crewSlot.findMany({
+        where: { memberId: { not: null }, crew: { date: { gte: since } } },
+        select: { memberId: true },
+        distinct: ['memberId'],
+      }),
+      this.prisma.eventSignup.findMany({
+        where: { event: { startsAt: { gte: since } } },
+        select: { memberId: true },
+        distinct: ['memberId'],
+      }),
+    ]);
+    const participated = new Set<number>([
+      ...recentCrew.map((r) => r.memberId!),
+      ...recentEvent.map((r) => r.memberId),
+    ]);
+
+    const candidates = await this.prisma.member.findMany({
+      where: {
+        active: true,
+        id: {
+          notIn: [...participated, ...(excludeMemberId ? [excludeMemberId] : [])],
+        },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        createdAt: true,
+      },
+    });
+    const ids = candidates.map((c) => c.id);
+
+    // Last participation of any kind, for context in the review.
+    const [crewHistory, eventHistory] = await Promise.all([
+      this.prisma.crewSlot.findMany({
+        where: { memberId: { in: ids } },
+        select: { memberId: true, crew: { select: { date: true } } },
+      }),
+      this.prisma.eventSignup.findMany({
+        where: { memberId: { in: ids } },
+        select: { memberId: true, event: { select: { startsAt: true } } },
+      }),
+    ]);
+    const lastSeen = new Map<number, Date>();
+    const note = (memberId: number, at: Date) => {
+      const current = lastSeen.get(memberId);
+      if (!current || at > current) lastSeen.set(memberId, at);
+    };
+    for (const row of crewHistory) note(row.memberId!, row.crew.date);
+    for (const row of eventHistory) note(row.memberId, row.event.startsAt);
+
+    return candidates.map((c) => ({
+      ...c,
+      lastParticipation: lastSeen.get(c.id)?.toISOString() ?? null,
+      /** Joined after the cutoff, so they never had the chance to take part. */
+      joinedAfterCutoff: c.createdAt >= since,
+    }));
+  }
+
+  /** Deactivates an explicitly chosen set of members. */
+  async deactivateMany(ids: number[], auth: AuthContext, reason: string) {
+    const actingMemberId = auth.kind === 'member' ? auth.memberId : undefined;
+    // Never let a review sweep up the person running it.
+    const targets = await this.prisma.member.findMany({
+      where: {
+        id: { in: ids.filter((id) => id !== actingMemberId) },
+        active: true,
+      },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    for (const target of targets) {
+      await this.prisma.member.update({
+        where: { id: target.id },
+        data: { active: false },
+      });
+      await this.audit.log(auth, 'members.deactivate', 'Member', target.id, {
+        reason,
+        via: 'inactivity-review',
+      });
+    }
+    return {
+      deactivated: targets.length,
+      members: targets.map((t) => `${t.firstName} ${t.lastName}`),
+    };
+  }
+
   async update(
     id: number,
     data: Partial<{

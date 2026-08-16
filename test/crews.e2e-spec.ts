@@ -428,6 +428,135 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('inactivity review', () => {
+    const cutoff = '2026-01-01';
+    const asDeactivator = (memberId: number) => ({
+      'x-test-member-id': String(memberId),
+      'x-test-permissions': 'members:deactivate',
+    });
+
+    let lapsed: number;
+    let recentCrew: number;
+    let futureEvent: number;
+    let newcomer: number;
+    let actor: number;
+    const created: number[] = [];
+
+    /** Puts a member in the observer seat on a date, idempotently. */
+    async function seatOn(dateStr: string, memberId: number): Promise<number> {
+      const crew = await prisma.crew.upsert({
+        where: { date: toDbDate(dateStr) },
+        create: { date: toDbDate(dateStr) },
+        update: {},
+      });
+      await prisma.crewSlot.upsert({
+        where: { crewId_position: { crewId: crew.id, position: 'OBSERVER' } },
+        create: { crewId: crew.id, position: 'OBSERVER', memberId },
+        update: { memberId },
+      });
+      return crew.id;
+    }
+
+    beforeAll(async () => {
+      lapsed = await createMember('Lapsed', []);
+      recentCrew = await createMember('Recent', []);
+      futureEvent = await createMember('Future', []);
+      newcomer = await createMember('New', []);
+      actor = await createMember('Actor', []);
+
+      // Took a crew shift after the cutoff.
+      created.push(await seatOn('2026-03-04', recentCrew));
+
+      // Signed up for an event that has not happened yet.
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      await prisma.event.create({
+        data: {
+          title: `Future event ${stamp}`,
+          startsAt: new Date('2099-01-01T18:00:00Z'),
+          endsAt: new Date('2099-01-01T22:00:00Z'),
+          kindId: kind.id,
+          signups: { create: [{ memberId: futureEvent }] },
+        },
+      });
+
+      // Lapsed took part, but only before the cutoff.
+      created.push(await seatOn('2025-02-10', lapsed));
+
+      await prisma.member.update({
+        where: { id: newcomer },
+        data: { createdAt: new Date('2026-06-01T00:00:00Z') },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.event.deleteMany({ where: { title: `Future event ${stamp}` } });
+      await prisma.crew.deleteMany({ where: { id: { in: created } } });
+    });
+
+    it('lists only members with no participation since the cutoff', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/members/inactivity-review?since=${cutoff}`)
+        .set(asDeactivator(actor))
+        .expect(200);
+      const ids = res.body.map((c: { id: number }) => c.id);
+
+      expect(ids).toContain(lapsed);
+      expect(ids).not.toContain(recentCrew); // crewed after the cutoff
+      expect(ids).not.toContain(futureEvent); // scheduled ahead
+      expect(ids).not.toContain(actor); // never yourself
+
+      const row = res.body.find((c: { id: number }) => c.id === lapsed);
+      expect(row.lastParticipation.slice(0, 10)).toBe('2025-02-10');
+    });
+
+    it('flags members who joined after the cutoff', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/members/inactivity-review?since=${cutoff}`)
+        .set(asDeactivator(actor))
+        .expect(200);
+      const row = res.body.find((c: { id: number }) => c.id === newcomer);
+      expect(row.joinedAfterCutoff).toBe(true);
+      expect(row.lastParticipation).toBeNull();
+    });
+
+    it('deactivates only the members handed to it', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/members/deactivate-many')
+        .set(asDeactivator(actor))
+        .send({ memberIds: [lapsed], reason: `No participation since ${cutoff}` })
+        .expect(201);
+
+      const after = await prisma.member.findMany({
+        where: { id: { in: [lapsed, newcomer] } },
+        select: { id: true, active: true },
+      });
+      expect(after.find((m) => m.id === lapsed)?.active).toBe(false);
+      // Deselected during review — untouched.
+      expect(after.find((m) => m.id === newcomer)?.active).toBe(true);
+    });
+
+    it('refuses to deactivate the caller, even if asked', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/members/deactivate-many')
+        .set(asDeactivator(actor))
+        .send({ memberIds: [actor], reason: 'test' })
+        .expect(201);
+      const self = await prisma.member.findUniqueOrThrow({ where: { id: actor } });
+      expect(self.active).toBe(true);
+    });
+
+    it('requires the deactivate permission and a valid date', async () => {
+      await request(app.getHttpServer())
+        .get(`/v1/members/inactivity-review?since=${cutoff}`)
+        .set({ 'x-test-member-id': String(actor), 'x-test-permissions': 'members:read' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/v1/members/inactivity-review?since=whenever')
+        .set(asDeactivator(actor))
+        .expect(400);
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -10,10 +11,12 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEmail,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -117,6 +120,16 @@ function requireMember(auth: AuthContext): number {
   return auth.memberId;
 }
 
+class DeactivateManyDto {
+  @IsArray()
+  @IsInt({ each: true })
+  memberIds!: number[];
+
+  /** The cutoff the review was run against, recorded in the audit log. */
+  @IsString()
+  reason!: string;
+}
+
 @Controller({ path: 'members', version: '1' })
 export class MembersController {
   constructor(private readonly members: MembersService) {}
@@ -132,6 +145,38 @@ export class MembersController {
     // rather than rejected, so a stale link simply shows the active roster.
     const maySeeInactive = auth.permissions.has(PERMISSIONS.MEMBERS_DEACTIVATE);
     return this.members.list(maySeeInactive && includeInactive === 'true');
+  }
+
+  /**
+   * Active members with no crew or event participation since `since`.
+   * Read-only: nothing is deactivated until the caller confirms a list.
+   */
+  @Get('inactivity-review')
+  @RequirePermissions(PERMISSIONS.MEMBERS_DEACTIVATE)
+  inactivityReview(
+    @CurrentAuth() auth: AuthContext,
+    @Query('since') since?: string,
+  ) {
+    if (!since || !/^\d{4}-\d{2}-\d{2}$/.test(since)) {
+      throw new BadRequestException('since must be a date in YYYY-MM-DD form');
+    }
+    const cutoff = new Date(`${since}T00:00:00Z`);
+    if (Number.isNaN(cutoff.getTime())) {
+      throw new BadRequestException(`${since} is not a real date`);
+    }
+    return this.members.inactivityReview(
+      cutoff,
+      auth.kind === 'member' ? auth.memberId : undefined,
+    );
+  }
+
+  @Post('deactivate-many')
+  @RequirePermissions(PERMISSIONS.MEMBERS_DEACTIVATE)
+  deactivateMany(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: DeactivateManyDto,
+  ) {
+    return this.members.deactivateMany(body.memberIds, auth, body.reason);
   }
 
   @Get('me')
