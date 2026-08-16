@@ -8,6 +8,10 @@ import { BootstrapService } from './bootstrap/bootstrap.service';
 import { AvailabilityController } from './availability/availability.controller';
 import { CoverageController } from './coverage/coverage.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
+import {
+  LegacyMigrationController,
+  LegacyMigrationRunner,
+} from './legacy/legacy-migration.controller';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { CalendarController } from './calendar/calendar.controller';
 import { CertificationsModule } from './certifications/certifications.module';
@@ -47,6 +51,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     AvailabilityController,
     CoverageController,
     DispatchesController,
+    LegacyMigrationController,
     CalendarController,
     TokensController,
     OpsController,
@@ -56,6 +61,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     AuthGuard,
     PermissionsGuard,
     BootstrapService,
+    LegacyMigrationRunner,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useExisting: AuthGuard },
     { provide: APP_GUARD, useExisting: PermissionsGuard },

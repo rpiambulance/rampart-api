@@ -79,7 +79,7 @@ const ALL = [
   'promotions:review', 'promotions:vote', 'promotions:captain-approve', 'promotions:adjust-requirements', 'trainings:manage',
   'schedule:crews:assign', 'schedule:crews:manage-defaults', 'schedule:settings',
   'events:create', 'events:assign-others', 'events:lock', 'events:approve', 'fuel:write',
-  'radios:manage', 'vehicles:manage', 'tokens:manage', 'dispatches:ingest', 'dispatches:read', 'audit:read', 'integrations:manage',
+  'radios:manage', 'vehicles:manage', 'tokens:manage', 'dispatches:ingest', 'dispatches:read', 'audit:read', 'integrations:manage', 'system:migrate-legacy',
 ];
 
 const ROLES: Array<{ name: string; isOfficer: boolean; permissions: string[] }> = [

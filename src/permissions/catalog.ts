@@ -35,6 +35,7 @@ export const PERMISSIONS = {
   DISPATCHES_READ: 'dispatches:read',
   AUDIT_READ: 'audit:read',
   INTEGRATIONS_MANAGE: 'integrations:manage',
+  SYSTEM_MIGRATE_LEGACY: 'system:migrate-legacy',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
