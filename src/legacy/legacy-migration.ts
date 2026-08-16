@@ -94,7 +94,31 @@ export async function runLegacyMigration(
     summary.push(m);
     log(m);
   };
-  const db = await mysql.createConnection({ uri: mysqlUrl, dateStrings: true });
+  const host = mysqlUrl.replace(/^mysql:\/\/[^@]*@/, '').split('/')[0];
+  let db: mysql.Connection;
+  try {
+    db = await mysql.createConnection({
+      uri: mysqlUrl,
+      dateStrings: true,
+      // Fail fast and legibly instead of hanging: a timeout here is almost
+      // always a firewall or an unrouted host, not credentials.
+      connectTimeout: 10_000,
+    });
+  } catch (error) {
+    const code = (error as { code?: string }).code ?? '';
+    const detail =
+      code === 'ETIMEDOUT' || code === 'ECONNREFUSED'
+        ? `Could not open a TCP connection to ${host} (${code}). The API ` +
+          'container must be able to reach the MySQL port directly — check ' +
+          'the host/cloud firewall and that the database is published on a ' +
+          'routable address. This is a network problem, not a credentials one.'
+        : code === 'ER_ACCESS_DENIED_ERROR' || code === 'ER_HOST_NOT_PRIVILEGED'
+          ? `${host} refused the credentials or the connecting host (${code}). ` +
+            "The MySQL user must be granted for '%' or the API's egress IP, " +
+            "not just 'localhost'."
+          : (error as Error).message;
+    throw new Error(`Legacy MySQL connection failed: ${detail}`);
+  }
   const query = async (sql: string): Promise<Row[]> => {
     const [rows] = await db.query(sql);
     return rows as Row[];
