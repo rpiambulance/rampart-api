@@ -194,6 +194,56 @@ export class CrewsService {
     };
   }
 
+  /**
+   * Members a scheduler may put in each crew position: active only, and only
+   * where they hold the credentials the position calls for. Probationary
+   * drivers and crew chiefs are included — the trainer-on-shift rule is a
+   * property of the night, not of the person, and schedulers may arrange it.
+   */
+  async assignableMembers() {
+    const members = await this.prisma.member.findMany({
+      where: { active: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        credentials: {
+          where: { status: 'ACTIVE' },
+          select: { type: { select: { key: true } } },
+        },
+      },
+    });
+
+    const out: Array<{
+      id: number;
+      firstName: string;
+      lastName: string;
+      positions: CrewPosition[];
+    }> = [];
+    for (const member of members) {
+      const held = new Set(member.credentials.map((c) => c.type.key));
+      const positions: CrewPosition[] = [];
+      if ((await this.graph.satisfies(held, 'CC')) || held.has('P_CC')) {
+        positions.push('CC');
+      }
+      if ((await this.graph.satisfies(held, 'D')) || held.has('P_D')) {
+        positions.push('DRIVER');
+      }
+      if (await this.graph.satisfies(held, 'A')) positions.push('ATTENDANT');
+      // The rider seat is the way in: open to any active member.
+      positions.push('OBSERVER');
+      if (await this.graph.satisfies(held, 'DS')) positions.push('DUTY_SUP');
+      out.push({
+        id: member.id,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        positions,
+      });
+    }
+    return out;
+  }
+
   // -------------------------------------------------------------- mutations
 
   async signup(memberId: number, crewId: number, position: CrewPosition) {

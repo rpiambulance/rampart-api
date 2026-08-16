@@ -352,6 +352,82 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('inactive members and assignable candidates', () => {
+    let retired: number;
+    let scheduler: number;
+
+    const withPerms = (memberId: number, perms: string) => ({
+      'x-test-member-id': String(memberId),
+      'x-test-permissions': perms,
+    });
+
+    beforeAll(async () => {
+      retired = await createMember('Retired', ['O', 'A', 'A_CC', 'P_CC', 'CC']);
+      await prisma.member.update({
+        where: { id: retired },
+        data: { active: false },
+      });
+      scheduler = await createMember('Sched', ['O']);
+    });
+
+    it('never lists inactive members without the permission', async () => {
+      const res = await request(app.getHttpServer())
+        // Asking for them explicitly must not be enough.
+        .get('/v1/members?includeInactive=true')
+        .set(withPerms(scheduler, 'members:read'))
+        .expect(200);
+      expect(res.body.map((m: { id: number }) => m.id)).not.toContain(retired);
+    });
+
+    it('lists them for a member who manages activation', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/members?includeInactive=true')
+        .set(withPerms(scheduler, 'members:read,members:deactivate'))
+        .expect(200);
+      expect(res.body.map((m: { id: number }) => m.id)).toContain(retired);
+
+      // ...and still not by default.
+      const plain = await request(app.getHttpServer())
+        .get('/v1/members')
+        .set(withPerms(scheduler, 'members:read,members:deactivate'))
+        .expect(200);
+      expect(plain.body.map((m: { id: number }) => m.id)).not.toContain(retired);
+    });
+
+    it('offers only active, suitably credentialed members per position', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/crews/assignable-members')
+        .set(withPerms(scheduler, 'schedule:crews:assign'))
+        .expect(200);
+      const byId = new Map<number, string[]>(
+        res.body.map((m: { id: number; positions: string[] }) => [m.id, m.positions]),
+      );
+
+      // Inactive members are not candidates at all.
+      expect(byId.has(retired)).toBe(false);
+
+      // Alice is a full CC with no driver credentials.
+      expect(byId.get(alice)).toEqual(
+        expect.arrayContaining(['CC', 'ATTENDANT', 'OBSERVER']),
+      );
+      expect(byId.get(alice)).not.toContain('DRIVER');
+      expect(byId.get(alice)).not.toContain('DUTY_SUP');
+
+      // Bob is an observer only: the rider seat is the way in.
+      expect(byId.get(bob)).toEqual(['OBSERVER']);
+
+      // Charlie is probationary CC — schedulable, trainer rule applies on the night.
+      expect(byId.get(charlie)).toContain('CC');
+    });
+
+    it('requires the scheduling permission', async () => {
+      await request(app.getHttpServer())
+        .get('/v1/crews/assignable-members')
+        .set(as(bob))
+        .expect(403);
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

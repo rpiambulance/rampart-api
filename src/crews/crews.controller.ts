@@ -85,6 +85,13 @@ export class CrewsController {
     return this.crews.getWeeks(requireMember(auth), viewDate, canViewAll);
   }
 
+  /** Candidates for the scheduling grid, filtered by position credentials. */
+  @Get('assignable-members')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_ASSIGN)
+  assignableMembers() {
+    return this.crews.assignableMembers();
+  }
+
   @Get('mine')
   myUpcoming(@CurrentAuth() auth: AuthContext) {
     return this.crews.myUpcoming(requireMember(auth));

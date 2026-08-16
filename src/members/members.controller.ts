@@ -123,8 +123,15 @@ export class MembersController {
 
   @Get()
   @RequirePermissions(PERMISSIONS.MEMBERS_READ)
-  list(@Query('includeInactive') includeInactive?: string) {
-    return this.members.list(includeInactive === 'true');
+  list(
+    @CurrentAuth() auth: AuthContext,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    // Inactive members are only ever listed to those who manage the
+    // active/inactive lifecycle. For everyone else the flag is ignored
+    // rather than rejected, so a stale link simply shows the active roster.
+    const maySeeInactive = auth.permissions.has(PERMISSIONS.MEMBERS_DEACTIVATE);
+    return this.members.list(maySeeInactive && includeInactive === 'true');
   }
 
   @Get('me')
