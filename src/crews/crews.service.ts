@@ -54,6 +54,11 @@ interface SlotView {
   canDrop?: boolean;
 }
 
+/** Whole days between two YYYY-MM-DD strings (both parsed as UTC midnight). */
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+}
+
 type CrewWithSlots = Awaited<ReturnType<CrewsService['loadWindow']>>[number];
 
 @Injectable()
@@ -72,13 +77,24 @@ export class CrewsService {
   async getWeeks(memberId: number, viewDate?: string, canViewAll = false) {
     const now = nyNow();
     const knobs = await this.settings.scheduling();
+    const thisWeek = startOfWeek(now.dateStr);
     let weekStart = startOfWeek(viewDate ?? now.dateStr);
-    if (!canViewAll) {
-      // Members only see the rolling public window.
-      weekStart = startOfWeek(now.dateStr);
+    if (!canViewAll && weekStart > thisWeek) {
+      // Members see the rolling public window going forward. Past weeks are
+      // simply what happened, so everyone may page back through them.
+      weekStart = thisWeek;
     }
 
-    await this.ensureCrewsExist(weekStart, 14);
+    // Only generate crews from this week onward. Running the default template
+    // over past dates would invent shifts nobody actually worked.
+    const windowEnd = addDays(weekStart, 14);
+    if (windowEnd > thisWeek) {
+      const generateFrom = weekStart > thisWeek ? weekStart : thisWeek;
+      await this.ensureCrewsExist(
+        generateFrom,
+        daysBetween(generateFrom, windowEnd),
+      );
+    }
 
     const windowStart = addDays(weekStart, -7 * (knobs.rotationWeeks - 1));
     const crews = await this.loadWindow(windowStart, addDays(weekStart, 13));
@@ -97,6 +113,9 @@ export class CrewsService {
       const crew = byDate.get(dateStr);
       if (!crew) continue;
 
+      // A night that has already happened is a record, not an opportunity:
+      // no signup, no drop, and no eligibility to compute.
+      const historical = dateStr < now.dateStr;
       const day = this.dayContext(crew, memberId);
       const rotationDates = this.memberDatesInRotation(
         crews,
@@ -115,7 +134,7 @@ export class CrewsService {
             id: slot.member.id,
             name: `${slot.member.firstName.charAt(0)}. ${slot.member.lastName}`,
           };
-          if (slot.member.id === memberId) {
+          if (slot.member.id === memberId && !historical) {
             view.canDrop = isBeforeDeadline(
               now,
               dateStr,
@@ -126,6 +145,8 @@ export class CrewsService {
         } else if (slot?.placeholder) {
           view.vacant = false;
           view.placeholder = slot.placeholder;
+        } else if (historical) {
+          view.eligible = false;
         } else {
           const result = await this.eligibility.check({
             member: { dob: member.dob, heldKeys },
@@ -147,11 +168,30 @@ export class CrewsService {
         crewId: crew.id,
         date: dateStr,
         weekday: WEEKDAY_NAMES[weekdayOf(dateStr)],
+        historical,
         slots,
       });
     }
 
-    return { weekStart, currentWeek: weeks[0], nextWeek: weeks[1] };
+    // Hand the caller its navigation targets rather than making it re-derive
+    // who may look forward: history is open to all, the future is not.
+    const forward = addDays(weekStart, 14);
+    const nextViewDate = canViewAll
+      ? forward
+      : weekStart < thisWeek
+        ? forward > thisWeek
+          ? thisWeek
+          : forward
+        : null;
+
+    return {
+      weekStart,
+      thisWeek,
+      prevViewDate: addDays(weekStart, -14),
+      nextViewDate,
+      currentWeek: weeks[0],
+      nextWeek: weeks[1],
+    };
   }
 
   // -------------------------------------------------------------- mutations

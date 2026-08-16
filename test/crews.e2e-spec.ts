@@ -102,6 +102,88 @@ describe('Night crews engine (e2e)', () => {
     await app.close();
   });
 
+  describe('historical weeks', () => {
+    // Far enough back that no test ever generates it as a "current" week.
+    const pastWeek = addDays(startOfWeek(nyNow().dateStr), -70);
+
+    it('never materializes crews for weeks that have already happened', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/crews?viewDate=${pastWeek}`)
+        .set(as(bob))
+        .expect(200);
+      expect(res.body.weekStart).toBe(pastWeek);
+      // The default template must not invent shifts nobody worked.
+      const created = await prisma.crew.count({
+        where: {
+          date: {
+            gte: toDbDate(pastWeek),
+            lt: toDbDate(addDays(pastWeek, 14)),
+          },
+        },
+      });
+      expect(created).toBe(0);
+      expect(res.body.currentWeek).toEqual([]);
+      expect(res.body.nextWeek).toEqual([]);
+    });
+
+    it('shows a past night as a read-only record', async () => {
+      const crew = await prisma.crew.create({
+        data: {
+          date: toDbDate(addDays(pastWeek, 2)),
+          slots: { create: [{ position: 'OBSERVER', memberId: bob }] },
+        },
+      });
+      try {
+        const res = await request(app.getHttpServer())
+          .get(`/v1/crews?viewDate=${pastWeek}`)
+          .set(as(bob))
+          .expect(200);
+        const day = res.body.currentWeek.find(
+          (d: { crewId: number }) => d.crewId === crew.id,
+        );
+        expect(day.historical).toBe(true);
+        expect(day.slots.OBSERVER.member).toBeTruthy();
+        // Bob holds the slot, but the night is over: no drop, no signup.
+        expect(day.slots.OBSERVER.canDrop).toBeUndefined();
+        expect(day.slots.CC.eligible).toBe(false);
+      } finally {
+        await prisma.crew.delete({ where: { id: crew.id } });
+      }
+    });
+
+    it('lets a member page back but never past the public window', async () => {
+      const current = await request(app.getHttpServer())
+        .get('/v1/crews')
+        .set(as(bob))
+        .expect(200);
+      // At the edge of the window there is nowhere further forward to go.
+      expect(current.body.nextViewDate).toBeNull();
+      expect(current.body.prevViewDate).toBe(
+        addDays(startOfWeek(nyNow().dateStr), -14),
+      );
+
+      const past = await request(app.getHttpServer())
+        .get(`/v1/crews?viewDate=${pastWeek}`)
+        .set(as(bob))
+        .expect(200);
+      // Paging forward from history lands on this week, never beyond it.
+      expect(past.body.nextViewDate).toBe(addDays(pastWeek, 14));
+      const nearPast = await request(app.getHttpServer())
+        .get(`/v1/crews?viewDate=${addDays(startOfWeek(nyNow().dateStr), -7)}`)
+        .set(as(bob))
+        .expect(200);
+      expect(nearPast.body.nextViewDate).toBe(startOfWeek(nyNow().dateStr));
+    });
+
+    it('ignores a future viewDate from a member', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/crews?viewDate=${addDays(startOfWeek(nyNow().dateStr), 70)}`)
+        .set(as(bob))
+        .expect(200);
+      expect(res.body.weekStart).toBe(startOfWeek(nyNow().dateStr));
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')
