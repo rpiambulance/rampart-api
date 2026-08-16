@@ -275,7 +275,12 @@ export class CredentialsService {
     auth: AuthContext,
     memberId: number,
     credentialTypeId: number,
-    opts: { title?: string; grantedViaId?: number } = {},
+    opts: {
+      title?: string;
+      grantedViaId?: number;
+      /** When the member actually earned it; omit if not yet known. */
+      effectiveAt?: Date | null;
+    } = {},
   ) {
     const existing = await this.prisma.memberCredential.findUnique({
       where: { memberId_typeId: { memberId, typeId: credentialTypeId } },
@@ -290,6 +295,7 @@ export class CredentialsService {
             status: 'ACTIVE',
             title: opts.title ?? null,
             grantedAt: new Date(),
+            effectiveAt: opts.effectiveAt ?? null,
             grantedViaId: opts.grantedViaId ?? null,
             revokedAt: null,
           },
@@ -299,6 +305,7 @@ export class CredentialsService {
             memberId,
             typeId: credentialTypeId,
             title: opts.title ?? null,
+            effectiveAt: opts.effectiveAt ?? null,
             grantedViaId: opts.grantedViaId ?? null,
           },
         });
@@ -307,6 +314,43 @@ export class CredentialsService {
       credentialTypeId,
       ...opts,
     });
+    return credential;
+  }
+
+  /**
+   * Records (or corrects) the date a member actually earned a credential.
+   * Backfilled credentials are commonly granted before anyone has dug the
+   * real promotion date out of the old records, so this can be filled in
+   * long after the fact. Passing null clears it back to unknown.
+   */
+  async setEffectiveDate(
+    auth: AuthContext,
+    memberId: number,
+    credentialTypeId: number,
+    effectiveAt: Date | null,
+  ) {
+    const existing = await this.prisma.memberCredential.findUnique({
+      where: { memberId_typeId: { memberId, typeId: credentialTypeId } },
+    });
+    if (!existing) {
+      throw new NotFoundException('Member does not hold this credential');
+    }
+    const credential = await this.prisma.memberCredential.update({
+      where: { id: existing.id },
+      data: { effectiveAt },
+    });
+    await this.audit.log(
+      auth,
+      'credentials.set-effective-date',
+      'MemberCredential',
+      credential.id,
+      {
+        memberId,
+        credentialTypeId,
+        from: existing.effectiveAt?.toISOString().slice(0, 10) ?? null,
+        to: effectiveAt?.toISOString().slice(0, 10) ?? null,
+      },
+    );
     return credential;
   }
 

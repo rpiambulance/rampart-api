@@ -244,7 +244,11 @@ model MemberCredential {
   typeId       Int
   status       CredentialStatus @default(ACTIVE)
   title        String? // display-title override, e.g. "Senior Duty Supervisor" on a DS credential
-  grantedAt    DateTime         @default(now())
+  grantedAt    DateTime         @default(now()) // when this row was created here
+  /// When the member actually earned it. Null while unknown — a backfilled
+  /// credential can be recorded now and dated later. Prefer this over
+  /// grantedAt for display.
+  effectiveAt  DateTime?        @db.Date
   grantedViaId Int? // PromotionRequest id; null for appointments/corrections
   revokedAt    DateTime?
 

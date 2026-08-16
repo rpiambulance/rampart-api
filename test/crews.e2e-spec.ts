@@ -18,7 +18,12 @@ class TestAuthGuard implements CanActivate {
     req.auth = {
       kind: 'member',
       memberId,
-      permissions: new Set<string>(),
+      // Comma-separated, so a test can act with a specific permission.
+      permissions: new Set<string>(
+        String(req.headers['x-test-permissions'] ?? '')
+          .split(',')
+          .filter(Boolean),
+      ),
     };
     return true;
   }
@@ -181,6 +186,92 @@ describe('Night crews engine (e2e)', () => {
         .set(as(bob))
         .expect(200);
       expect(res.body.weekStart).toBe(startOfWeek(nyNow().dateStr));
+    });
+  });
+
+  describe('credential backfill', () => {
+    // A member of its own: granting credentials changes eligibility, which
+    // would quietly alter the scheduling tests that share the fixtures.
+    let dana: number;
+    beforeAll(async () => {
+      dana = await createMember('Dana', ['O']);
+    });
+
+    const asGranter = (memberId: number) => ({
+      'x-test-member-id': String(memberId),
+      'x-test-permissions': 'credentials:grant',
+    });
+
+    async function typeId(key: string): Promise<number> {
+      const type = await prisma.credentialType.findUniqueOrThrow({ where: { key } });
+      return type.id;
+    }
+
+    it('backfills a credential with its real promotion date', async () => {
+      const type = await typeId('A_D');
+      await request(app.getHttpServer())
+        .post('/v1/credentials/grant')
+        .set(asGranter(alice))
+        .send({ memberId: dana, credentialTypeId: type, effectiveAt: '2019-04-02' })
+        .expect(201);
+      const held = await prisma.memberCredential.findUniqueOrThrow({
+        where: { memberId_typeId: { memberId: dana, typeId: type } },
+      });
+      expect(held.effectiveAt?.toISOString().slice(0, 10)).toBe('2019-04-02');
+      // The row was still created today; only the promotion is backdated.
+      expect(held.grantedAt.getFullYear()).toBe(new Date().getFullYear());
+    });
+
+    it('records a credential now and dates it later', async () => {
+      const type = await typeId('P_D');
+      await request(app.getHttpServer())
+        .post('/v1/credentials/grant')
+        .set(asGranter(alice))
+        .send({ memberId: dana, credentialTypeId: type })
+        .expect(201);
+      const before = await prisma.memberCredential.findUniqueOrThrow({
+        where: { memberId_typeId: { memberId: dana, typeId: type } },
+      });
+      expect(before.effectiveAt).toBeNull();
+
+      await request(app.getHttpServer())
+        .patch(`/v1/credentials/${dana}/${type}/effective-date`)
+        .set(asGranter(alice))
+        .send({ effectiveAt: '2021-09-15' })
+        .expect(200);
+      const after = await prisma.memberCredential.findUniqueOrThrow({
+        where: { memberId_typeId: { memberId: dana, typeId: type } },
+      });
+      expect(after.effectiveAt?.toISOString().slice(0, 10)).toBe('2021-09-15');
+
+      // And can be cleared back to unknown.
+      await request(app.getHttpServer())
+        .patch(`/v1/credentials/${dana}/${type}/effective-date`)
+        .set(asGranter(alice))
+        .send({ effectiveAt: null })
+        .expect(200);
+      const cleared = await prisma.memberCredential.findUniqueOrThrow({
+        where: { memberId_typeId: { memberId: dana, typeId: type } },
+      });
+      expect(cleared.effectiveAt).toBeNull();
+    });
+
+    it('refuses a promotion date in the future', async () => {
+      const type = await typeId('D');
+      const res = await request(app.getHttpServer())
+        .post('/v1/credentials/grant')
+        .set(asGranter(alice))
+        .send({ memberId: dana, credentialTypeId: type, effectiveAt: '2999-01-01' })
+        .expect(400);
+      expect(res.body.message).toContain('future');
+    });
+
+    it('requires the grant permission', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/credentials/${dana}/${await typeId('A_D')}/effective-date`)
+        .set(as(dana))
+        .send({ effectiveAt: '2020-01-01' })
+        .expect(403);
     });
   });
 

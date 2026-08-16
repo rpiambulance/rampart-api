@@ -1,14 +1,24 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
 } from '@nestjs/common';
-import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -25,6 +35,26 @@ class GrantDto {
   @IsOptional()
   @IsString()
   title?: string;
+
+  /**
+   * The date the member actually earned this credential (YYYY-MM-DD). Omit
+   * when backfilling a credential whose promotion date is not yet known —
+   * it can be filled in later via PATCH .../effective-date.
+   */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'effectiveAt must be a date in YYYY-MM-DD form',
+  })
+  effectiveAt?: string;
+}
+
+class EffectiveDateDto {
+  /** Null clears the date back to unknown. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'effectiveAt must be a date in YYYY-MM-DD form',
+  })
+  effectiveAt?: string | null;
 }
 
 class LinkedRolesDto {
@@ -64,6 +94,22 @@ class AppointDto {
   @IsOptional()
   @IsBoolean()
   senior?: boolean; // grants the "Senior Duty Supervisor" title
+}
+
+/**
+ * A promotion date is a plain calendar date, and it cannot be in the future —
+ * a credential nobody has earned yet is not a credential.
+ */
+function parseEffectiveDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException(`${value} is not a real date`);
+  }
+  if (date.getTime() > Date.now()) {
+    throw new BadRequestException('A promotion date cannot be in the future');
+  }
+  return date;
 }
 
 @Controller({ path: 'credentials', version: '1' })
@@ -123,7 +169,29 @@ export class CredentialsController {
   grant(@CurrentAuth() auth: AuthContext, @Body() body: GrantDto) {
     return this.credentials.grant(auth, body.memberId, body.credentialTypeId, {
       title: body.title,
+      effectiveAt: parseEffectiveDate(body.effectiveAt),
     });
+  }
+
+  /**
+   * Fills in (or corrects) the date a member actually earned a credential.
+   * Separate from granting so a credential can be backfilled now and dated
+   * once someone digs the promotion date out of the old records.
+   */
+  @Patch(':memberId/:credentialTypeId/effective-date')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  setEffectiveDate(
+    @CurrentAuth() auth: AuthContext,
+    @Param('memberId', ParseIntPipe) memberId: number,
+    @Param('credentialTypeId', ParseIntPipe) credentialTypeId: number,
+    @Body() body: EffectiveDateDto,
+  ) {
+    return this.credentials.setEffectiveDate(
+      auth,
+      memberId,
+      credentialTypeId,
+      parseEffectiveDate(body.effectiveAt),
+    );
   }
 
   @Post('appoint')
