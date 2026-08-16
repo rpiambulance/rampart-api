@@ -98,3 +98,52 @@ auth. Options, in order of preference:
    shared credential.
 
 Pick one deliberately rather than by default.
+
+## Bootstrapping the first administrator
+
+The console requires a console permission, which comes from a role assignment,
+which is normally granted *in* the console — a chicken-and-egg. Two supported
+ways out.
+
+### Preferred: `BOOTSTRAP_ADMIN_EMAIL`
+
+Set on the **API** (not the web apps) and restart it:
+
+```
+BOOTSTRAP_ADMIN_EMAIL=you@rpiambulance.com
+BOOTSTRAP_ADMIN_NAME=Your Name        # optional
+BOOTSTRAP_ADMIN_ROLE=Admin            # optional, defaults to Admin
+```
+
+On boot the API creates that member if needed and grants the role. It is a
+**no-op as soon as any active member holds `roles:manage`**, so it can never
+re-grant access after you remove someone, and leaving it set is harmless —
+though you should still remove it once you're in.
+
+Requires the seed to have run first (that's what creates the `Admin` role).
+
+### Fallback: SQL
+
+If you'd rather not restart with an env var:
+
+```sql
+INSERT INTO "Member" ("firstName","lastName",email,active,"updatedAt")
+VALUES ('Your','Name','you@rpiambulance.com',true,now())
+ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO "MemberRole" ("memberId","roleId","startDate")
+SELECT m.id, r.id, now()
+FROM "Member" m, "Role" r
+WHERE m.email='you@rpiambulance.com' AND r.name='Admin';
+```
+
+### How the account gets linked to Keycloak
+
+Neither path needs the Keycloak subject up front. On first login the API
+matches an unlinked member by the token's **verified** email claim and stores
+the subject permanently. This is also what lets members migrated from the
+legacy portal (who have no subject) sign in at all.
+
+The linking only fires when the member has no subject yet and the token's
+`email_verified` is true, so it can never re-point an already-linked member at
+a different Keycloak account.

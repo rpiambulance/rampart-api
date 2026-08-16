@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
@@ -15,6 +16,19 @@ import { AuthContext } from './auth-context';
 
 const API_TOKEN_PREFIX = 'rpa_';
 
+/** Relations the guard needs to compute effective permissions. */
+const MEMBER_AUTH_INCLUDE = {
+  roles: { include: { role: { include: { permissions: true } } } },
+  credentials: {
+    where: { status: 'ACTIVE' as const },
+    include: {
+      type: {
+        include: { linkedRoles: { include: { role: { include: { permissions: true } } } } },
+      },
+    },
+  },
+};
+
 /**
  * Global guard: authenticates every request either via a Keycloak-issued JWT
  * (browser/web-app traffic) or an admin-created API token (machine clients).
@@ -22,6 +36,7 @@ const API_TOKEN_PREFIX = 'rpa_';
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
+  private readonly logger = new Logger(AuthGuard.name);
   private jwks?: ReturnType<typeof createRemoteJWKSet>;
 
   constructor(
@@ -58,17 +73,24 @@ export class AuthGuard implements CanActivate {
     );
 
     let subject: string;
+    let email: string | undefined;
+    let emailVerified = false;
     try {
       const { payload } = await jwtVerify(token, this.jwks, {
         issuer,
         ...(audience ? { audience } : {}),
       });
       subject = payload.sub!;
+      email =
+        typeof payload.email === 'string'
+          ? payload.email.trim().toLowerCase()
+          : undefined;
+      emailVerified = payload.email_verified === true;
     } catch {
       throw new UnauthorizedException('Invalid token');
     }
 
-    const member = await this.prisma.member.findUnique({
+    let member = await this.prisma.member.findUnique({
       where: { keycloakSubject: subject },
       include: {
         roles: {
@@ -88,6 +110,24 @@ export class AuthGuard implements CanActivate {
         },
       },
     });
+    // First-login linking. Members created by an officer or migrated from the
+    // legacy portal have no keycloakSubject yet; claim it once, keyed on a
+    // Keycloak-verified email. Never re-points a member already linked to a
+    // different Keycloak account.
+    if (!member && email && emailVerified) {
+      const byEmail = await this.prisma.member.findUnique({ where: { email } });
+      if (byEmail && byEmail.keycloakSubject === null) {
+        member = await this.prisma.member.update({
+          where: { id: byEmail.id },
+          data: { keycloakSubject: subject },
+          include: MEMBER_AUTH_INCLUDE,
+        });
+        this.logger.log(
+          `Linked member ${byEmail.id} (${email}) to Keycloak subject ${subject}`,
+        );
+      }
+    }
+
     if (!member) {
       throw new ForbiddenException({
         code: 'NO_MEMBER_RECORD',

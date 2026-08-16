@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthGuard } from './auth/auth.guard';
+import { BootstrapService } from './bootstrap/bootstrap.service';
 import { AvailabilityController } from './availability/availability.controller';
 import { CoverageController } from './coverage/coverage.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
@@ -54,6 +55,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     // Registered useExisting (not useClass) so tests can override AuthGuard.
     AuthGuard,
     PermissionsGuard,
+    BootstrapService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useExisting: AuthGuard },
     { provide: APP_GUARD, useExisting: PermissionsGuard },
