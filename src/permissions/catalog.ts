@@ -20,6 +20,8 @@ export const PERMISSIONS = {
   PROMOTIONS_CAPTAIN_APPROVE: 'promotions:captain-approve',
   PROMOTIONS_ADJUST: 'promotions:adjust-requirements',
   SCHEDULE_CREWS_ASSIGN: 'schedule:crews:assign',
+  /** May fill the duty supervisor seat without holding the DS credential. */
+  SCHEDULE_DUTY_SUP: 'schedule:crews:duty-sup',
   SCHEDULE_CREWS_MANAGE_DEFAULTS: 'schedule:crews:manage-defaults',
   SCHEDULE_SETTINGS: 'schedule:settings',
   EVENTS_CREATE: 'events:create',

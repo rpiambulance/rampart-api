@@ -19,7 +19,15 @@ export interface DayContext {
 }
 
 export interface EligibilityInput {
-  member: { dob: Date | null; heldKeys: Set<string> };
+  member: {
+    dob: Date | null;
+    heldKeys: Set<string>;
+    /**
+     * Holds schedule:crews:duty-sup — may take the duty supervisor seat
+     * without the DS credential (an officer covering, say).
+     */
+    mayActAsDutySup?: boolean;
+  };
   position: CrewPosition;
   dateStr: string;
   now: NyNow;
@@ -102,7 +110,7 @@ export class CrewEligibilityService {
         return { eligible: false, reason: 'Driver credential required' };
       }
       case 'DUTY_SUP': {
-        return held.has('DS')
+        return held.has('DS') || member.mayActAsDutySup
           ? { eligible: true, reason: '' }
           : {
               eligible: false,

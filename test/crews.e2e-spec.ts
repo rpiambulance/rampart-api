@@ -557,6 +557,91 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('duty supervisor seat by permission', () => {
+    let officer: number;
+
+    beforeAll(async () => {
+      officer = await createMember('Officer', ['O', 'A']);
+    });
+
+    it('is closed to a member without the credential or the permission', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/crews')
+        .set(as(officer))
+        .expect(200);
+      const day = res.body.nextWeek[3];
+      expect(day.slots.DUTY_SUP.eligible).toBe(false);
+      expect(day.slots.DUTY_SUP.reason).toBe(
+        'Duty supervisor appointment required',
+      );
+    });
+
+    it('opens to a member holding schedule:crews:duty-sup', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/crews')
+        .set({
+          'x-test-member-id': String(officer),
+          'x-test-permissions': 'schedule:crews:duty-sup',
+        })
+        .expect(200);
+      const day = res.body.nextWeek[3];
+      expect(day.slots.DUTY_SUP.eligible).toBe(true);
+    });
+
+    it('lets them actually take the seat', async () => {
+      const crewId = await crewIdFor(dayC);
+      await request(app.getHttpServer())
+        .post(`/v1/crews/${crewId}/slots/DUTY_SUP/signup`)
+        .set({
+          'x-test-member-id': String(officer),
+          'x-test-permissions': 'schedule:crews:duty-sup',
+        })
+        .expect(201);
+      const slot = await prisma.crewSlot.findFirstOrThrow({
+        where: { crewId, position: 'DUTY_SUP' },
+      });
+      expect(slot.memberId).toBe(officer);
+      await prisma.crewSlot.update({
+        where: { id: slot.id },
+        data: { memberId: null },
+      });
+    });
+
+    it('refuses without the permission', async () => {
+      const blocked = await request(app.getHttpServer())
+        .post(`/v1/crews/${await crewIdFor(dayB)}/slots/DUTY_SUP/signup`)
+        .set(as(officer))
+        .expect(403);
+      expect(blocked.body.message).toBe('Duty supervisor appointment required');
+    });
+
+    it('lists them as a duty supervisor candidate for schedulers', async () => {
+      const role = await prisma.role.create({
+        data: {
+          name: `DS cover ${stamp}`,
+          permissions: { create: [{ permission: 'schedule:crews:duty-sup' }] },
+        },
+      });
+      await prisma.memberRole.create({
+        data: { memberId: officer, roleId: role.id, startDate: new Date() },
+      });
+      try {
+        const res = await request(app.getHttpServer())
+          .get('/v1/crews/assignable-members')
+          .set({
+            'x-test-member-id': String(alice),
+            'x-test-permissions': 'schedule:crews:assign',
+          })
+          .expect(200);
+        const row = res.body.find((m: { id: number }) => m.id === officer);
+        expect(row.positions).toContain('DUTY_SUP');
+      } finally {
+        await prisma.memberRole.deleteMany({ where: { roleId: role.id } });
+        await prisma.role.delete({ where: { id: role.id } });
+      }
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

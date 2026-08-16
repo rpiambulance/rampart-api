@@ -82,7 +82,12 @@ export class CrewsController {
     }
     // Schedulers may page to any week; members are clamped to the public window.
     const canViewAll = auth.permissions.has(PERMISSIONS.SCHEDULE_CREWS_ASSIGN);
-    return this.crews.getWeeks(requireMember(auth), viewDate, canViewAll);
+    return this.crews.getWeeks(
+      requireMember(auth),
+      viewDate,
+      canViewAll,
+      auth.permissions.has(PERMISSIONS.SCHEDULE_DUTY_SUP),
+    );
   }
 
   /** Candidates for the scheduling grid, filtered by position credentials. */
@@ -138,7 +143,12 @@ export class CrewsController {
     @Param('crewId', ParseIntPipe) crewId: number,
     @Param('position') position: CrewPosition,
   ) {
-    return this.crews.signup(requireMember(auth), crewId, position);
+    return this.crews.signup(
+      requireMember(auth),
+      crewId,
+      position,
+      auth.permissions.has(PERMISSIONS.SCHEDULE_DUTY_SUP),
+    );
   }
 
   @Delete(':crewId/slots/:position/signup')

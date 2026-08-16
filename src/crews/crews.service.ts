@@ -74,7 +74,12 @@ export class CrewsService {
 
   // ---------------------------------------------------------------- queries
 
-  async getWeeks(memberId: number, viewDate?: string, canViewAll = false) {
+  async getWeeks(
+    memberId: number,
+    viewDate?: string,
+    canViewAll = false,
+    mayActAsDutySup = false,
+  ) {
     const now = nyNow();
     const knobs = await this.settings.scheduling();
     const thisWeek = startOfWeek(now.dateStr);
@@ -149,7 +154,7 @@ export class CrewsService {
           view.eligible = false;
         } else {
           const result = await this.eligibility.check({
-            member: { dob: member.dob, heldKeys },
+            member: { dob: member.dob, heldKeys, mayActAsDutySup },
             position,
             dateStr,
             now,
@@ -201,6 +206,9 @@ export class CrewsService {
    * property of the night, not of the person, and schedulers may arrange it.
    */
   async assignableMembers() {
+    const dutySupByPermission = await this.membersWithPermission(
+      PERMISSIONS.SCHEDULE_DUTY_SUP,
+    );
     const members = await this.prisma.member.findMany({
       where: { active: true },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -233,7 +241,12 @@ export class CrewsService {
       if (await this.graph.satisfies(held, 'A')) positions.push('ATTENDANT');
       // The rider seat is the way in: open to any active member.
       positions.push('OBSERVER');
-      if (await this.graph.satisfies(held, 'DS')) positions.push('DUTY_SUP');
+      if (
+        (await this.graph.satisfies(held, 'DS')) ||
+        dutySupByPermission.has(member.id)
+      ) {
+        positions.push('DUTY_SUP');
+      }
       out.push({
         id: member.id,
         firstName: member.firstName,
@@ -244,9 +257,48 @@ export class CrewsService {
     return out;
   }
 
+  /**
+   * Active members who hold `permission`, whether from a role assigned
+   * directly or from a role conferred by a credential they hold — the same
+   * two sources the auth guard unions.
+   */
+  private async membersWithPermission(permission: string): Promise<Set<number>> {
+    const today = new Date();
+    const [byRole, byCredential] = await Promise.all([
+      this.prisma.memberRole.findMany({
+        where: {
+          startDate: { lte: today },
+          OR: [{ endDate: null }, { endDate: { gte: today } }],
+          member: { active: true },
+          role: { permissions: { some: { permission } } },
+        },
+        select: { memberId: true },
+      }),
+      this.prisma.memberCredential.findMany({
+        where: {
+          status: 'ACTIVE',
+          member: { active: true },
+          type: {
+            linkedRoles: { some: { role: { permissions: { some: { permission } } } } },
+          },
+        },
+        select: { memberId: true },
+      }),
+    ]);
+    return new Set([
+      ...byRole.map((r) => r.memberId),
+      ...byCredential.map((r) => r.memberId),
+    ]);
+  }
+
   // -------------------------------------------------------------- mutations
 
-  async signup(memberId: number, crewId: number, position: CrewPosition) {
+  async signup(
+    memberId: number,
+    crewId: number,
+    position: CrewPosition,
+    mayActAsDutySup = false,
+  ) {
     const crew = await this.prisma.crew.findUnique({
       where: { id: crewId },
       include: {
@@ -288,7 +340,7 @@ export class CrewsService {
     );
 
     const result = await this.eligibility.check({
-      member: { dob: member.dob, heldKeys },
+      member: { dob: member.dob, heldKeys, mayActAsDutySup },
       position,
       dateStr,
       now,
