@@ -85,7 +85,7 @@ export class CrewEligibilityService {
           if (!knobs.probationaryRequiresTrainer || day.ccTrainerOn) {
             return { eligible: true, reason: '' };
           }
-          return { eligible: false, reason: 'No CC-Trainer on' };
+          return { eligible: false, reason: 'No CC-T on this crew' };
         }
         return { eligible: false, reason: 'CC credential required' };
       }
@@ -97,14 +97,17 @@ export class CrewEligibilityService {
           if (!knobs.probationaryRequiresTrainer || day.driverTrainerOn) {
             return { eligible: true, reason: '' };
           }
-          return { eligible: false, reason: 'No Driver-Trainer on' };
+          return { eligible: false, reason: 'No D-T on this crew' };
         }
         return { eligible: false, reason: 'Driver credential required' };
       }
       case 'DUTY_SUP': {
         return held.has('DS')
           ? { eligible: true, reason: '' }
-          : { eligible: false, reason: 'Duty Supervisor appointment required' };
+          : {
+              eligible: false,
+              reason: 'Duty supervisor appointment required',
+            };
       }
       case 'ATTENDANT':
       case 'OBSERVER': {

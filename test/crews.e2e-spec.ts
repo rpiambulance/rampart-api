@@ -588,9 +588,9 @@ describe('Night crews engine (e2e)', () => {
       .post(`/v1/crews/${crewId}/slots/CC/signup`)
       .set(as(charlie))
       .expect(403);
-    expect(blocked.body.message).toBe('No CC-Trainer on');
+    expect(blocked.body.message).toBe('No CC-T on this crew');
 
-    // Put a CC-Trainer on the crew (driver seat), then retry.
+    // Put a CC-T on the crew (driver seat), then retry.
     await prisma.crewSlot.update({
       where: { crewId_position: { crewId, position: 'DRIVER' } },
       data: { memberId: tina },
