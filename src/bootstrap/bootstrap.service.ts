@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { ensureReferenceData } from './reference-data';
 
 /**
  * Solves the first-admin chicken-and-egg: the admin console requires a
@@ -29,6 +30,18 @@ export class BootstrapService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // Reference data first: the admin bootstrap below needs the seed roles to
+    // exist, and a deployed environment only ever runs `prisma migrate deploy`.
+    try {
+      await ensureReferenceData(this.prisma, (message) => this.logger.log(message));
+    } catch (error) {
+      this.logger.error(
+        `Could not ensure reference data: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     const email = this.config
       .get<string>('BOOTSTRAP_ADMIN_EMAIL')
       ?.trim()
