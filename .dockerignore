@@ -1,0 +1,26 @@
+# See note in the web repos: host node_modules/dist must not overwrite the
+# container's platform-correct install. src/generated is recreated by the
+# explicit `prisma generate` step in the Dockerfile.
+node_modules
+dist
+src/generated
+
+# Uploaded cert documents (local storage driver)
+storage
+
+# VCS + local tooling
+.git
+.gitignore
+.DS_Store
+*.log
+
+# Secrets — must never be baked into an image
+.env
+.env.*
+scripts/.env.deploy
+
+# Not needed to build
+Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md
