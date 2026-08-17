@@ -25,6 +25,14 @@ import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { EvalsService } from './evals.service';
 
+class TemplateOptionDto {
+  @IsString()
+  value!: string;
+
+  @IsString()
+  label!: string;
+}
+
 class TemplateItemDto {
   @IsInt()
   order!: number;
@@ -32,8 +40,15 @@ class TemplateItemDto {
   @IsString()
   prompt!: string;
 
-  @IsIn(['SCALE_1_5', 'PASS_FAIL', 'TEXT'])
-  scoreType!: 'SCALE_1_5' | 'PASS_FAIL' | 'TEXT';
+  @IsIn(['SCALE_1_5', 'PASS_FAIL', 'TEXT', 'OPTIONS', 'HEADING'])
+  scoreType!: 'SCALE_1_5' | 'PASS_FAIL' | 'TEXT' | 'OPTIONS' | 'HEADING';
+
+  /** Required for OPTIONS; ignored otherwise. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TemplateOptionDto)
+  options?: TemplateOptionDto[];
 }
 
 class CreateTemplateDto {
@@ -73,6 +88,10 @@ class ScoreDto {
   @IsOptional()
   @IsString()
   textValue?: string | null;
+
+  @IsOptional()
+  @IsString()
+  optionValue?: string | null;
 }
 
 class SaveScoresDto {
@@ -88,6 +107,15 @@ class SaveScoresDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  /** The evaluator's overall verdict. */
+  @IsOptional()
+  @IsIn(['NEEDS_IMPROVEMENT', 'PASSED'])
+  outcome?: 'NEEDS_IMPROVEMENT' | 'PASSED';
+
+  @IsOptional()
+  @IsBoolean()
+  readyForPromotion?: boolean;
 }
 
 function requireMember(auth: AuthContext): number {
@@ -162,6 +190,8 @@ export class EvalsController {
     return this.evals.saveScores(requireMember(auth), id, body.scores, {
       submit: body.submit,
       notes: body.notes,
+      outcome: body.outcome,
+      readyForPromotion: body.readyForPromotion,
     });
   }
 

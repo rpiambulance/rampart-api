@@ -295,6 +295,16 @@ enum ScoreType {
   SCALE_1_5
   PASS_FAIL
   TEXT
+  /// A list of choices, defined on the item.
+  OPTIONS
+  /// Not a question: a heading or instruction shown on the form.
+  HEADING
+}
+
+/// The evaluator's overall verdict on an evaluation.
+enum EvalOutcome {
+  NEEDS_IMPROVEMENT
+  PASSED
 }
 
 model EvalFormTemplate {
@@ -318,6 +328,8 @@ model EvalFormItem {
   order      Int
   prompt     String
   scoreType  ScoreType
+  /// For OPTIONS: [{ value, label }], in the order they are offered.
+  options    Json?
 
   template EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   scores   EvalScore[]
@@ -339,6 +351,9 @@ model Evaluation {
   status            EvalStatus @default(DRAFT)
   shiftDate         DateTime?  @db.Date
   notes             String?
+  /// The evaluator's overall verdict, and whether they would promote.
+  outcome           EvalOutcome?
+  readyForPromotion Boolean?
   signedByEvaluator DateTime?
   signedBySubject   DateTime?
   createdAt         DateTime   @default(now())
@@ -359,6 +374,8 @@ model EvalScore {
   scaleValue   Int?
   passed       Boolean?
   textValue    String?
+  /// For OPTIONS: the chosen option's value.
+  optionValue  String?
 
   evaluation Evaluation   @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
   item       EvalFormItem @relation(fields: [itemId], references: [id])

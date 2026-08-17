@@ -1903,6 +1903,145 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('evaluations', () => {
+    // A function, not a constant: the fixture ids are assigned in beforeAll,
+    // after the describe body has already run.
+    const asAuthor = () => ({
+      'x-test-member-id': String(tina),
+      'x-test-permissions': 'evals:manage-forms,evals:write',
+    });
+
+    // Evaluations reference members without a cascade, so they have to go
+    // before the fixture members do.
+    afterAll(async () => {
+      await prisma.evaluation.deleteMany({
+        where: { OR: [{ subjectId: bob }, { evaluatorId: tina }] },
+      });
+      await prisma.evalFormTemplate.deleteMany({
+        where: { name: { contains: String(stamp) } },
+      });
+      await prisma.inboxMessage.deleteMany({ where: { memberId: bob } });
+    });
+
+    it('stores option lists, headings and free text on a template', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/v1/evals/templates')
+        .set(asAuthor())
+        .send({
+          name: `Rich form ${stamp}`,
+          items: [
+            { order: 1, prompt: 'Patient care', scoreType: 'HEADING' },
+            { order: 2, prompt: 'Scene size-up', scoreType: 'SCALE_1_5' },
+            {
+              order: 3,
+              prompt: 'Radio discipline',
+              scoreType: 'OPTIONS',
+              options: [
+                { value: 'poor', label: 'Needs work' },
+                { value: 'ok', label: 'Adequate' },
+                { value: 'good', label: 'Strong' },
+              ],
+            },
+            { order: 4, prompt: 'Anything else?', scoreType: 'TEXT' },
+          ],
+        })
+        .expect(201);
+
+      const options = created.body.items.find(
+        (i: { scoreType: string }) => i.scoreType === 'OPTIONS',
+      );
+      expect(options.options).toEqual([
+        { value: 'poor', label: 'Needs work' },
+        { value: 'ok', label: 'Adequate' },
+        { value: 'good', label: 'Strong' },
+      ]);
+      // Items that are not option lists carry none.
+      expect(
+        created.body.items.find((i: { scoreType: string }) => i.scoreType === 'TEXT')
+          .options,
+      ).toBeNull();
+      expect(created.body.items.length).toBe(4);
+    });
+
+    it('takes more than ten items', async () => {
+      const items = Array.from({ length: 24 }, (_, i) => ({
+        order: i + 1,
+        prompt: `Question ${i + 1}`,
+        scoreType: 'SCALE_1_5' as const,
+      }));
+      const created = await request(app.getHttpServer())
+        .post('/v1/evals/templates')
+        .set(asAuthor())
+        .send({ name: `Long form ${stamp}`, items })
+        .expect(201);
+      expect(created.body.items.length).toBe(24);
+    });
+
+    it('records a verdict and asks the trainee to sign', async () => {
+      const template = await request(app.getHttpServer())
+        .post('/v1/evals/templates')
+        .set(asAuthor())
+        .send({
+          name: `Verdict form ${stamp}`,
+          items: [
+            {
+              order: 1,
+              prompt: 'Overall handling',
+              scoreType: 'OPTIONS',
+              options: [
+                { value: 'ok', label: 'Adequate' },
+                { value: 'good', label: 'Strong' },
+              ],
+            },
+          ],
+        })
+        .expect(201);
+
+      const created = await request(app.getHttpServer())
+        .post('/v1/evals')
+        .set(asAuthor())
+        .send({ subjectId: bob, templateId: template.body.id })
+        .expect(201);
+
+      const saved = await request(app.getHttpServer())
+        .put(`/v1/evals/${created.body.id}/scores`)
+        .set(asAuthor())
+        .send({
+          scores: [
+            { itemId: template.body.items[0].id, optionValue: 'good' },
+          ],
+          notes: 'Handled a difficult call well.',
+          outcome: 'PASSED',
+          readyForPromotion: true,
+          submit: true,
+        })
+        .expect(200);
+      expect(saved.body.outcome).toBe('PASSED');
+      expect(saved.body.readyForPromotion).toBe(true);
+      expect(saved.body.scores[0].optionValue).toBe('good');
+
+      // The trainee is asked to acknowledge it.
+      const task = await prisma.inboxMessage.findFirst({
+        where: { memberId: bob, type: 'eval.received', isTask: true },
+        orderBy: { id: 'desc' },
+      });
+      expect(task).toBeTruthy();
+      expect(task!.actionUrl).toBe(`/evals/${created.body.id}`);
+
+      // Signing it off completes the acknowledgement.
+      await request(app.getHttpServer())
+        .post(`/v1/evals/${created.body.id}/sign`)
+        .set(as(bob))
+        .expect(201);
+      const signed = await prisma.evaluation.findUniqueOrThrow({
+        where: { id: created.body.id },
+      });
+      expect(signed.signedBySubject).toBeTruthy();
+
+      await prisma.inboxMessage.deleteMany({ where: { memberId: bob } });
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScoreType } from '../generated/prisma/enums';
 
@@ -11,6 +12,21 @@ export interface TemplateItemInput {
   order: number;
   prompt: string;
   scoreType: ScoreType;
+  /** For OPTIONS items: the choices, in the order they are offered. */
+  options?: Array<{ value: string; label: string }>;
+}
+
+/** Only OPTIONS items carry choices; the column stays null otherwise. */
+function toItemData(item: TemplateItemInput) {
+  return {
+    order: item.order,
+    prompt: item.prompt,
+    scoreType: item.scoreType,
+    options:
+      item.scoreType === 'OPTIONS' && item.options?.length
+        ? (item.options as object)
+        : undefined,
+  };
 }
 
 export interface ScoreInput {
@@ -18,11 +34,15 @@ export interface ScoreInput {
   scaleValue?: number | null;
   passed?: boolean | null;
   textValue?: string | null;
+  optionValue?: string | null;
 }
 
 @Injectable()
 export class EvalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly notifications: NotificationsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   // ---- templates ----
 
@@ -36,7 +56,7 @@ export class EvalsService {
 
   createTemplate(name: string, items: TemplateItemInput[]) {
     return this.prisma.evalFormTemplate.create({
-      data: { name, items: { create: items } },
+      data: { name, items: { create: items.map(toItemData) } },
       include: { items: true },
     });
   }
@@ -53,7 +73,7 @@ export class EvalsService {
       await this.prisma.evalFormItem.deleteMany({ where: { templateId } });
       return this.prisma.evalFormTemplate.update({
         where: { id: templateId },
-        data: { items: { create: items } },
+        data: { items: { create: items.map(toItemData) } },
         include: { items: true },
       });
     }
@@ -65,7 +85,7 @@ export class EvalsService {
       data: {
         name: existing.name,
         version: existing.version + 1,
-        items: { create: items },
+        items: { create: items.map(toItemData) },
       },
       include: { items: true },
     });
@@ -97,7 +117,12 @@ export class EvalsService {
     evaluatorId: number,
     evaluationId: number,
     scores: ScoreInput[],
-    opts: { submit?: boolean; notes?: string } = {},
+    opts: {
+      submit?: boolean;
+      notes?: string;
+      outcome?: 'NEEDS_IMPROVEMENT' | 'PASSED';
+      readyForPromotion?: boolean;
+    } = {},
   ) {
     const evaluation = await this.prisma.evaluation.findUnique({
       where: { id: evaluationId },
@@ -120,17 +145,39 @@ export class EvalsService {
           scaleValue: score.scaleValue ?? null,
           passed: score.passed ?? null,
           textValue: score.textValue ?? null,
+          optionValue: score.optionValue ?? null,
         },
       });
     }
-    return this.prisma.evaluation.update({
+    const updated = await this.prisma.evaluation.update({
       where: { id: evaluationId },
       data: {
         ...(opts.notes !== undefined ? { notes: opts.notes } : {}),
-        ...(opts.submit ? { status: 'SUBMITTED' } : {}),
+        ...(opts.outcome !== undefined ? { outcome: opts.outcome } : {}),
+        ...(opts.readyForPromotion !== undefined
+          ? { readyForPromotion: opts.readyForPromotion }
+          : {}),
+        ...(opts.submit ? { status: 'SUBMITTED', signedByEvaluator: new Date() } : {}),
       },
-      include: { scores: true },
+      include: { scores: true, subject: { select: { id: true } }, template: true },
     });
+
+    // Submitting hands it to the trainee to acknowledge.
+    if (opts.submit) {
+      await this.notifications.notify(updated.subjectId, {
+        type: 'eval.received',
+        subject: `Evaluation to acknowledge: ${updated.template.name}`,
+        body:
+          `An evaluation has been written about you` +
+          `${updated.outcome ? ` — ${updated.outcome === 'PASSED' ? 'Passed' : 'Needs improvement'}` : ''}.` +
+          ' Read it and sign to confirm you have seen it.',
+        task: {
+          actionLabel: 'Read and sign',
+          actionUrl: `/evals/${evaluationId}`,
+        },
+      });
+    }
+    return updated;
   }
 
   /** Both parties sign; when both have signed the eval becomes SIGNED (counts toward checklists). */
