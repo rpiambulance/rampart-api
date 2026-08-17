@@ -16,7 +16,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface EventPositionInput {
   position: string;
-  count: number;
+  /** Omitted or null for a position with no limit. */
+  count?: number | null;
   requiredCredentialKey?: string | null;
 }
 
@@ -94,7 +95,8 @@ export class EventsService {
             const filled = event.signups.filter(
               (s) => s.position === p.position,
             ).length;
-            if (filled >= p.count) return null;
+            // A null count means no limit, so it never fills.
+            if (p.count !== null && filled >= p.count) return null;
             if (
               p.requiredCredentialKey &&
               !(await this.graph.satisfies(held, p.requiredCredentialKey))
@@ -128,7 +130,7 @@ export class EventsService {
         positions: {
           create: (input.positions ?? []).map((p) => ({
             position: normalizePosition(p.position),
-            count: p.count,
+            count: p.count ?? null,
             requiredCredentialKey: p.requiredCredentialKey ?? null,
           })),
         },
@@ -179,7 +181,7 @@ export class EventsService {
         data: input.positions.map((p) => ({
           eventId,
           position: normalizePosition(p.position),
-          count: p.count,
+          count: p.count ?? null,
           requiredCredentialKey: p.requiredCredentialKey ?? null,
         })),
       });
@@ -235,7 +237,7 @@ export class EventsService {
       const filled = event.signups.filter(
         (s) => s.position === position && s.memberId !== memberId,
       ).length;
-      if (filled >= posDef.count) {
+      if (posDef.count !== null && filled >= posDef.count) {
         throw new ConflictException('That position is full');
       }
       if (posDef.requiredCredentialKey && !opts.override) {

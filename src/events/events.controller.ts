@@ -33,9 +33,11 @@ class PositionDto {
   @IsString()
   position!: string;
 
+  /** Omit, or send null, for a position with no limit. */
+  @IsOptional()
   @IsInt()
   @Min(1)
-  count!: number;
+  count?: number | null;
 
   @IsOptional()
   @IsString()

@@ -1479,6 +1479,61 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('event positions with no limit', () => {
+    const asOrganiser = {
+      'x-test-member-id': String(alice),
+      'x-test-permissions': 'events:create,events:assign-others',
+    };
+
+    it('never fills a position created without a count', async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const created = await request(app.getHttpServer())
+        .post('/v1/events')
+        .set(asOrganiser)
+        .send({
+          title: `Open roster ${stamp}`,
+          startsAt: '2027-03-01T18:00:00.000Z',
+          endsAt: '2027-03-01T22:00:00.000Z',
+          kindId: kind.id,
+          positions: [
+            { position: 'observer' },
+            { position: 'cc', count: 1 },
+          ],
+        })
+        .expect(201);
+      const eventId = created.body.id;
+
+      const stored = await prisma.eventPosition.findMany({
+        where: { eventId },
+        orderBy: { position: 'asc' },
+      });
+      expect(stored.find((p) => p.position === 'observer')?.count).toBeNull();
+      expect(stored.find((p) => p.position === 'cc')?.count).toBe(1);
+
+      // Three sign up for the unlimited seat; none is turned away.
+      for (const memberId of [alice, bob, charlie]) {
+        await request(app.getHttpServer())
+          .post(`/v1/events/${eventId}/signup/${memberId}`)
+          .set(asOrganiser)
+          .send({ position: 'observer' })
+          .expect(201);
+      }
+      const signups = await prisma.eventSignup.count({
+        where: { eventId, position: 'observer' },
+      });
+      expect(signups).toBe(3);
+
+      // The capped seat still fills at its limit.
+      await request(app.getHttpServer())
+        .post(`/v1/events/${eventId}/signup/${tina}`)
+        .set(asOrganiser)
+        .send({ position: 'cc' })
+        .expect(201);
+
+      await prisma.event.delete({ where: { id: eventId } });
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

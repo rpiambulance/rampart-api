@@ -659,7 +659,8 @@ model EventPosition {
   id                    Int    @id @default(autoincrement())
   eventId               Int
   position              String // cc, driver, attendant, observer, ees, ...
-  count                 Int
+  /// How many are wanted. Null means no limit — take everyone who signs up.
+  count                 Int?
   requiredCredentialKey String? // CredentialType.key gate; null = open
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
