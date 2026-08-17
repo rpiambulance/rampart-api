@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -12,12 +13,16 @@ import { Throttle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsDateString,
   IsEmail,
   IsOptional,
   IsString,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import type { AuthContext } from '../auth/auth-context';
 import { AuditService } from '../audit/audit.service';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -28,6 +33,23 @@ import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsService } from '../events/events.service';
 import type { EventInput } from '../events/events.service';
+
+/** One event on a request. A submission may carry several. */
+class RequestedEventDto {
+  @IsString()
+  @MaxLength(4000)
+  description!: string;
+
+  @IsOptional()
+  @IsDateString()
+  requestedDate?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  location?: string;
+
+}
 
 class IntakeDto {
   @IsString()
@@ -47,9 +69,11 @@ class IntakeDto {
   @MaxLength(30)
   requesterPhone?: string;
 
+  /** Used when `events` is absent; a submission needs one or the other. */
+  @IsOptional()
   @IsString()
   @MaxLength(4000)
-  description!: string;
+  description?: string;
 
   @IsOptional()
   @IsDateString()
@@ -59,6 +83,18 @@ class IntakeDto {
   @IsString()
   @MaxLength(300)
   location?: string;
+  /**
+   * Several events in one submission — a season's home games, say. Each
+   * becomes its own request so they can be staffed and answered separately,
+   * while the requester fills the form once. When absent, the single set of
+   * fields above is used instead.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(25)
+  @ValidateNested({ each: true })
+  @Type(() => RequestedEventDto)
+  events?: RequestedEventDto[];
 }
 
 class MessageDto {
@@ -99,28 +135,71 @@ export class CoverageController {
   @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
   @Post()
   async intake(@Body() body: IntakeDto) {
-    const request = await this.prisma.coverageRequest.create({
-      data: {
-        token: randomBytes(24).toString('hex'),
-        requesterName: body.requesterName,
-        requesterOrg: body.requesterOrg,
-        requesterEmail: body.requesterEmail,
-        requesterPhone: body.requesterPhone,
-        description: body.description,
-        requestedDate: body.requestedDate ? new Date(body.requestedDate) : null,
-        location: body.location,
-      },
+    const wanted = body.events?.length
+      ? body.events
+      : body.description
+        ? [
+            {
+              description: body.description,
+              requestedDate: body.requestedDate,
+              location: body.location,
+            },
+          ]
+        : [];
+    if (!wanted.length) {
+      throw new BadRequestException(
+        'Describe at least one event you need covered',
+      );
+    }
+
+    const created = await Promise.all(
+      wanted.map((item) =>
+        this.prisma.coverageRequest.create({
+          data: {
+            token: randomBytes(24).toString('hex'),
+            requesterName: body.requesterName,
+            requesterOrg: body.requesterOrg,
+            requesterEmail: body.requesterEmail,
+            requesterPhone: body.requesterPhone,
+            description: item.description,
+            requestedDate: item.requestedDate ? new Date(item.requestedDate) : null,
+            location: item.location,
+          },
+        }),
+      ),
+    );
+
+    // One email covering the submission, so requesting six games does not send
+    // six near-identical messages.
+    const lines = created.map((request) => {
+      const when = request.requestedDate
+        ? request.requestedDate.toISOString().slice(0, 10)
+        : 'date to be confirmed';
+      return `• ${when} — ${request.description.slice(0, 120)}\n  ${this.statusUrl(request.token)}`;
     });
     await this.notifications.sendEmail(
       body.requesterEmail,
-      'RPI Ambulance — coverage request received',
-      `We received your coverage request. Track its status and answer any follow-up questions here:\n\n${this.statusUrl(request.token)}`,
+      created.length > 1
+        ? `RPI Ambulance — ${created.length} coverage requests received`
+        : 'RPI Ambulance — coverage request received',
+      `We received your ${created.length > 1 ? 'requests' : 'request'}. Track ` +
+        `${created.length > 1 ? 'each one' : 'it'} and answer any follow-up ` +
+        `questions here:\n\n${lines.join('\n\n')}`,
     );
     await this.notifications.notifyOfficers(
-      'New coverage request',
-      `${body.requesterName}${body.requesterOrg ? ` (${body.requesterOrg})` : ''}: ${body.description.slice(0, 200)}`,
+      created.length > 1
+        ? `New coverage requests (${created.length})`
+        : 'New coverage request',
+      `${body.requesterName}${body.requesterOrg ? ` (${body.requesterOrg})` : ''}: ` +
+        created.map((r) => r.description.slice(0, 120)).join(' | ').slice(0, 500),
     );
-    return { ok: true, statusUrl: this.statusUrl(request.token) };
+
+    return {
+      ok: true,
+      // Kept singular for anything already reading it.
+      statusUrl: this.statusUrl(created[0].token),
+      statusUrls: created.map((request) => this.statusUrl(request.token)),
+    };
   }
 
   @Public()
