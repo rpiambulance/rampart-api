@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { backfillObservers } from '../credentials/observer';
 import { ensureReferenceData } from './reference-data';
 
 /**
@@ -34,6 +35,8 @@ export class BootstrapService implements OnApplicationBootstrap {
     // exist, and a deployed environment only ever runs `prisma migrate deploy`.
     try {
       await ensureReferenceData(this.prisma, (message) => this.logger.log(message));
+      // After the ladder exists, so the Observer type is there to grant.
+      await backfillObservers(this.prisma, (message) => this.logger.log(message));
     } catch (error) {
       this.logger.error(
         `Could not ensure reference data: ${

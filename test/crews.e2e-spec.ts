@@ -8,6 +8,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { CredentialGraphService } from '../src/credentials/credential-graph.service';
 import { CredentialsService } from '../src/credentials/credentials.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
+import { backfillObservers } from '../src/credentials/observer';
 import { addDays, nyNow, startOfWeek, toDbDate, weekdayOf } from '../src/common/dates';
 
 /**
@@ -937,6 +938,73 @@ describe('Night crews engine (e2e)', () => {
       expect(
         await prisma.memberCertification.findUnique({ where: { id: certId } }),
       ).toBeNull();
+    });
+  });
+
+  describe('every member is an Observer', () => {
+    it('grants it when a member is created', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/members')
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'members:write',
+        })
+        .send({
+          firstName: 'Fresh',
+          lastName: `Test${stamp}`,
+          email: `fresh-${stamp}@example.com`,
+        })
+        .expect(201);
+
+      const observer = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'O' },
+      });
+      const held = await prisma.memberCredential.findUnique({
+        where: {
+          memberId_typeId: { memberId: res.body.id, typeId: observer.id },
+        },
+      });
+      expect(held?.status).toBe('ACTIVE');
+    });
+
+    it('brings existing members up to the floor on boot', async () => {
+      const observer = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'O' },
+      });
+      const bare = await prisma.member.create({
+        data: {
+          firstName: 'Bare',
+          lastName: `Test${stamp}`,
+          email: `bare-${stamp}@example.com`,
+        },
+      });
+      await backfillObservers(prisma);
+      const held = await prisma.memberCredential.findUnique({
+        where: { memberId_typeId: { memberId: bare.id, typeId: observer.id } },
+      });
+      expect(held).toBeTruthy();
+    });
+
+    it('does not undo a deliberate revocation', async () => {
+      const observer = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'O' },
+      });
+      const member = await prisma.member.create({
+        data: {
+          firstName: 'Revoked',
+          lastName: `Test${stamp}`,
+          email: `revoked-${stamp}@example.com`,
+          credentials: {
+            create: [{ typeId: observer.id, status: 'REVOKED', revokedAt: new Date() }],
+          },
+        },
+      });
+      await backfillObservers(prisma);
+      const held = await prisma.memberCredential.findUniqueOrThrow({
+        where: { memberId_typeId: { memberId: member.id, typeId: observer.id } },
+      });
+      // A revocation leaves a row behind, and the floor respects it.
+      expect(held.status).toBe('REVOKED');
     });
   });
 

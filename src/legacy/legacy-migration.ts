@@ -5,6 +5,7 @@
 import * as mysql from 'mysql2/promise';
 import type { PrismaClient } from '../generated/prisma/client';
 import { normalizePhone } from '../common/phone';
+import { grantObserver } from '../credentials/observer';
 import {
   guardRecord,
   writeWithConflictPrompt,
@@ -288,6 +289,10 @@ export async function runLegacyMigration(
       }
     }
     memberIdByLegacy.set(legacyId, member.id);
+
+    // Every member is an Observer at minimum, whether or not the legacy row
+    // carried the flag.
+    await grantObserver(prisma, member.id);
 
     // credentials
     for (const [flag, key] of CREDENTIAL_FLAGS) {

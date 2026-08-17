@@ -3,6 +3,7 @@ import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { normalizePhone } from '../common/phone';
+import { grantObserver } from '../credentials/observer';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -79,6 +80,8 @@ export class MembersService {
         dob: data.dob ? new Date(data.dob) : null,
       },
     });
+    // Every member starts at the floor of the ladder.
+    await grantObserver(this.prisma, member.id);
     await this.audit.log(auth, 'members.create', 'Member', member.id);
     return member;
   }
