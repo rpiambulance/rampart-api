@@ -96,7 +96,9 @@ export class EvalsService {
 
   /** Everything a caller needs to render a form, groups included. */
   private static readonly TEMPLATE_INCLUDE = {
-    items: { orderBy: { order: 'asc' } },
+    // Loose items only: a grouped item is reached through its group, and
+    // listing it in both places would show it twice on every form.
+    items: { where: { groupId: null }, orderBy: { order: 'asc' } },
     groups: {
       orderBy: { order: 'asc' },
       include: { items: { orderBy: { order: 'asc' } } },
@@ -370,7 +372,10 @@ export class EvalsService {
     const evaluation = await this.prisma.evaluation.findUnique({
       where: { id: evaluationId },
       include: {
-        template: { include: { items: { orderBy: { order: 'asc' } } } },
+        // The same shape the editor writes: loose items and groups, each
+        // holding its position. A flat list of every item cannot be rendered
+        // in order, because a grouped item's `order` counts within its group.
+        template: { include: EvalsService.TEMPLATE_INCLUDE },
         scores: true,
         evaluator: { select: { id: true, firstName: true, lastName: true } },
         subject: { select: { id: true, firstName: true, lastName: true } },

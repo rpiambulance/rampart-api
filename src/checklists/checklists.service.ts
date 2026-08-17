@@ -24,7 +24,9 @@ const SIGNOFF_SELECT = {
 
 const TEMPLATE_INCLUDE = {
   signoffCredentialType: { select: { id: true, key: true, name: true } },
+  // Loose items only; grouped ones come through their group.
   items: {
+    where: { groupId: null },
     orderBy: { order: 'asc' },
     include: {
       signoffCredentialType: { select: { id: true, key: true, name: true } },
@@ -186,6 +188,7 @@ export class ChecklistsService {
 
     const decorate = (item: {
       id: number;
+      order: number;
       prompt: string;
       scoreType: string;
       signoffCredentialType: { id: number; key: string; name: string } | null;
@@ -207,9 +210,13 @@ export class ChecklistsService {
       },
       member,
       leadsTo: await this.leadsTo(templateId),
+      // Loose items and groups each carry their position: they share one
+      // ordering space, so the caller interleaves them rather than showing
+      // every group after every loose item.
       items: template.items.map(decorate),
       groups: template.groups.map((group) => ({
         id: group.id,
+        order: group.order,
         heading: group.heading,
         description: group.description,
         items: group.items.map(decorate),
@@ -398,7 +405,10 @@ export class ChecklistsService {
     const template = await this.prisma.evalFormTemplate.findUnique({
       where: { id: templateId },
       include: {
-        items: { select: { id: true, scoreType: true } },
+        items: {
+          where: { groupId: null },
+          select: { id: true, scoreType: true },
+        },
         groups: { include: { items: { select: { id: true, scoreType: true } } } },
       },
     });
