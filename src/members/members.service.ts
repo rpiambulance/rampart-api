@@ -24,6 +24,7 @@ export class MembersService {
         email: true,
         cellPhone: true,
         active: true,
+        nineHundredNumber: true,
         credentials: {
           where: { status: 'ACTIVE' },
           select: { title: true, type: { select: { key: true, name: true } } },
@@ -57,6 +58,7 @@ export class MembersService {
       localAddress?: string;
       homeAddress?: string;
       rcsId?: string;
+      nineHundredNumber?: string;
       rin?: string;
       keycloakSubject?: string;
     },
@@ -194,6 +196,7 @@ export class MembersService {
       eventView: string;
       timeFormat: string;
       rcsId: string;
+      nineHundredNumber: string;
       rin: string;
       keycloakSubject: string;
       active: boolean;

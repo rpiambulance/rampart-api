@@ -29,6 +29,9 @@ model Member {
   localAddress    String?
   homeAddress     String?
   rcsId           String?
+  /// RPI 900 number. Kept for credentialed members and officers by
+  /// convention, not by rule — nothing here requires or checks it.
+  nineHundredNumber String? @map("900number")
   rin             String?
   facilityId      String?
   cardId          String?

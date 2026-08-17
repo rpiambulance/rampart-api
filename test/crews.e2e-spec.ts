@@ -710,6 +710,49 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('900 number', () => {
+    it('is editable with members:write', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/members/${bob}`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'members:write',
+        })
+        .send({ nineHundredNumber: '900123456' })
+        .expect(200);
+      const member = await prisma.member.findUniqueOrThrow({ where: { id: bob } });
+      expect(member.nineHundredNumber).toBe('900123456');
+    });
+
+    it('is not editable without it', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/members/${bob}`)
+        .set({ 'x-test-member-id': String(alice), 'x-test-permissions': 'members:read' })
+        .send({ nineHundredNumber: '900999999' })
+        .expect(403);
+    });
+
+    it('cannot be set by a member on themselves', async () => {
+      // SelfEditDto has no such field, and the pipe whitelists.
+      await request(app.getHttpServer())
+        .patch('/v1/members/me')
+        .set(as(bob))
+        .send({ nineHundredNumber: '900000000' })
+        .expect(200);
+      const member = await prisma.member.findUniqueOrThrow({ where: { id: bob } });
+      expect(member.nineHundredNumber).toBe('900123456');
+    });
+
+    it('is on the roster payload', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/members')
+        .set({ 'x-test-member-id': String(alice), 'x-test-permissions': 'members:read' })
+        .expect(200);
+      const row = res.body.find((m: { id: number }) => m.id === bob);
+      expect(row.nineHundredNumber).toBe('900123456');
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

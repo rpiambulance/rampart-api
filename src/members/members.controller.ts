@@ -96,6 +96,14 @@ class CreateMemberDto {
   @IsString()
   rcsId?: string;
 
+  /**
+   * RPI 900 number. Editing it needs members:write — it is absent from
+   * SelfEditDto, so members cannot set their own.
+   */
+  @IsOptional()
+  @IsString()
+  nineHundredNumber?: string;
+
   @IsOptional()
   @IsString()
   rin?: string;
