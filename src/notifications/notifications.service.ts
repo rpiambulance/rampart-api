@@ -12,6 +12,53 @@ export interface EmailSettings {
   user?: string | null;
   pass?: string | null;
   from: string;
+  /**
+   * Hostname announced in EHLO. Left unset, nodemailer uses the machine's
+   * own — inside a container that is a random hex string, which Google and
+   * others reject outright ("421 4.7.0 Try again later, closing connection").
+   */
+  ehloName?: string | null;
+}
+
+/**
+ * Turns a server's refusal into something actionable. These are the failures
+ * that actually come up against Gmail and Microsoft 365.
+ */
+function hintFor(detail: string): string | undefined {
+  const text = detail.toLowerCase();
+  if (text.includes('421') && text.includes('ehlo')) {
+    return (
+      'The server rejected the greeting itself, before any login. Set the ' +
+      'EHLO name to a real domain you control — a container announces a ' +
+      'random hostname, which Google refuses. Gmail also wants port 587 ' +
+      'with implicit TLS off, or 465 with it on.'
+    );
+  }
+  if (text.includes('535') || text.includes('username and password')) {
+    return (
+      'The credentials were rejected. A Google account with 2-step ' +
+      'verification needs an app password, not the account password.'
+    );
+  }
+  if (text.includes('wrong version number') || text.includes('ssl')) {
+    return (
+      'That looks like the wrong TLS mode for the port: use 587 with ' +
+      'implicit TLS off, or 465 with it on.'
+    );
+  }
+  if (text.includes('timeout') || text.includes('etimedout')) {
+    return (
+      'Nothing answered. Check the host and port, and that the API can ' +
+      'reach it — outbound SMTP is often blocked by default.'
+    );
+  }
+  return undefined;
+}
+
+/** Domain of a From header, used as a sane default EHLO name. */
+function domainOf(from: string): string | undefined {
+  const match = /@([^\s>]+)>?\s*$/.exec(from.trim());
+  return match?.[1];
 }
 
 export const EMAIL_SETTING_KEY = 'email.smtp';
@@ -75,9 +122,17 @@ export class NotificationsService {
         host: settings.host,
         port: settings.port,
         secure: settings.secure,
+        // Announce a real domain rather than the container's hostname.
+        name: settings.ehloName?.trim() || domainOf(settings.from),
+        // On a STARTTLS port, refuse to fall back to an unencrypted session.
+        ...(settings.secure ? {} : { requireTLS: true }),
         ...(settings.user
           ? { auth: { user: settings.user, pass: settings.pass ?? '' } }
           : {}),
+        // Fail in seconds rather than hanging a request behind a dead server.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
       });
       this.stored = { at: Date.now(), transport, from: settings.from };
       return { mailer: transport, from: settings.from };
@@ -134,7 +189,9 @@ export class NotificationsService {
   }
 
   /** Sends a themed test message, surfacing why it failed rather than a bool. */
-  async sendTestEmail(to: string): Promise<{ ok: boolean; detail?: string }> {
+  async sendTestEmail(
+    to: string,
+  ): Promise<{ ok: boolean; detail?: string; hint?: string }> {
     const { mailer, from } = await this.transport();
     if (!mailer) {
       return {
@@ -157,7 +214,8 @@ export class NotificationsService {
       });
       return { ok: true };
     } catch (error) {
-      return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+      const detail = error instanceof Error ? error.message : String(error);
+      return { ok: false, detail, hint: hintFor(detail) };
     }
   }
 

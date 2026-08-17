@@ -46,6 +46,11 @@ class EmailSettingsDto {
 
   @IsString()
   from!: string;
+
+  /** Defaults to the From address's domain when left blank. */
+  @IsOptional()
+  @IsString()
+  ehloName?: string;
 }
 
 class TestEmailDto {
@@ -88,6 +93,7 @@ export class EmailSettingsController {
       // not have to retype a password the form never showed them.
       pass: body.pass === undefined ? (existing?.pass ?? null) : body.pass || null,
       from: body.from.trim(),
+      ehloName: body.ehloName?.trim() || null,
     };
     await this.prisma.appSetting.upsert({
       where: { key: EMAIL_SETTING_KEY },
