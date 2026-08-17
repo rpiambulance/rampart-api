@@ -9,6 +9,7 @@ import { CredentialGraphService } from '../src/credentials/credential-graph.serv
 import { CredentialsService } from '../src/credentials/credentials.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
+import { CertificationGraphService } from '../src/certifications/certification-graph.service';
 import { addDays, nyNow, startOfWeek, toDbDate, weekdayOf } from '../src/common/dates';
 
 /**
@@ -1005,6 +1006,89 @@ describe('Night crews engine (e2e)', () => {
       });
       // A revocation leaves a row behind, and the floor respects it.
       expect(held.status).toBe('REVOKED');
+    });
+  });
+
+  describe('certification hierarchy', () => {
+    async function typeIdFor(name: string): Promise<number> {
+      const type = await prisma.certificationType.findUniqueOrThrow({
+        where: { name },
+      });
+      return type.id;
+    }
+
+    it('lets a higher certification satisfy a requirement for a lower one', async () => {
+      const graph = app.get(CertificationGraphService);
+      const [cfr, emt, aemt, medic] = await Promise.all([
+        typeIdFor('NYS Certified First Responder'),
+        typeIdFor('NYS EMT'),
+        typeIdFor('NYS AEMT'),
+        typeIdFor('NYS Paramedic'),
+      ]);
+
+      // A requirement for EMT is met by EMT, AEMT or Paramedic.
+      expect((await graph.satisfying(emt)).sort()).toEqual(
+        [emt, aemt, medic].sort(),
+      );
+      // ...and CFR, at the bottom, is met by everything.
+      expect((await graph.satisfying(cfr)).sort()).toEqual(
+        [cfr, emt, aemt, medic].sort(),
+      );
+      // Paramedic is the top: only itself.
+      expect(await graph.satisfying(medic)).toEqual([medic]);
+      // Ranking does not run downhill: an EMT does not answer for AEMT.
+      expect(await graph.satisfying(aemt)).not.toContain(emt);
+    });
+
+    it('counts a Paramedic as meeting an EMT requirement on a checklist', async () => {
+      const credentials = app.get(CredentialsService);
+      const attendant = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'A' },
+      });
+      const requirement = await prisma.credentialRequirement.create({
+        data: {
+          credentialTypeId: attendant.id,
+          kind: 'CERTIFICATION',
+          certificationTypeId: await typeIdFor('NYS EMT'),
+        },
+      });
+      const medic = await prisma.memberCertification.create({
+        data: {
+          memberId: charlie,
+          typeId: await typeIdFor('NYS Paramedic'),
+          status: 'VERIFIED',
+        },
+      });
+      try {
+        const checklist = await credentials.checklist(charlie, attendant.id);
+        const item = checklist.find((i) => i.kind === 'CERTIFICATION');
+        expect(item?.satisfied).toBe(true);
+      } finally {
+        await prisma.memberCertification.delete({ where: { id: medic.id } });
+        await prisma.credentialRequirement.delete({ where: { id: requirement.id } });
+      }
+    });
+
+    it('refuses a link that would make a certification outrank itself', async () => {
+      const emt = await typeIdFor('NYS EMT');
+      const medic = await typeIdFor('NYS Paramedic');
+      // Paramedic already outranks EMT through AEMT; the reverse is a cycle.
+      await request(app.getHttpServer())
+        .put(`/v1/certifications/types/${emt}/supersedes`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'settings:write',
+        })
+        .send({ lowerTypeIds: [medic] })
+        .expect(400);
+    });
+
+    it('requires settings:write to change the hierarchy', async () => {
+      await request(app.getHttpServer())
+        .put(`/v1/certifications/types/${await typeIdFor('NYS EMT')}/supersedes`)
+        .set(as(bob))
+        .send({ lowerTypeIds: [] })
+        .expect(403);
     });
   });
 

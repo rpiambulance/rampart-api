@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -6,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CertificationGraphService } from './certification-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -13,6 +15,7 @@ import { StorageService } from '../storage/storage.service';
 @Injectable()
 export class CertificationsService {
   constructor(
+    private readonly graph: CertificationGraphService,
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
@@ -20,7 +23,14 @@ export class CertificationsService {
   ) {}
 
   listTypes() {
-    return this.prisma.certificationType.findMany({ where: { active: true } });
+    return this.prisma.certificationType.findMany({
+      where: { active: true },
+      // The ranking travels with the type so callers can show and edit it.
+      include: {
+        supersedes: { select: { lowerTypeId: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
   }
 
   createType(data: {
@@ -246,6 +256,66 @@ export class CertificationsService {
       throw new ForbiddenException('That certification belongs to someone else');
     }
     return cert;
+  }
+
+  /**
+   * Replaces the set of certifications this one outranks. Rejects a link that
+   * would make a type outrank itself, directly or through a chain — a cycle
+   * would make "is this satisfied?" unanswerable.
+   */
+  async setSupersedes(
+    auth: AuthContext,
+    higherTypeId: number,
+    lowerTypeIds: number[],
+  ) {
+    const wanted = [...new Set(lowerTypeIds)].filter(
+      (id) => id !== higherTypeId,
+    );
+
+    const edges = await this.prisma.certificationSupersession.findMany();
+    const outranks = new Map<number, number[]>();
+    for (const edge of edges) {
+      if (edge.higherTypeId === higherTypeId) continue; // being replaced
+      outranks.set(edge.higherTypeId, [
+        ...(outranks.get(edge.higherTypeId) ?? []),
+        edge.lowerTypeId,
+      ]);
+    }
+    outranks.set(higherTypeId, wanted);
+
+    const seen = new Set<number>();
+    const reaches = (from: number, target: number): boolean => {
+      if (from === target) return true;
+      if (seen.has(from)) return false;
+      seen.add(from);
+      return (outranks.get(from) ?? []).some((next) => reaches(next, target));
+    };
+    for (const lower of wanted) {
+      seen.clear();
+      if (reaches(lower, higherTypeId)) {
+        throw new BadRequestException(
+          'That would make a certification outrank itself',
+        );
+      }
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.certificationSupersession.deleteMany({
+        where: { higherTypeId },
+      }),
+      this.prisma.certificationSupersession.createMany({
+        data: wanted.map((lowerTypeId) => ({ higherTypeId, lowerTypeId })),
+      }),
+    ]);
+    this.graph.invalidate();
+    await this.audit.log(
+      auth,
+      'certs.hierarchy',
+      'CertificationType',
+      higherTypeId,
+      { supersedes: wanted },
+    );
+    return { ok: true };
   }
 
   async verify(

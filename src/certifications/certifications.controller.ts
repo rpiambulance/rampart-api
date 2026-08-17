@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -15,7 +16,14 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -67,6 +75,12 @@ class PatchCertTypeDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+}
+
+class SupersedesDto {
+  @IsArray()
+  @IsInt({ each: true })
+  lowerTypeIds!: number[];
 }
 
 class AmendCertDto {
@@ -129,6 +143,17 @@ export class CertificationsController {
     @Body() body: PatchCertTypeDto,
   ) {
     return this.certs.updateType(id, body);
+  }
+
+  /** Replace the certifications this type outranks. */
+  @Put('types/:id/supersedes')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  setSupersedes(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: SupersedesDto,
+  ) {
+    return this.certs.setSupersedes(auth, id, body.lowerTypeIds);
   }
 
   @Get('mine')

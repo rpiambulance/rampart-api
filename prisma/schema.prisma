@@ -124,7 +124,24 @@ model CertificationType {
   memberCertifications  MemberCertification[]
   credentialRequirements CredentialRequirement[]
   requirementAdjustments PromotionRequirementAdjustment[]
+  /// Certifications this one outranks, and the ones that outrank it.
+  supersedes             CertificationSupersession[] @relation("Supersedes")
+  supersededBy           CertificationSupersession[] @relation("SupersededBy")
 }
+
+/// Certification ranking: holding the higher one satisfies a requirement for
+/// the lower. A Paramedic answers a requirement for EMT.
+model CertificationSupersession {
+  higherTypeId Int
+  lowerTypeId  Int
+
+  higher CertificationType @relation("Supersedes", fields: [higherTypeId], references: [id], onDelete: Cascade)
+  lower  CertificationType @relation("SupersededBy", fields: [lowerTypeId], references: [id], onDelete: Cascade)
+
+  @@id([higherTypeId, lowerTypeId])
+  @@index([lowerTypeId])
+}
+
 
 enum CertStatus {
   PENDING_VERIFICATION

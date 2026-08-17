@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CertificationGraphService } from '../certifications/certification-graph.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CredentialGraphService } from './credential-graph.service';
 
@@ -44,6 +45,7 @@ export interface ChecklistItem {
 @Injectable()
 export class CredentialsService {
   constructor(
+    private readonly certGraph: CertificationGraphService,
     private readonly prisma: PrismaService,
     private readonly graph: CredentialGraphService,
     private readonly audit: AuditService,
@@ -172,10 +174,15 @@ export class CredentialsService {
         continue;
       }
       if (req.kind === 'CERTIFICATION' && req.certificationType) {
+        // A higher certification answers the requirement: a Paramedic meets a
+        // requirement for EMT.
+        const accepted = await this.certGraph.satisfying(
+          req.certificationTypeId!,
+        );
         const cert = await this.prisma.memberCertification.findFirst({
           where: {
             memberId,
-            typeId: req.certificationTypeId!,
+            typeId: { in: accepted },
             status: 'VERIFIED',
             OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
           },

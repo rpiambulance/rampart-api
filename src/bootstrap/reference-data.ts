@@ -73,13 +73,27 @@ export const EVENT_TIERS = [
 
 export const CERT_TYPES = [
   { name: 'CPR — BLS Provider', abbreviation: 'CPR', issuingOrg: 'AHA', defaultValidityMonths: 24 },
+  { name: 'NYS Certified First Responder', abbreviation: 'CFR', issuingOrg: 'NYS DOH', defaultValidityMonths: 36 },
   { name: 'NYS EMT', abbreviation: 'EMT', issuingOrg: 'NYS DOH', defaultValidityMonths: 36 },
+  { name: 'NYS AEMT', abbreviation: 'AEMT', issuingOrg: 'NYS DOH', defaultValidityMonths: 36 },
+  { name: 'NYS Paramedic', abbreviation: 'Paramedic', issuingOrg: 'NYS DOH', defaultValidityMonths: 36 },
   { name: "Driver's License", abbreviation: 'DL', issuingOrg: null, defaultValidityMonths: 96 },
   { name: 'CEVO', abbreviation: 'CEVO', issuingOrg: 'Coaching Systems', defaultValidityMonths: null },
   { name: 'NIMS ICS-100', abbreviation: 'NIMS 100', issuingOrg: 'FEMA', defaultValidityMonths: null },
   { name: 'NIMS ICS-200', abbreviation: 'NIMS 200', issuingOrg: 'FEMA', defaultValidityMonths: null },
   { name: 'NIMS IS-700', abbreviation: 'NIMS 700', issuingOrg: 'FEMA', defaultValidityMonths: null },
   { name: 'NIMS IS-800', abbreviation: 'NIMS 800', issuingOrg: 'FEMA', defaultValidityMonths: null },
+];
+
+/**
+ * Which certifications outrank which. Holding the higher one satisfies a
+ * requirement for anything beneath it, so a Paramedic answers a requirement
+ * for EMT. Only the direct step is listed; the rest follows transitively.
+ */
+export const CERT_HIERARCHY: Array<{ higher: string; supersedes: string[] }> = [
+  { higher: 'NYS EMT', supersedes: ['NYS Certified First Responder'] },
+  { higher: 'NYS AEMT', supersedes: ['NYS EMT'] },
+  { higher: 'NYS Paramedic', supersedes: ['NYS AEMT'] },
 ];
 
 // Seed roles (spec §10). Permission keys must match src/permissions/catalog.ts.
@@ -224,6 +238,35 @@ export async function ensureReferenceData(
     if (!existing) {
       await prisma.certificationType.create({ data: cert });
       created.push(`certification ${cert.abbreviation}`);
+    }
+  }
+
+  // Certification ranking. Edges are create-if-missing, like the credential
+  // ladder: an administrator may add their own, and removing one here does not
+  // put it back.
+  for (const step of CERT_HIERARCHY) {
+    const higher = await prisma.certificationType.findUnique({
+      where: { name: step.higher },
+    });
+    if (!higher) continue;
+    for (const lowerName of step.supersedes) {
+      const lower = await prisma.certificationType.findUnique({
+        where: { name: lowerName },
+      });
+      if (!lower) continue;
+      const exists = await prisma.certificationSupersession.findUnique({
+        where: {
+          higherTypeId_lowerTypeId: {
+            higherTypeId: higher.id,
+            lowerTypeId: lower.id,
+          },
+        },
+      });
+      if (exists) continue;
+      await prisma.certificationSupersession.create({
+        data: { higherTypeId: higher.id, lowerTypeId: lower.id },
+      });
+      created.push(`${step.higher} supersedes ${lowerName}`);
     }
   }
 
