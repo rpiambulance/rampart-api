@@ -12,6 +12,7 @@ import { CredentialsService } from '../credentials/credentials.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { nyToday } from '../common/dates';
 
 /**
  * Promotion workflow (spec §4.3): request → TC review → unanimous vote
@@ -31,7 +32,7 @@ export class PromotionsService {
 
   /** Members currently holding a promotions:vote role. */
   async trainingCommittee(): Promise<number[]> {
-    const today = new Date();
+    const today = nyToday();
     const assignments = await this.prisma.memberRole.findMany({
       where: {
         startDate: { lte: today },

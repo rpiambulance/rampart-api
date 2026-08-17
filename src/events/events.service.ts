@@ -11,6 +11,7 @@ import { CredentialGraphService } from '../credentials/credential-graph.service'
 import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { formatCredentialKey } from '../common/credential-format';
+import { isDateOnly, nyDayEnd, nyDayStart } from '../common/dates';
 import { normalizePosition } from '../common/position';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -53,12 +54,29 @@ export class EventsService {
   ) {}
 
   list(opts: { from?: string; to?: string; includeHidden?: boolean }) {
+    // Callers send either a full instant or a plain date. A plain date names a
+    // New York calendar day, so it spans local midnight to local midnight —
+    // reading it as UTC would start the day at 20:00 the evening before.
+    const from = opts.from
+      ? isDateOnly(opts.from)
+        ? nyDayStart(opts.from)
+        : new Date(opts.from)
+      : undefined;
+    const to = opts.to
+      ? isDateOnly(opts.to)
+        ? nyDayEnd(opts.to)
+        : new Date(opts.to)
+      : undefined;
+    // A date-only `to` is the exclusive start of the next day; an instant the
+    // caller named is inclusive.
+    const toBound = opts.to && isDateOnly(opts.to) ? 'lt' : 'lte';
+
     return this.prisma.event.findMany({
       where: {
         ...(opts.includeHidden ? {} : { hidden: false }),
         startsAt: {
-          ...(opts.from ? { gte: new Date(opts.from) } : {}),
-          ...(opts.to ? { lte: new Date(opts.to) } : {}),
+          ...(from ? { gte: from } : {}),
+          ...(to ? { [toBound]: to } : {}),
         },
       },
       include: {

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
+import { nyToday } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from '../certifications/certification-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
@@ -160,7 +161,7 @@ export class CredentialsService {
       });
     }
 
-    const today = new Date();
+    const today = nyToday();
     for (const req of type.requirements) {
       const waiver = waivers.get(req.id);
       if (waiver) {

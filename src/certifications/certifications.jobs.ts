@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AGENCY_TZ } from '../common/dates';
+import { addDays, AGENCY_TZ, nyNow, toDbDate } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CertificationsService } from './certifications.service';
@@ -24,10 +24,12 @@ export class CertificationsJobs {
     this.logger.log(`Suspension recompute: ${changed} credential(s) changed`);
 
     for (const days of REMINDER_DAYS) {
-      const target = new Date();
-      target.setDate(target.getDate() + days);
-      const start = new Date(target.toISOString().slice(0, 10));
-      const end = new Date(start.getTime() + 86_400_000);
+      // The day being warned about is a New York calendar day counted from
+      // today's, not an instant sliced in UTC — which is a day ahead of local
+      // for the last four hours of every evening.
+      const target = addDays(nyNow().dateStr, days);
+      const start = toDbDate(target);
+      const end = toDbDate(addDays(target, 1));
       const expiring = await this.prisma.memberCertification.findMany({
         where: {
           status: 'VERIFIED',

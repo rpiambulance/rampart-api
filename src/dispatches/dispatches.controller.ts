@@ -9,6 +9,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { createHash } from 'crypto';
 import { Public } from '../auth/public.decorator';
+import { isDateOnly, nyDayEnd, nyDayStart } from '../common/dates';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
@@ -99,13 +100,11 @@ export class DispatchesController {
     @Query('to') to?: string,
   ) {
     const search = (q ?? '').trim();
-    // `to` is a plain date; include the whole of that day.
-    const toEnd = /^\d{4}-\d{2}-\d{2}$/.test(to ?? '')
-      ? new Date(`${to}T23:59:59.999Z`)
-      : undefined;
-    const fromStart = /^\d{4}-\d{2}-\d{2}$/.test(from ?? '')
-      ? new Date(`${from}T00:00:00.000Z`)
-      : undefined;
+    // Both are plain dates naming New York calendar days, while receivedAt is
+    // an instant: asking for the 17th must mean local midnight to midnight,
+    // not 20:00 the evening before to 20:00 that evening.
+    const fromStart = from && isDateOnly(from) ? nyDayStart(from) : undefined;
+    const toEnd = to && isDateOnly(to) ? nyDayEnd(to) : undefined;
 
     return this.prisma.dispatch.findMany({
       where: {
@@ -127,7 +126,7 @@ export class DispatchesController {
           ? {
               receivedAt: {
                 ...(fromStart ? { gte: fromStart } : {}),
-                ...(toEnd ? { lte: toEnd } : {}),
+                ...(toEnd ? { lt: toEnd } : {}),
               },
             }
           : {}),

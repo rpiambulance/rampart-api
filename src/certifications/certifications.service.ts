@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
+import { addDays, nyNow, nyToday, toDbDate } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from './certification-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
@@ -77,8 +78,9 @@ export class CertificationsService {
 
   /** Expiring/expired report (replaces .expired_certs.php). */
   async expiring(withinDays = 30) {
-    const now = new Date();
-    const horizon = new Date(now.getTime() + withinDays * 86_400_000);
+    // expiresAt is a calendar date, so the horizon is one too — adding
+    // milliseconds to an instant lands mid-day and drops the far edge.
+    const horizon = toDbDate(addDays(nyNow().dateStr, withinDays));
     return this.prisma.memberCertification.findMany({
       where: {
         status: 'VERIFIED',
@@ -442,7 +444,9 @@ export class CertificationsService {
    * SUSPENDED; it reactivates automatically once renewed and verified.
    */
   async recomputeSuspensions(memberId?: number) {
-    const now = new Date();
+    // A certification is good through the whole of its expiry date, so this
+    // compares against today's calendar day, not the current instant.
+    const now = nyToday();
     const credentials = await this.prisma.memberCredential.findMany({
       where: {
         ...(memberId ? { memberId } : {}),

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
+import { nyToday } from '../common/dates';
 import { renderEmail } from './email-template';
 import {
   channelsFor,
@@ -274,7 +275,7 @@ export class NotificationsService {
    * Used for a task that names a job rather than a role.
    */
   async notifyPermissionHolders(permission: string, notice: Notice) {
-    const today = new Date();
+    const today = nyToday();
     const [byRole, byCredential] = await Promise.all([
       this.prisma.memberRole.findMany({
         where: {
@@ -328,7 +329,7 @@ export class NotificationsService {
    * the type. Officers are members holding a role marked isOfficer.
    */
   async notifyOfficerInboxes(notice: Notice) {
-    const today = new Date();
+    const today = nyToday();
     const assignments = await this.prisma.memberRole.findMany({
       where: {
         startDate: { lte: today },

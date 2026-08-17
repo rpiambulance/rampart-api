@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { createHash } from 'crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { nyToday } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { AuthContext } from './auth-context';
@@ -143,7 +144,12 @@ export class AuthGuard implements CanActivate {
       });
     }
 
-    const today = new Date();
+    // Assignment dates are calendar days, so a role runs from the first
+    // moment of its start date through the last of its end date, in the
+    // agency's timezone. Measured against the current instant instead, an
+    // assignment would go live at 20:00 the evening before it starts and its
+    // holder would lose the permission on the morning of its final day.
+    const today = nyToday();
     const permissions = new Set<string>();
     for (const assignment of member.roles) {
       const started = assignment.startDate <= today;

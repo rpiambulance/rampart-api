@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { nyToday } from '../common/dates';
 import { backfillObservers } from '../credentials/observer';
 import { ensureReferenceData } from './reference-data';
 
@@ -51,7 +52,7 @@ export class BootstrapService implements OnApplicationBootstrap {
       .toLowerCase();
     if (!email) return;
 
-    const now = new Date();
+    const now = nyToday();
     const existingAdmin = await this.prisma.memberRole.findFirst({
       where: {
         startDate: { lte: now },

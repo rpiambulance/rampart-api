@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
+import { nyDayStart, toDbDate } from '../common/dates';
 import { normalizePhone } from '../common/phone';
 import { grantObserver } from '../credentials/observer';
 import { PrismaService } from '../prisma/prisma.service';
@@ -93,15 +94,21 @@ export class MembersService {
    * which also means a deactivation from this list can never orphan a future
    * assignment.
    */
-  async inactivityReview(since: Date, excludeMemberId?: number) {
+  async inactivityReview(since: string, excludeMemberId?: number) {
+    // The two columns are not the same kind of thing: a crew's date is a
+    // calendar day, an event's startsAt is an instant. Comparing both against
+    // one value would move the cutoff by the UTC offset on one of them.
     const [recentCrew, recentEvent] = await Promise.all([
       this.prisma.crewSlot.findMany({
-        where: { memberId: { not: null }, crew: { date: { gte: since } } },
+        where: {
+          memberId: { not: null },
+          crew: { date: { gte: toDbDate(since) } },
+        },
         select: { memberId: true },
         distinct: ['memberId'],
       }),
       this.prisma.eventSignup.findMany({
-        where: { event: { startsAt: { gte: since } } },
+        where: { event: { startsAt: { gte: nyDayStart(since) } } },
         select: { memberId: true },
         distinct: ['memberId'],
       }),
@@ -152,7 +159,7 @@ export class MembersService {
       ...c,
       lastParticipation: lastSeen.get(c.id)?.toISOString() ?? null,
       /** Joined after the cutoff, so they never had the chance to take part. */
-      joinedAfterCutoff: c.createdAt >= since,
+      joinedAfterCutoff: c.createdAt >= nyDayStart(since),
     }));
   }
 

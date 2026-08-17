@@ -57,6 +57,38 @@ export function toDbDate(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00Z`);
 }
 
+/** True for a plain YYYY-MM-DD, as opposed to a full instant. */
+export function isDateOnly(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+/**
+ * Today's date in the agency's timezone, as a @db.Date value.
+ *
+ * Date-only columns hold UTC midnight of the calendar day, so comparing one
+ * against `new Date()` is wrong twice over: it makes a row dated today look
+ * past (midnight is behind the current instant), and after 20:00 local it has
+ * already rolled to tomorrow's date. Use this for every @db.Date comparison,
+ * and nyDayStart/nyDayEnd for columns holding real instants.
+ */
+export function nyToday(now = new Date()): Date {
+  return toDbDate(nyNow(now).dateStr);
+}
+
+/** The instant a New York calendar day begins. */
+export function nyDayStart(dateStr: string): Date {
+  return nyWallToUtc(dateStr, '00:00');
+}
+
+/**
+ * The instant a New York calendar day ends — midnight opening the next day.
+ * Exclusive: pair it with `lt`, which needs no "last representable moment"
+ * fudge and cannot drop an event timestamped in the final second.
+ */
+export function nyDayEnd(dateStr: string): Date {
+  return nyWallToUtc(addDays(dateStr, 1), '00:00');
+}
+
 export function fromDbDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }

@@ -12,6 +12,7 @@ import {
   fromDbDate,
   isBeforeDeadline,
   nyNow,
+  nyToday,
   startOfWeek,
   toDbDate,
   weekdayOf,
@@ -263,7 +264,7 @@ export class CrewsService {
    * two sources the auth guard unions.
    */
   private async membersWithPermission(permission: string): Promise<Set<number>> {
-    const today = new Date();
+    const today = nyToday();
     const [byRole, byCredential] = await Promise.all([
       this.prisma.memberRole.findMany({
         where: {

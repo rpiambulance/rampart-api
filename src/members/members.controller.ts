@@ -178,12 +178,13 @@ export class MembersController {
     if (!since || !/^\d{4}-\d{2}-\d{2}$/.test(since)) {
       throw new BadRequestException('since must be a date in YYYY-MM-DD form');
     }
-    const cutoff = new Date(`${since}T00:00:00Z`);
-    if (Number.isNaN(cutoff.getTime())) {
+    if (Number.isNaN(new Date(`${since}T00:00:00Z`).getTime())) {
       throw new BadRequestException(`${since} is not a real date`);
     }
+    // Passed on as a date string: the service compares it against both a
+    // date-only column and an instant column, which need different values.
     return this.members.inactivityReview(
-      cutoff,
+      since,
       auth.kind === 'member' ? auth.memberId : undefined,
     );
   }
