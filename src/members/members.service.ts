@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
+import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -71,6 +72,7 @@ export class MembersService {
     const member = await this.prisma.member.create({
       data: {
         ...data,
+        cellPhone: normalizePhone(data.cellPhone),
         keycloakSubject,
         dob: data.dob ? new Date(data.dob) : null,
       },
@@ -200,7 +202,13 @@ export class MembersService {
   ) {
     const member = await this.prisma.member.update({
       where: { id },
-      data: { ...data, dob: data.dob ? new Date(data.dob) : undefined },
+      data: {
+        ...data,
+        // Undefined means "leave alone"; normalizePhone preserves that.
+        cellPhone: normalizePhone(data.cellPhone),
+        homePhone: normalizePhone(data.homePhone),
+        dob: data.dob ? new Date(data.dob) : undefined,
+      },
     });
     if (auth) {
       await this.audit.log(auth, 'members.update', 'Member', id, data);

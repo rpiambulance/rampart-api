@@ -4,6 +4,7 @@
  */
 import * as mysql from 'mysql2/promise';
 import type { PrismaClient } from '../generated/prisma/client';
+import { normalizePhone } from '../common/phone';
 import {
   guardRecord,
   writeWithConflictPrompt,
