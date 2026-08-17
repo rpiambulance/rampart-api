@@ -663,6 +663,31 @@ describe('Night crews engine (e2e)', () => {
       expect(after.body.eventView).toBe('month');
     });
 
+    it('defaults to 24-hour time and accepts a 12-hour preference', async () => {
+      const before = await request(app.getHttpServer())
+        .get('/v1/members/me')
+        .set(as(charlie))
+        .expect(200);
+      expect(before.body.timeFormat).toBe('24h');
+
+      await request(app.getHttpServer())
+        .patch('/v1/members/me')
+        .set(as(charlie))
+        .send({ timeFormat: '12h' })
+        .expect(200);
+      const after = await request(app.getHttpServer())
+        .get('/v1/members/me')
+        .set(as(charlie))
+        .expect(200);
+      expect(after.body.timeFormat).toBe('12h');
+
+      await request(app.getHttpServer())
+        .patch('/v1/members/me')
+        .set(as(charlie))
+        .send({ timeFormat: 'sundial' })
+        .expect(400);
+    });
+
     it('rejects a view it does not have', async () => {
       await request(app.getHttpServer())
         .patch('/v1/members/me')

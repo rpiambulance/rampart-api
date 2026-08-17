@@ -190,6 +190,7 @@ export class MembersService {
       homeAddress: string;
       navLayout: string;
       eventView: string;
+      timeFormat: string;
       rcsId: string;
       rin: string;
       keycloakSubject: string;

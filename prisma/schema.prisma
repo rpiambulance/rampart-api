@@ -36,6 +36,7 @@ model Member {
   active          Boolean   @default(true)
   navLayout       String    @default("sidebar") // UI preference: sidebar | topnav
   eventView       String    @default("list") // UI preference: list | day | week | month
+  timeFormat      String    @default("24h") // UI preference: 24h | 12h
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

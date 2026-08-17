@@ -36,6 +36,11 @@ class SelfEditDto {
   @IsIn(['list', 'day', 'week', 'month'])
   eventView?: 'list' | 'day' | 'week' | 'month';
 
+  /** Clock preference. The site shows 24-hour time unless asked otherwise. */
+  @IsOptional()
+  @IsIn(['24h', '12h'])
+  timeFormat?: '24h' | '12h';
+
   @IsOptional()
   @IsEmail()
   personalEmail?: string;
