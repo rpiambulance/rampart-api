@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
@@ -193,6 +194,18 @@ export class EvalsController {
       outcome: body.outcome,
       readyForPromotion: body.readyForPromotion,
     });
+  }
+
+  /**
+   * Left undecorated on purpose: which permission applies depends on whether
+   * the evaluation is still a draft, so the service decides and answers 403.
+   */
+  @Delete(':id')
+  remove(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.evals.remove(auth, id);
   }
 
   @Post(':id/sign')

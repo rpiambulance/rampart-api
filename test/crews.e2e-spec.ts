@@ -2040,6 +2040,80 @@ describe('Night crews engine (e2e)', () => {
 
       await prisma.inboxMessage.deleteMany({ where: { memberId: bob } });
     });
+
+    it('holds draft and completed deletion as separate permissions', async () => {
+      const template = await request(app.getHttpServer())
+        .post('/v1/evals/templates')
+        .set(asAuthor())
+        .send({
+          name: `Deletable form ${stamp}`,
+          items: [{ order: 1, prompt: 'Overall', scoreType: 'SCALE_1_5' }],
+        })
+        .expect(201);
+
+      const newEval = async () =>
+        (
+          await request(app.getHttpServer())
+            .post('/v1/evals')
+            .set(asAuthor())
+            .send({ subjectId: bob, templateId: template.body.id })
+            .expect(201)
+        ).body.id as number;
+
+      // A draft: the completed permission does not reach it, the draft one does.
+      const draft = await newEval();
+      await request(app.getHttpServer())
+        .delete(`/v1/evals/${draft}`)
+        .set({
+          'x-test-member-id': String(tina),
+          'x-test-permissions': 'evals:delete-completed',
+        })
+        .expect(403);
+      await request(app.getHttpServer())
+        .delete(`/v1/evals/${draft}`)
+        .set({
+          'x-test-member-id': String(tina),
+          'x-test-permissions': 'evals:delete-draft',
+        })
+        .expect(200);
+      expect(
+        await prisma.evaluation.findUnique({ where: { id: draft } }),
+      ).toBeNull();
+
+      // Once submitted it is the other way round.
+      const submitted = await newEval();
+      await request(app.getHttpServer())
+        .put(`/v1/evals/${submitted}/scores`)
+        .set(asAuthor())
+        .send({
+          scores: [{ itemId: template.body.items[0].id, scaleValue: 4 }],
+          submit: true,
+        })
+        .expect(200);
+      await request(app.getHttpServer())
+        .delete(`/v1/evals/${submitted}`)
+        .set({
+          'x-test-member-id': String(tina),
+          'x-test-permissions': 'evals:delete-draft',
+        })
+        .expect(403);
+      await request(app.getHttpServer())
+        .delete(`/v1/evals/${submitted}`)
+        .set({
+          'x-test-member-id': String(tina),
+          'x-test-permissions': 'evals:delete-completed',
+        })
+        .expect(200);
+      expect(
+        await prisma.evaluation.findUnique({ where: { id: submitted } }),
+      ).toBeNull();
+      // The trainee is no longer asked to sign something that is gone.
+      expect(
+        await prisma.inboxMessage.findFirst({
+          where: { memberId: bob, actionUrl: `/evals/${submitted}` },
+        }),
+      ).toBeNull();
+    });
   });
 
   it('returns two weeks with slot eligibility', async () => {

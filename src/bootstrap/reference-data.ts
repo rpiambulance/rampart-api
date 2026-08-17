@@ -101,6 +101,7 @@ const ALL = [
   'members:read', 'members:write', 'members:deactivate', 'roles:manage',
   'settings:write', 'certs:read-all', 'certs:verify', 'credentials:grant',
   'credentials:appoint', 'evals:write', 'evals:manage-forms', 'evals:read-all',
+  'evals:delete-draft', 'evals:delete-completed',
   'promotions:review', 'promotions:vote', 'promotions:captain-approve',
   'promotions:adjust-requirements', 'trainings:manage',
   'schedule:crews:assign', 'schedule:crews:duty-sup',
@@ -130,7 +131,8 @@ export const ROLES: Array<{ name: string; isOfficer: boolean; permissions: strin
     isOfficer: false,
     permissions: [
       'members:read', 'certs:read-all', 'certs:verify', 'evals:write',
-      'evals:manage-forms', 'evals:read-all', 'promotions:review',
+      'evals:manage-forms', 'evals:read-all', 'evals:delete-draft',
+      'promotions:review',
       'promotions:vote', 'trainings:manage',
     ],
   },

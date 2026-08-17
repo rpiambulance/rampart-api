@@ -4,7 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
+import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScoreType } from '../generated/prisma/enums';
 
@@ -40,6 +43,7 @@ export interface ScoreInput {
 @Injectable()
 export class EvalsService {
   constructor(
+    private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     private readonly prisma: PrismaService,
   ) {}
@@ -229,6 +233,48 @@ export class EvalsService {
       throw new ForbiddenException('Not your evaluation');
     }
     return evaluation;
+  }
+
+  /**
+   * Erase an evaluation.
+   *
+   * A draft has been shown to nobody, so discarding one is housekeeping; a
+   * submitted or signed evaluation is part of a member's record and someone
+   * has already been asked to act on it. They are separate permissions so the
+   * second can be held by far fewer people than the first.
+   */
+  async remove(auth: AuthContext, evaluationId: number) {
+    const evaluation = await this.prisma.evaluation.findUnique({
+      where: { id: evaluationId },
+      include: { template: { select: { name: true } } },
+    });
+    if (!evaluation) throw new NotFoundException('Evaluation not found');
+
+    const draft = evaluation.status === 'DRAFT';
+    const needed = draft
+      ? PERMISSIONS.EVALS_DELETE_DRAFT
+      : PERMISSIONS.EVALS_DELETE_COMPLETED;
+    if (!auth.permissions.has(needed)) {
+      throw new ForbiddenException(
+        draft
+          ? 'You may not delete draft evaluations'
+          : 'Deleting a submitted or signed evaluation is a separate permission',
+      );
+    }
+
+    // Whatever was asked of the trainee is moot once the evaluation is gone.
+    await this.prisma.inboxMessage.deleteMany({
+      where: { actionUrl: `/evals/${evaluationId}` },
+    });
+    await this.prisma.evaluation.delete({ where: { id: evaluationId } });
+
+    await this.audit.log(auth, 'eval.delete', 'Evaluation', evaluationId, {
+      status: evaluation.status,
+      template: evaluation.template.name,
+      subjectId: evaluation.subjectId,
+      evaluatorId: evaluation.evaluatorId,
+    });
+    return { deleted: true };
   }
 
   listFor(memberId: number) {
