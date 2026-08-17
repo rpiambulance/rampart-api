@@ -1260,6 +1260,68 @@ describe('Night crews engine (e2e)', () => {
       await prisma.coverageRequest.delete({ where: { id } });
     });
 
+    it('stays declined, and refuses to draft an event over it', async () => {
+      const id = await makeRequest();
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(asApprover)
+        .expect(201);
+
+      // The path that used to erase the decline: drafting an event.
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const blocked = await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/event`)
+        .set(asApprover)
+        .send({
+          title: 'Should not happen',
+          startsAt: '2027-05-01T18:00:00.000Z',
+          endsAt: '2027-05-01T22:00:00.000Z',
+          kindId: kind.id,
+        })
+        .expect(400);
+      expect(blocked.body.message).toContain('reopen');
+
+      const still = await request(app.getHttpServer())
+        .get(`/v1/coverage-requests/${id}`)
+        .set(asApprover)
+        .expect(200);
+      expect(still.body.status).toBe('DENIED');
+      await prisma.coverageRequest.delete({ where: { id } });
+    });
+
+    it('can be reopened, and then drafted', async () => {
+      const id = await makeRequest();
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(asApprover)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/reopen`)
+        .set(asApprover)
+        .expect(201);
+
+      const reopened = await request(app.getHttpServer())
+        .get(`/v1/coverage-requests/${id}`)
+        .set(asApprover)
+        .expect(200);
+      expect(reopened.body.status).toBe('RECEIVED');
+
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const drafted = await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/event`)
+        .set(asApprover)
+        .send({
+          title: `Reopened ${stamp}`,
+          startsAt: '2027-05-01T18:00:00.000Z',
+          endsAt: '2027-05-01T22:00:00.000Z',
+          kindId: kind.id,
+        })
+        .expect(201);
+
+      await prisma.coverageRequest.delete({ where: { id } });
+      await prisma.event.delete({ where: { id: drafted.body.id } });
+    });
+
     it('requires one of them', async () => {
       const id = await makeRequest();
       await request(app.getHttpServer())

@@ -135,9 +135,10 @@ export class CoverageController {
     event: { workflowStatus: string } | null;
     declinedAt?: Date | null;
   }): string {
-    // A request can be turned down before any event exists for it, so the
-    // decline is recorded on the request itself.
-    if (!request.event && request.declinedAt) return 'DENIED';
+    // A decline is recorded on the request itself, since it can happen before
+    // any event exists. It outranks whatever the event says: a declined
+    // request must never read as though it were still being worked on.
+    if (request.declinedAt) return 'DENIED';
     return request.event?.workflowStatus ?? 'RECEIVED';
   }
 
@@ -327,6 +328,28 @@ export class CoverageController {
     return { ok: true };
   }
 
+  /** Undo a decline, putting the request back in play. */
+  @Post(':id/reopen')
+  @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
+  async reopen(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const request = await this.prisma.coverageRequest.findUnique({
+      where: { id },
+    });
+    if (!request) throw new NotFoundException();
+    if (!request.declinedAt) {
+      throw new BadRequestException('This request is not declined');
+    }
+    await this.prisma.coverageRequest.update({
+      where: { id },
+      data: { declinedAt: null, declineReason: null },
+    });
+    await this.audit.log(auth, 'coverage.reopen', 'CoverageRequest', id);
+    return { ok: true };
+  }
+
   @Get(':id')
   @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
   async get(@Param('id', ParseIntPipe) id: number) {
@@ -385,6 +408,11 @@ export class CoverageController {
   ) {
     const request = await this.prisma.coverageRequest.findUnique({ where: { id } });
     if (!request) throw new NotFoundException();
+    if (request.declinedAt) {
+      throw new BadRequestException(
+        'This request was declined — reopen it before drafting an event',
+      );
+    }
     if (request.eventId) {
       throw new ForbiddenException('An event already exists for this request');
     }
