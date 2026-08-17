@@ -40,10 +40,15 @@ export class TrainingsJobs {
       );
       const lapsed = activeMembers.filter((m) => !done.has(m.id));
       if (!lapsed.length) continue;
-      await this.notifications.notifyOfficers(
-        `${requirement.name} (${requirement.year}): ${lapsed.length} member(s) incomplete`,
-        lapsed.map((m) => `${m.firstName} ${m.lastName}`).join(', '),
-      );
+      await this.notifications.notifyOfficerInboxes({
+        type: 'training.outstanding',
+        subject: `${requirement.name} (${requirement.year}): ${lapsed.length} member(s) incomplete`,
+        body: lapsed.map((m) => `${m.firstName} ${m.lastName}`).join(', '),
+        task: {
+          actionLabel: 'Review completions',
+          actionUrl: `/admin/trainings/annual/${requirement.id}`,
+        },
+      });
     }
     this.logger.log(`Lapse report sent for ${requirements.length} requirement(s)`);
   }

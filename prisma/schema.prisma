@@ -67,6 +67,7 @@ model Member {
   crewAbsences       CrewAbsence[]
   pollInvites        AvailabilityPollInvite[]
   availability       AvailabilityResponse[]
+  inbox              InboxMessage[]
   pollsCreated       AvailabilityPoll[]
   eventAvailability  EventAvailability[]
   coverageMessages   CoverageMessage[]
@@ -584,6 +585,32 @@ model AvailabilityResponse {
 /// Operational configuration an administrator edits in the console, rather
 /// than an environment variable only a deployer can reach. Values are JSON so
 /// a setting can grow fields without a migration.
+/// A message in a member's inbox. Every notification lands here — email and
+/// Slack are extra delivery on top — so nothing is lost to a channel being
+/// off or misconfigured.
+model InboxMessage {
+  id       Int    @id @default(autoincrement())
+  memberId Int
+  /// Message type key, e.g. "promotion.decided". Drives delivery settings.
+  type     String
+  subject  String
+  body     String
+
+  /// A task is something to be done, not merely read.
+  isTask      Boolean   @default(false)
+  actionLabel String?
+  actionUrl   String?
+  completedAt DateTime?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, readAt])
+  @@index([memberId, isTask, completedAt])
+}
+
 model AppSetting {
   key       String   @id
   value     Json

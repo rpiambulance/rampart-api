@@ -10,6 +10,7 @@ import { CredentialsService } from '../src/credentials/credentials.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
 import { CertificationGraphService } from '../src/certifications/certification-graph.service';
+import { NotificationsService } from '../src/notifications/notifications.service';
 import { addDays, nyNow, startOfWeek, toDbDate, weekdayOf } from '../src/common/dates';
 
 /**
@@ -1688,6 +1689,124 @@ describe('Night crews engine (e2e)', () => {
         await prisma.icsToken.deleteMany({ where: { memberId: charlie } });
         await prisma.event.delete({ where: { id: event.id } });
       }
+    });
+  });
+
+  describe('inbox', () => {
+    const asAdmin = {
+      'x-test-member-id': String(alice),
+      'x-test-permissions': 'settings:write',
+    };
+
+    afterEach(async () => {
+      await prisma.inboxMessage.deleteMany({ where: { memberId: bob } });
+      await prisma.appSetting.deleteMany({
+        where: { key: 'notifications.channels' },
+      });
+    });
+
+    it('writes an inbox copy even when every channel is switched off', async () => {
+      await request(app.getHttpServer())
+        .put('/v1/settings/notifications')
+        .set(asAdmin)
+        .send({ channels: { 'cert.decided': { email: false, slack: false } } })
+        .expect(200);
+
+      const notifications = app.get(NotificationsService);
+      await notifications.notify(bob, {
+        type: 'cert.decided',
+        subject: 'Certification verified',
+        body: 'Your certification was verified.',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/inbox')
+        .set(as(bob))
+        .expect(200);
+      expect(res.body[0]).toMatchObject({
+        type: 'cert.decided',
+        subject: 'Certification verified',
+        isTask: false,
+        readAt: null,
+      });
+    });
+
+    it('carries a task with somewhere to go, and completes it', async () => {
+      const notifications = app.get(NotificationsService);
+      await notifications.notify(bob, {
+        type: 'availability.requested',
+        subject: 'Availability requested',
+        body: 'Tell us when you can ride.',
+        task: { actionLabel: 'Fill it in', actionUrl: '/availability' },
+      });
+
+      const summary = await request(app.getHttpServer())
+        .get('/v1/inbox/summary')
+        .set(as(bob))
+        .expect(200);
+      expect(summary.body).toEqual({ unread: 1, tasks: 1 });
+
+      const list = await request(app.getHttpServer())
+        .get('/v1/inbox?filter=tasks')
+        .set(as(bob))
+        .expect(200);
+      const message = list.body[0];
+      expect(message).toMatchObject({
+        isTask: true,
+        actionLabel: 'Fill it in',
+        actionUrl: '/availability',
+      });
+
+      await request(app.getHttpServer())
+        .post(`/v1/inbox/${message.id}/complete`)
+        .set(as(bob))
+        .expect(201);
+      const after = await request(app.getHttpServer())
+        .get('/v1/inbox/summary')
+        .set(as(bob))
+        .expect(200);
+      expect(after.body).toEqual({ unread: 0, tasks: 0 });
+    });
+
+    it("will not touch another member's inbox", async () => {
+      const notifications = app.get(NotificationsService);
+      const mine = await notifications.notify(bob, {
+        type: 'cert.decided',
+        subject: 'Private',
+        body: 'For Bob only.',
+      });
+
+      // Charlie cannot read it...
+      const listed = await request(app.getHttpServer())
+        .get('/v1/inbox')
+        .set(as(charlie))
+        .expect(200);
+      expect(listed.body.map((m: { id: number }) => m.id)).not.toContain(mine.id);
+
+      // ...nor mark it read.
+      await request(app.getHttpServer())
+        .post(`/v1/inbox/${mine.id}/read`)
+        .set(as(charlie))
+        .expect(201);
+      const unchanged = await prisma.inboxMessage.findUniqueOrThrow({
+        where: { id: mine.id },
+      });
+      expect(unchanged.readAt).toBeNull();
+    });
+
+    it('reports the settings actually in force, defaults included', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/settings/notifications')
+        .set(asAdmin)
+        .expect(200);
+      const decided = res.body.find(
+        (t: { key: string }) => t.key === 'promotion.decided',
+      );
+      expect(decided.channels).toEqual({ email: true, slack: true });
+      const coverage = res.body.find(
+        (t: { key: string }) => t.key === 'coverage.received',
+      );
+      expect(coverage.channels).toEqual({ email: false, slack: true });
     });
   });
 

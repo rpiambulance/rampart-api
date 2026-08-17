@@ -37,11 +37,17 @@ export class CertificationsJobs {
         include: { type: true, member: { select: { id: true } } },
       });
       for (const cert of expiring) {
-        await this.notifications.notifyMember(
-          cert.member.id,
-          `${cert.type.name} expires in ${days} days`,
-          `Your ${cert.type.name} expires on ${cert.expiresAt!.toISOString().slice(0, 10)}. Upload your renewal to keep your credentials active.`,
-        );
+        await this.notifications.notify(cert.member.id, {
+          type: 'cert.expiring',
+          subject: `${cert.type.name} expires in ${days} days`,
+          body: `Your ${cert.type.name} expires on ${cert.expiresAt!
+            .toISOString()
+            .slice(0, 10)}.`,
+          task: {
+            actionLabel: 'Upload your renewal',
+            actionUrl: '/training',
+          },
+        });
       }
     }
   }

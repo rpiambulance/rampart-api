@@ -199,13 +199,20 @@ export class CoverageController {
         `${created.length > 1 ? 'each one' : 'it'} and answer any follow-up ` +
         `questions here:\n\n${lines.join('\n\n')}`,
     );
-    await this.notifications.notifyOfficers(
-      created.length > 1
-        ? `New coverage requests (${created.length})`
-        : 'New coverage request',
-      `${body.requesterName}${body.requesterOrg ? ` (${body.requesterOrg})` : ''}: ` +
+    await this.notifications.notifyOfficerInboxes({
+      type: 'coverage.received',
+      subject:
+        created.length > 1
+          ? `New coverage requests (${created.length})`
+          : 'New coverage request',
+      body:
+        `${body.requesterName}${body.requesterOrg ? ` (${body.requesterOrg})` : ''}: ` +
         created.map((r) => r.description.slice(0, 120)).join(' | ').slice(0, 500),
-    );
+      task: {
+        actionLabel: 'Review the request',
+        actionUrl: `/admin/coverage/${created[0].id}`,
+      },
+    });
 
     return {
       ok: true,
@@ -255,10 +262,15 @@ export class CoverageController {
     await this.prisma.coverageMessage.create({
       data: { requestId: request.id, direction: 'FROM_REQUESTER', body: body.body },
     });
-    await this.notifications.notifyOfficers(
-      `Coverage request #${request.id}: reply from ${request.requesterName}`,
-      body.body.slice(0, 300),
-    );
+    await this.notifications.notifyOfficerInboxes({
+      type: 'coverage.received',
+      subject: `Reply from ${request.requesterName}`,
+      body: body.body.slice(0, 300),
+      task: {
+        actionLabel: 'Read and reply',
+        actionUrl: `/admin/coverage/${request.id}`,
+      },
+    });
     return { ok: true };
   }
 

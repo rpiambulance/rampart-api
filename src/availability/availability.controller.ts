@@ -105,11 +105,15 @@ export class AvailabilityController {
     });
     await this.audit.log(auth, 'availability.poll.create', 'AvailabilityPoll', poll.id);
     for (const memberId of new Set(body.memberIds)) {
-      await this.notifications.notifyMember(
-        memberId,
-        `Availability requested: ${body.name}`,
-        'Please fill out your weekly availability on the members portal (My Training → Availability).',
-      );
+      await this.notifications.notify(memberId, {
+        type: 'availability.requested',
+        subject: `Availability requested: ${body.name}`,
+        body: 'Tell us which weeknights you can ride.',
+        task: {
+          actionLabel: 'Fill in your availability',
+          actionUrl: '/availability',
+        },
+      });
     }
     return poll;
   }

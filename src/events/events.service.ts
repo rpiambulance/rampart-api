@@ -381,10 +381,17 @@ export class EventsService {
     });
 
     if (action === 'REQUEST_AVAILABILITY') {
-      await this.notifications.notifyAllActiveMembers(
-        `Coverage availability: ${event.title}`,
-        `Can you work ${event.title} on ${event.startsAt.toISOString().slice(0, 10)}? Respond on the portal event page.`,
-      );
+      await this.notifications.notifyAllActiveMembers({
+        type: 'availability.requested',
+        subject: `Coverage availability: ${event.title}`,
+        body: `Can you work ${event.title} on ${event.startsAt
+          .toISOString()
+          .slice(0, 10)}?`,
+        task: {
+          actionLabel: 'Say when you can work',
+          actionUrl: `/events/${eventId}`,
+        },
+      });
     }
     // Approving publishes it; declining or cancelling takes it back out of
     // the calendar if it had already been published.

@@ -404,11 +404,11 @@ export class CredentialsService {
       credentialKey,
       senior: !!opts.senior,
     });
-    await this.notifications.notifyMember(
-      memberId,
-      'Credential appointed',
-      `You have been appointed ${opts.senior ? SDS_TITLE : type.name}.`,
-    );
+    await this.notifications.notify(memberId, {
+      type: 'promotion.decided',
+      subject: 'Credential appointed',
+      body: `You have been appointed ${opts.senior ? SDS_TITLE : type.name}.`,
+    });
     return credential;
   }
 

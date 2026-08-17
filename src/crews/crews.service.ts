@@ -654,12 +654,17 @@ export class CrewsService {
       where: { memberId, weekday: weekdayOf(dateStr) },
     });
     if (heldSlots.length || onDefault) {
-      await this.notifications.notifyOfficers(
-        `Crew absence: ${member.firstName} ${member.lastName} — ${weekday} ${dateStr}`,
-        heldSlots.length
+      await this.notifications.notifyOfficerInboxes({
+        type: 'crew.unfilled',
+        subject: `Crew absence: ${member.firstName} ${member.lastName} — ${weekday} ${dateStr}`,
+        body: heldSlots.length
           ? `Vacated ${heldSlots.map((s) => s.position).join(', ')}${note ? ` — "${note}"` : ''}`
           : `Will be skipped by the default template${note ? ` — "${note}"` : ''}`,
-      );
+        task: {
+          actionLabel: 'Fill the slot',
+          actionUrl: `/admin/schedule?viewDate=${dateStr}`,
+        },
+      });
     }
     return absence;
   }

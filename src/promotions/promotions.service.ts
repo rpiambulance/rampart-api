@@ -109,10 +109,15 @@ export class PromotionsService {
     const request = await this.prisma.promotionRequest.create({
       data: { memberId, credentialTypeId, status: 'IN_VOTE' },
     });
-    await this.notifications.notifyOfficers(
-      'New promotion request',
-      `Member ${memberId} requested ${match.name} (request #${request.id}).`,
-    );
+    await this.notifications.notifyOfficerInboxes({
+      type: 'promotion.requested',
+      subject: 'New promotion request',
+      body: `Member ${memberId} requested ${match.name}.`,
+      task: {
+        actionLabel: 'Review the request',
+        actionUrl: `/promotions/${request.id}`,
+      },
+    });
     return request;
   }
 
@@ -267,11 +272,11 @@ export class PromotionsService {
         where: { id: requestId },
         data: { status: 'DENIED', resolvedAt: new Date() },
       });
-      await this.notifications.notifyMember(
-        request.memberId,
-        'Promotion request denied',
-        `Your request for ${request.credentialType.name} was denied. You may submit a new request when ready.`,
-      );
+      await this.notifications.notify(request.memberId, {
+        type: 'promotion.decided',
+        subject: 'Promotion request denied',
+        body: `Your request for ${request.credentialType.name} was denied. You may submit a new request when ready.`,
+      });
       return { status: 'DENIED' };
     }
 
@@ -283,10 +288,15 @@ export class PromotionsService {
         where: { id: requestId },
         data: { status: 'TC_APPROVED' },
       });
-      await this.notifications.notifyOfficers(
-        'Promotion awaiting captain approval',
-        `Request #${requestId} (${request.credentialType.name}) passed the TC unanimously.`,
-      );
+      await this.notifications.notifyOfficerInboxes({
+        type: 'promotion.vote',
+        subject: 'Promotion awaiting captain approval',
+        body: `${request.credentialType.name} passed the Training Committee unanimously.`,
+        task: {
+          actionLabel: 'Give a decision',
+          actionUrl: `/promotions/${requestId}`,
+        },
+      });
       return { status: 'TC_APPROVED' };
     }
     return { status: 'IN_VOTE', votesRemaining: committee.length - covered.size };
@@ -334,17 +344,17 @@ export class PromotionsService {
         request.credentialTypeId,
         { grantedViaId: requestId },
       );
-      await this.notifications.notifyMember(
-        request.memberId,
-        'Promotion approved',
-        `Congratulations — you are now a ${request.credentialType.name}.`,
-      );
+      await this.notifications.notify(request.memberId, {
+        type: 'promotion.decided',
+        subject: 'Promotion approved',
+        body: `Congratulations — you are now a ${request.credentialType.name}.`,
+      });
     } else {
-      await this.notifications.notifyMember(
-        request.memberId,
-        'Promotion request denied',
-        `Your request for ${request.credentialType.name} was denied at captain review. You may submit a new request when ready.`,
-      );
+      await this.notifications.notify(request.memberId, {
+        type: 'promotion.decided',
+        subject: 'Promotion request denied',
+        body: `Your request for ${request.credentialType.name} was denied at captain review. You may submit a new request when ready.`,
+      });
     }
     return { ok: true, status: approved ? 'APPROVED' : 'DENIED' };
   }

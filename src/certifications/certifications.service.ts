@@ -415,13 +415,21 @@ export class CertificationsService {
           },
     });
     await this.audit.log(auth, 'certs.verify', 'MemberCertification', certificationId, decision);
-    await this.notifications.notifyMember(
-      cert.memberId,
-      `Certification ${decision.approve ? 'verified' : 'rejected'}`,
-      decision.approve
+    await this.notifications.notify(cert.memberId, {
+      type: 'cert.decided',
+      subject: `Certification ${decision.approve ? 'verified' : 'rejected'}`,
+      body: decision.approve
         ? 'Your certification was verified.'
         : `Your certification was rejected${decision.reason ? `: ${decision.reason}` : ''}.`,
-    );
+      ...(decision.approve
+        ? {}
+        : {
+            task: {
+              actionLabel: 'Correct and resubmit',
+              actionUrl: '/training',
+            },
+          }),
+    });
     if (decision.approve) {
       await this.recomputeSuspensions(cert.memberId);
     }

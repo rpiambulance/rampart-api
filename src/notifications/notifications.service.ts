@@ -3,6 +3,21 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
 import { renderEmail } from './email-template';
+import {
+  channelsFor,
+  NOTIFICATION_SETTING_KEY,
+  type ChannelSettings,
+} from './message-types';
+
+/** A message bound for a member's inbox, and possibly other channels. */
+export interface Notice {
+  /** Message type key; decides email/Slack delivery. See message-types.ts. */
+  type: string;
+  subject: string;
+  body: string;
+  /** Something to be done, not merely read. */
+  task?: { actionLabel: string; actionUrl: string };
+}
 
 /** Email settings as held in AppSetting; see the console's Email card. */
 export interface EmailSettings {
@@ -141,26 +156,61 @@ export class NotificationsService {
     return { mailer: this.envMailer, from: this.envEmailFrom };
   }
 
-  async notifyMember(memberId: number, subject: string, body: string) {
+  private async channels(): Promise<ChannelSettings | null> {
+    const row = await this.prisma.appSetting
+      .findUnique({ where: { key: NOTIFICATION_SETTING_KEY } })
+      .catch(() => null);
+    return (row?.value as unknown as ChannelSettings) ?? null;
+  }
+
+  /**
+   * The main path for anything addressed to a member. The inbox copy is
+   * always written; email and Slack follow the configured channels for the
+   * message type, so a delivery problem never loses the message itself.
+   */
+  async notify(memberId: number, notice: Notice) {
+    const message = await this.prisma.inboxMessage.create({
+      data: {
+        memberId,
+        type: notice.type,
+        subject: notice.subject,
+        body: notice.body,
+        isTask: !!notice.task,
+        actionLabel: notice.task?.actionLabel ?? null,
+        actionUrl: notice.task?.actionUrl ?? null,
+      },
+    });
+
+    const wanted = channelsFor(await this.channels(), notice.type);
+    if (wanted.email || wanted.slack) {
+      await this.deliver(memberId, notice, wanted);
+    }
+    return message;
+  }
+
+  private async deliver(
+    memberId: number,
+    notice: Notice,
+    wanted: { email: boolean; slack: boolean },
+  ) {
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
       select: { email: true, slackId: true },
     });
     if (!member) return;
 
-    let delivered = false;
-    if (member.email) {
-      // Through sendEmail so members get the same themed message, and the
-      // same console-configured transport, as anyone outside the corps.
-      delivered = await this.sendEmail(member.email, subject, body);
+    const body = notice.task
+      ? `${notice.body}\n\n${notice.task.actionLabel}: ${notice.task.actionUrl}`
+      : notice.body;
+
+    if (wanted.email && member.email) {
+      await this.sendEmail(member.email, notice.subject, body);
     }
-    if (this.slackToken && member.slackId) {
-      delivered = (await this.postSlack(member.slackId, `*${subject}*\n${body}`)) || delivered;
-    }
-    if (!delivered) {
-      this.logger.log(`notify member=${memberId} (no transport) :: ${subject} — ${body}`);
+    if (wanted.slack && this.slackToken && member.slackId) {
+      await this.postSlack(member.slackId, `*${notice.subject}*\n${body}`);
     }
   }
+
 
   /** Raw email to an outside address (e.g. coverage requesters). */
   async sendEmail(to: string, subject: string, body: string): Promise<boolean> {
@@ -220,23 +270,49 @@ export class NotificationsService {
   }
 
   /** Broadcast to every active member (availability requests). */
-  async notifyAllActiveMembers(subject: string, body: string) {
+  async notifyAllActiveMembers(notice: Notice) {
     const members = await this.prisma.member.findMany({
       where: { active: true },
       select: { id: true },
     });
     for (const member of members) {
-      await this.notifyMember(member.id, subject, body);
+      await this.notify(member.id, notice);
     }
   }
 
-  async notifyOfficers(subject: string, body: string) {
-    if (this.slackToken && this.officersChannel) {
-      const ok = await this.postSlack(this.officersChannel, `*${subject}*\n${body}`);
-      if (ok) return;
+  /**
+   * To every officer: an inbox copy each, plus the channels configured for
+   * the type. Officers are members holding a role marked isOfficer.
+   */
+  async notifyOfficerInboxes(notice: Notice) {
+    const today = new Date();
+    const assignments = await this.prisma.memberRole.findMany({
+      where: {
+        startDate: { lte: today },
+        OR: [{ endDate: null }, { endDate: { gte: today } }],
+        member: { active: true },
+        role: { isOfficer: true },
+      },
+      select: { memberId: true },
+      distinct: ['memberId'],
+    });
+    for (const assignment of assignments) {
+      await this.notify(assignment.memberId, notice);
     }
-    this.logger.log(`notify officers (no transport) :: ${subject} — ${body}`);
+    // The officers channel still gets one post, rather than one per officer.
+    if (this.slackToken && this.officersChannel) {
+      await this.postSlack(
+        this.officersChannel,
+        `*${notice.subject}*\n${notice.body}`,
+      );
+    }
+    if (!assignments.length) {
+      this.logger.warn(
+        `notice for officers had nobody to reach :: ${notice.subject}`,
+      );
+    }
   }
+
 
   private async postSlack(channel: string, text: string): Promise<boolean> {
     try {
