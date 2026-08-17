@@ -805,6 +805,141 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('scheduler bulk operations', () => {
+    const asScheduler = {
+      'x-test-member-id': '0',
+      'x-test-permissions': 'schedule:crews:assign',
+    };
+
+    it('assigns a single past night without inventing the rest of the week', async () => {
+      const backfill = addDays(startOfWeek(nyNow().dateStr), -63);
+      await request(app.getHttpServer())
+        .put(`/v1/crews/by-date/${backfill}/slots/OBSERVER`)
+        .set({ ...asScheduler, 'x-test-member-id': String(alice) })
+        .send({ memberId: bob })
+        .expect(200);
+
+      const week = await prisma.crew.findMany({
+        where: {
+          date: { gte: toDbDate(backfill), lt: toDbDate(addDays(backfill, 7)) },
+        },
+        include: { slots: true },
+      });
+      // Exactly the night assigned — the other six are untouched.
+      expect(week.length).toBe(1);
+      const filled = week[0].slots.filter((s) => s.memberId !== null);
+      expect(filled.length).toBe(1);
+      expect(filled[0].memberId).toBe(bob);
+
+      await prisma.crew.delete({ where: { id: week[0].id } });
+    });
+
+    it('clears a week', async () => {
+      const week = addDays(startOfWeek(nyNow().dateStr), 7);
+      const crewId = await crewIdFor(dayA);
+      await prisma.crewSlot.updateMany({
+        where: { crewId, position: 'OBSERVER' },
+        data: { memberId: bob },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/crews/bulk')
+        .set({ ...asScheduler, 'x-test-member-id': String(alice) })
+        .send({ weekStart: week, action: 'clear' })
+        .expect(201);
+      expect(res.body.changed).toBeGreaterThan(0);
+
+      const after = await prisma.crewSlot.findFirst({
+        where: { crewId, position: 'OBSERVER' },
+      });
+      expect(after?.memberId).toBeNull();
+    });
+
+    it('refuses to touch a week that has already passed', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/crews/bulk')
+        .set({ ...asScheduler, 'x-test-member-id': String(alice) })
+        .send({
+          weekStart: addDays(startOfWeek(nyNow().dateStr), -21),
+          action: 'clear',
+        })
+        .expect(409);
+    });
+
+    it('requires the scheduling permission', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/crews/bulk')
+        .set(as(bob))
+        .send({ weekStart: addDays(startOfWeek(nyNow().dateStr), 7), action: 'clear' })
+        .expect(403);
+    });
+  });
+
+  describe('member-managed certifications', () => {
+    let certId: number;
+
+    beforeAll(async () => {
+      const type = await prisma.certificationType.findFirstOrThrow({
+        where: { abbreviation: 'EMT' },
+      });
+      const cert = await prisma.memberCertification.create({
+        data: { memberId: bob, typeId: type.id, status: 'VERIFIED' },
+      });
+      certId = cert.id;
+    });
+
+    it('sends a verified record back for checking when the member edits it', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/certifications/${certId}`)
+        .set(as(bob))
+        .send({ identifier: 'EMT-999' })
+        .expect(200);
+      const cert = await prisma.memberCertification.findUniqueOrThrow({
+        where: { id: certId },
+      });
+      expect(cert.identifier).toBe('EMT-999');
+      expect(cert.status).toBe('PENDING_VERIFICATION');
+    });
+
+    it('keeps it verified when an officer edits it', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/certifications/${certId}`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'certs:verify',
+        })
+        .send({ identifier: 'EMT-1000' })
+        .expect(200);
+      const cert = await prisma.memberCertification.findUniqueOrThrow({
+        where: { id: certId },
+      });
+      expect(cert.status).toBe('VERIFIED');
+      expect(cert.verifiedById).toBe(alice);
+    });
+
+    it("refuses to touch someone else's", async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/certifications/${certId}`)
+        .set(as(charlie))
+        .send({ identifier: 'nope' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .delete(`/v1/certifications/${certId}`)
+        .set(as(charlie))
+        .expect(403);
+    });
+
+    it('lets the member withdraw their own', async () => {
+      await request(app.getHttpServer())
+        .delete(`/v1/certifications/${certId}`)
+        .set(as(bob))
+        .expect(200);
+      expect(
+        await prisma.memberCertification.findUnique({ where: { id: certId } }),
+      ).toBeNull();
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

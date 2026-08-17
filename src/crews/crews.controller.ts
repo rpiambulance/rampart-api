@@ -64,6 +64,14 @@ function requireMember(auth: AuthContext): number {
   return auth.memberId;
 }
 
+class BulkWeekDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'weekStart must be YYYY-MM-DD' })
+  weekStart!: string;
+
+  @IsIn(['clear', 'apply-defaults'])
+  action!: 'clear' | 'apply-defaults';
+}
+
 @Controller({ path: 'crews', version: '1' })
 export class CrewsController {
   constructor(
@@ -123,6 +131,13 @@ export class CrewsController {
   }
 
   /** Scheduler assignment for any future date, public or not. */
+  /** Empty a week, or fill its vacancies from the weekly template. */
+  @Post('bulk')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_ASSIGN)
+  bulkWeek(@CurrentAuth() auth: AuthContext, @Body() body: BulkWeekDto) {
+    return this.crews.bulkWeek(auth, body.weekStart, body.action);
+  }
+
   @Put('by-date/:date/slots/:position')
   @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_ASSIGN)
   assignByDate(

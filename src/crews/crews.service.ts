@@ -483,11 +483,89 @@ export class CrewsService {
     position: CrewPosition,
     target: { memberId?: number | null; placeholder?: string | null },
   ) {
-    await this.ensureCrewsExist(startOfWeek(dateStr), 7);
-    const crew = await this.prisma.crew.findUniqueOrThrow({
+    // Create the one night being assigned, empty. Materialising the whole
+    // week from the default template would invent shifts on the other six
+    // days — the same trap that made past weeks unsafe to page back through.
+    const crew = await this.prisma.crew.upsert({
       where: { date: toDbDate(dateStr) },
+      create: {
+        date: toDbDate(dateStr),
+        slots: { create: CREW_POSITIONS.map((p) => ({ position: p })) },
+      },
+      update: {},
     });
     return this.assign(auth, crew.id, position, target);
+  }
+
+  /**
+   * Week-at-a-time operations for a scheduler: emptying a week, or filling
+   * its vacancies from the weekly template. Both skip nights that already
+   * happened — the schedule is a record back there, not a plan.
+   */
+  async bulkWeek(
+    auth: AuthContext,
+    weekStart: string,
+    action: 'clear' | 'apply-defaults',
+  ) {
+    const now = nyNow();
+    const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter(
+      (d) => d >= now.dateStr,
+    );
+    if (!dates.length) {
+      throw new ConflictException('That week has already passed');
+    }
+
+    const template = await this.prisma.defaultCrewTemplate.findMany();
+    const absences = await this.prisma.crewAbsence.findMany({
+      where: {
+        date: { gte: toDbDate(dates[0]), lte: toDbDate(dates[dates.length - 1]) },
+      },
+    });
+    const absentOn = new Set(
+      absences.map((a) => `${fromDbDate(a.date)}:${a.memberId}`),
+    );
+
+    let changed = 0;
+    for (const dateStr of dates) {
+      const crew = await this.prisma.crew.findUnique({
+        where: { date: toDbDate(dateStr) },
+        include: { slots: true },
+      });
+      if (!crew) continue;
+      for (const slot of crew.slots) {
+        if (action === 'clear') {
+          if (slot.memberId === null && slot.placeholder === null) continue;
+          await this.prisma.crewSlot.update({
+            where: { id: slot.id },
+            data: { memberId: null, placeholder: null },
+          });
+          changed++;
+          continue;
+        }
+        // apply-defaults only fills what is empty; it never displaces anyone.
+        if (slot.memberId !== null || slot.placeholder !== null) continue;
+        const dflt = template.find(
+          (t) => t.weekday === weekdayOf(dateStr) && t.position === slot.position,
+        );
+        if (!dflt) continue;
+        const memberId =
+          dflt.memberId && !absentOn.has(`${dateStr}:${dflt.memberId}`)
+            ? dflt.memberId
+            : null;
+        if (memberId === null && !dflt.placeholder) continue;
+        await this.prisma.crewSlot.update({
+          where: { id: slot.id },
+          data: { memberId, placeholder: dflt.placeholder ?? null },
+        });
+        changed++;
+      }
+    }
+    await this.audit.log(auth, 'crews.bulk', 'Crew', undefined, {
+      weekStart,
+      action,
+      changed,
+    });
+    return { changed, days: dates.length };
   }
 
   /** The caller's own upcoming shifts, including not-yet-public weeks. */

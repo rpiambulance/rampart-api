@@ -92,8 +92,46 @@ export class DispatchesController {
 
   @Get('dispatches')
   @RequirePermissions(PERMISSIONS.DISPATCHES_READ)
-  list(@Query('limit') limit?: string) {
+  list(
+    @Query('limit') limit?: string,
+    @Query('q') q?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const search = (q ?? '').trim();
+    // `to` is a plain date; include the whole of that day.
+    const toEnd = /^\d{4}-\d{2}-\d{2}$/.test(to ?? '')
+      ? new Date(`${to}T23:59:59.999Z`)
+      : undefined;
+    const fromStart = /^\d{4}-\d{2}-\d{2}$/.test(from ?? '')
+      ? new Date(`${from}T00:00:00.000Z`)
+      : undefined;
+
     return this.prisma.dispatch.findMany({
+      where: {
+        ...(search
+          ? {
+              // The fields someone would actually search a call by.
+              OR: [
+                { complaint: { contains: search, mode: 'insensitive' as const } },
+                { location: { contains: search, mode: 'insensitive' as const } },
+                { business: { contains: search, mode: 'insensitive' as const } },
+                { crossStreets: { contains: search, mode: 'insensitive' as const } },
+                { units: { contains: search, mode: 'insensitive' as const } },
+                { determinant: { contains: search, mode: 'insensitive' as const } },
+                { additionalInfo: { contains: search, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}),
+        ...(fromStart || toEnd
+          ? {
+              receivedAt: {
+                ...(fromStart ? { gte: fromStart } : {}),
+                ...(toEnd ? { lte: toEnd } : {}),
+              },
+            }
+          : {}),
+      },
       orderBy: { receivedAt: 'desc' },
       take: limit ? Math.min(Number(limit), 500) : 100,
     });

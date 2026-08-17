@@ -6,6 +6,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 
@@ -179,6 +180,72 @@ export class CertificationsService {
     if (!doc) throw new NotFoundException('Document not found');
     const object = await this.storage.get(doc.storageKey);
     return { doc, object };
+  }
+
+  /**
+   * Amend a certification. A member may correct their own; anyone with
+   * certs:verify may correct anyone's. Editing a verified record sends it
+   * back for verification, since the details an officer checked have changed.
+   */
+  async amend(
+    auth: AuthContext,
+    certificationId: number,
+    input: { identifier?: string; issuedAt?: string; expiresAt?: string },
+  ) {
+    const cert = await this.requireOwnOrVerifier(auth, certificationId);
+    const isVerifier =
+      auth.permissions.has(PERMISSIONS.CERTS_VERIFY) &&
+      auth.kind === 'member';
+
+    const updated = await this.prisma.memberCertification.update({
+      where: { id: certificationId },
+      data: {
+        identifier: input.identifier ?? null,
+        issuedAt: input.issuedAt ? new Date(input.issuedAt) : null,
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+        // An officer editing is itself an act of verification; a member
+        // editing invalidates the previous check.
+        ...(isVerifier
+          ? {
+              status: 'VERIFIED' as const,
+              verifiedById: auth.memberId,
+              verifiedAt: new Date(),
+              rejectionReason: null,
+            }
+          : cert.status === 'VERIFIED'
+            ? {
+                status: 'PENDING_VERIFICATION' as const,
+                verifiedById: null,
+                verifiedAt: null,
+              }
+            : {}),
+      },
+      include: { type: true },
+    });
+    await this.audit.log(auth, 'certs.amend', 'MemberCertification', certificationId, input);
+    return updated;
+  }
+
+  /** Withdraws a certification. Same ownership rule as amending. */
+  async remove(auth: AuthContext, certificationId: number) {
+    await this.requireOwnOrVerifier(auth, certificationId);
+    await this.prisma.memberCertification.delete({
+      where: { id: certificationId },
+    });
+    await this.audit.log(auth, 'certs.delete', 'MemberCertification', certificationId);
+    return { ok: true };
+  }
+
+  private async requireOwnOrVerifier(auth: AuthContext, certificationId: number) {
+    const cert = await this.prisma.memberCertification.findUnique({
+      where: { id: certificationId },
+    });
+    if (!cert) throw new NotFoundException('Certification not found');
+    const isOwn = auth.kind === 'member' && cert.memberId === auth.memberId;
+    if (!isOwn && !auth.permissions.has(PERMISSIONS.CERTS_VERIFY)) {
+      throw new ForbiddenException('That certification belongs to someone else');
+    }
+    return cert;
   }
 
   async verify(

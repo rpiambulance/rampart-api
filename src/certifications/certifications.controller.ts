@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
@@ -66,6 +67,20 @@ class PatchCertTypeDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+}
+
+class AmendCertDto {
+  @IsOptional()
+  @IsString()
+  identifier?: string;
+
+  @IsOptional()
+  @IsDateString()
+  issuedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 }
 
 class SubmitCertDto {
@@ -181,6 +196,23 @@ export class CertificationsController {
       `inline; filename="${doc.fileName.replace(/"/g, '')}"`,
     );
     res.send(object.body);
+  }
+
+  @Patch(':id')
+  amend(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: AmendCertDto,
+  ) {
+    return this.certs.amend(auth, id, body);
+  }
+
+  @Delete(':id')
+  remove(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.certs.remove(auth, id);
   }
 
   @Post(':id/verify')
