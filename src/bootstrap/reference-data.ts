@@ -106,6 +106,7 @@ const ALL = [
   'schedule:crews:assign', 'schedule:crews:duty-sup',
   'schedule:crews:manage-defaults', 'schedule:settings',
   'events:create', 'events:assign-others', 'events:lock', 'events:approve',
+  'events:decline',
   'fuel:write', 'radios:manage', 'vehicles:manage', 'tokens:manage',
   'dispatches:ingest', 'dispatches:read', 'audit:read', 'integrations:manage',
   'system:migrate-legacy',

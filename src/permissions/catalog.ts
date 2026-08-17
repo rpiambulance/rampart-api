@@ -28,6 +28,8 @@ export const PERMISSIONS = {
   EVENTS_ASSIGN_OTHERS: 'events:assign-others',
   EVENTS_LOCK: 'events:lock',
   EVENTS_APPROVE: 'events:approve',
+  /** Turn a request down. Anyone who may approve may also decline. */
+  EVENTS_DECLINE: 'events:decline',
   TRAININGS_MANAGE: 'trainings:manage',
   FUEL_WRITE: 'fuel:write',
   RADIOS_MANAGE: 'radios:manage',

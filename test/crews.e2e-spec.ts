@@ -1169,7 +1169,7 @@ describe('Night crews engine (e2e)', () => {
   describe('declining a coverage request on receipt', () => {
     const asApprover = {
       'x-test-member-id': String(alice),
-      'x-test-permissions': 'events:approve',
+      'x-test-permissions': 'events:create,events:approve',
     };
 
     async function makeRequest(): Promise<number> {
@@ -1246,7 +1246,21 @@ describe('Night crews engine (e2e)', () => {
       await prisma.event.delete({ where: { id: event.id } });
     });
 
-    it('requires events:approve', async () => {
+    it('accepts events:decline as well as events:approve', async () => {
+      const id = await makeRequest();
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'events:create,events:decline',
+        })
+        .expect(201);
+      const row = await prisma.coverageRequest.findUniqueOrThrow({ where: { id } });
+      expect(row.declinedAt).toBeTruthy();
+      await prisma.coverageRequest.delete({ where: { id } });
+    });
+
+    it('requires one of them', async () => {
       const id = await makeRequest();
       await request(app.getHttpServer())
         .post(`/v1/coverage-requests/${id}/decline`)
@@ -1385,6 +1399,83 @@ describe('Night crews engine (e2e)', () => {
 
     afterAll(async () => {
       await prisma.appSetting.deleteMany({ where: { key: 'email.smtp' } });
+    });
+  });
+
+  describe('declining an event from each stage', () => {
+    const asApprover = {
+      'x-test-member-id': String(alice),
+      'x-test-permissions': 'events:create,events:approve',
+    };
+
+    async function eventInState(state: string): Promise<number> {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const event = await prisma.event.create({
+        data: {
+          title: `Workflow ${state} ${stamp}`,
+          startsAt: new Date('2027-02-01T18:00:00Z'),
+          endsAt: new Date('2027-02-01T22:00:00Z'),
+          kindId: kind.id,
+          workflowStatus: state as never,
+        },
+      });
+      return event.id;
+    }
+
+    for (const state of ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL']) {
+      it(`declines from ${state}`, async () => {
+        const id = await eventInState(state);
+        await request(app.getHttpServer())
+          .post(`/v1/events/${id}/workflow`)
+          .set(asApprover)
+          .send({ action: 'DENY', notes: 'Cannot staff' })
+          .expect(201);
+        const after = await prisma.event.findUniqueOrThrow({ where: { id } });
+        expect(after.workflowStatus).toBe('DENIED');
+        expect(after.hidden).toBe(true);
+        await prisma.event.delete({ where: { id } });
+      });
+    }
+
+    it('declines with events:decline alone', async () => {
+      const id = await eventInState('PENDING_APPROVAL');
+      await request(app.getHttpServer())
+        .post(`/v1/events/${id}/workflow`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'events:create,events:decline',
+        })
+        .send({ action: 'DENY' })
+        .expect(201);
+      const after = await prisma.event.findUniqueOrThrow({ where: { id } });
+      expect(after.workflowStatus).toBe('DENIED');
+      await prisma.event.delete({ where: { id } });
+    });
+
+    it('does not let declining stand in for approving', async () => {
+      const id = await eventInState('PENDING_APPROVAL');
+      await request(app.getHttpServer())
+        .post(`/v1/events/${id}/workflow`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'events:create,events:decline',
+        })
+        .send({ action: 'APPROVE' })
+        .expect(403);
+      await prisma.event.delete({ where: { id } });
+    });
+
+    it('refuses with neither permission', async () => {
+      const id = await eventInState('PENDING_APPROVAL');
+      await request(app.getHttpServer())
+        .post(`/v1/events/${id}/workflow`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'events:create',
+        })
+        .send({ action: 'DENY' })
+        .expect(403);
+      await prisma.event.delete({ where: { id } });
     });
   });
 

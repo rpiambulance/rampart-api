@@ -258,10 +258,21 @@ export class EventsController {
     @Body() body: WorkflowDto,
   ) {
     if (
-      (body.action === 'APPROVE' || body.action === 'DENY') &&
+      body.action === 'APPROVE' &&
       !auth.permissions.has(PERMISSIONS.EVENTS_APPROVE)
     ) {
       throw new ForbiddenException('Missing permission: events:approve');
+    }
+    // Declining is its own permission, and approving implies it: someone
+    // trusted to say yes does not need a second grant to say no.
+    if (
+      body.action === 'DENY' &&
+      !auth.permissions.has(PERMISSIONS.EVENTS_DECLINE) &&
+      !auth.permissions.has(PERMISSIONS.EVENTS_APPROVE)
+    ) {
+      throw new ForbiddenException(
+        'Missing permission: events:decline (or events:approve)',
+      );
     }
     return this.events.advanceWorkflow(auth, id, body.action, body.notes);
   }

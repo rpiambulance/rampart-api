@@ -281,12 +281,21 @@ export class CoverageController {
    * workflow owns the outcome, and DENY there is the way to decline.
    */
   @Post(':id/decline')
-  @RequirePermissions(PERMISSIONS.EVENTS_APPROVE)
+  @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
   async decline(
     @CurrentAuth() auth: AuthContext,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: DeclineDto,
   ) {
+    // Same rule as declining an event: either permission will do.
+    if (
+      !auth.permissions.has(PERMISSIONS.EVENTS_DECLINE) &&
+      !auth.permissions.has(PERMISSIONS.EVENTS_APPROVE)
+    ) {
+      throw new ForbiddenException(
+        'Missing permission: events:decline (or events:approve)',
+      );
+    }
     const request = await this.prisma.coverageRequest.findUnique({
       where: { id },
       include: { event: { select: { id: true } } },
