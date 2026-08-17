@@ -49,6 +49,9 @@ model Member {
   verifiedCerts      MemberCertification[] @relation("CertVerifier")
   evaluationsWritten Evaluation[]          @relation("Evaluator")
   evaluationsAbout   Evaluation[]          @relation("EvalSubject")
+  checklistSignoffs  ChecklistSignoff[]    @relation("ChecklistSubject")
+  checklistSigned    ChecklistSignoff[]    @relation("ChecklistSigner")
+  checklistRevoked   ChecklistSignoff[]    @relation("ChecklistRevoker")
   promotionRequests  PromotionRequest[]
   promotionVotes     PromotionVote[]       @relation("Voter")
   proxiedVotes       PromotionVote[]       @relation("ProxyFor")
@@ -214,6 +217,8 @@ model CredentialType {
   memberCredentials MemberCredential[]
   promotionRequests PromotionRequest[]
   requirementAdjustments PromotionRequirementAdjustment[]
+  checklistSignoffLevel  EvalFormTemplate[] @relation("ChecklistSignoffLevel")
+  checklistItemLevel     EvalFormItem[]     @relation("ChecklistItemSignoffLevel")
 }
 
 // Holding this credential ACTIVE confers the linked role's permissions
@@ -241,6 +246,7 @@ enum RequirementKind {
   CERTIFICATION // a verified, unexpired cert of certificationTypeId
   EVALUATION_COUNT // `count` signed evals on evalTemplateId
   CLASS // completion of classId
+  CHECKLIST // every line of the checklist at evalTemplateId signed off
 }
 
 model CredentialRequirement {
@@ -294,11 +300,27 @@ model MemberCredential {
 enum ScoreType {
   SCALE_1_5
   PASS_FAIL
+  /// Free text, several lines.
   TEXT
-  /// A list of choices, defined on the item.
+  /// Free text, one line.
+  SHORT_TEXT
+  /// A number, with optional bounds on the item.
+  NUMBER
+  /// A list of choices, defined on the item. Pick one.
   OPTIONS
+  /// The same list, but any number of them may be picked.
+  MULTI_SELECT
   /// Not a question: a heading or instruction shown on the form.
   HEADING
+  /// A line on a checklist: signed off rather than answered.
+  SIGNOFF
+}
+
+/// Evaluations are filled in once; checklists are signed off item by item,
+/// over time, by whoever is qualified to sign each line.
+enum TemplateKind {
+  EVALUATION
+  CHECKLIST
 }
 
 /// The evaluator's overall verdict on an evaluation.
@@ -308,12 +330,20 @@ enum EvalOutcome {
 }
 
 model EvalFormTemplate {
-  id        Int      @id @default(autoincrement())
+  id        Int          @id @default(autoincrement())
   name      String
-  version   Int      @default(1)
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  kind      TemplateKind @default(EVALUATION)
+  version   Int          @default(1)
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
 
+  /// Checklists only: the credential a signer must hold, or anything above it
+  /// on the ladder. An item may raise this bar but never lower it.
+  signoffCredentialTypeId Int?
+
+  signoffCredentialType CredentialType? @relation("ChecklistSignoffLevel", fields: [signoffCredentialTypeId], references: [id])
+
+  groups                 EvalFormGroup[]
   items                  EvalFormItem[]
   evaluations            Evaluation[]
   credentialRequirements CredentialRequirement[]
@@ -322,19 +352,73 @@ model EvalFormTemplate {
   @@unique([name, version])
 }
 
+/// A titled run of items. Groups and loose items share one ordering space at
+/// the top of a form, so a group moves exactly like a single item does.
+model EvalFormGroup {
+  id         Int    @id @default(autoincrement())
+  templateId Int
+  order      Int
+  heading    String
+  /// Shown under the heading, before the first item.
+  description String?
+
+  template EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items    EvalFormItem[]
+
+  @@index([templateId])
+}
+
 model EvalFormItem {
   id         Int       @id @default(autoincrement())
   templateId Int
+  /// Null = loose at the top level; otherwise the group it sits in. `order`
+  /// is read within whichever of the two contains it.
+  groupId    Int?
   order      Int
   prompt     String
   scoreType  ScoreType
-  /// For OPTIONS: [{ value, label }], in the order they are offered.
+  /// For OPTIONS and MULTI_SELECT: [{ value, label }], in offer order.
   options    Json?
+  /// NUMBER only: bounds and unit, all optional.
+  minValue   Float?
+  maxValue   Float?
+  unit       String?
+  /// Checklists only: raises the signing bar above the checklist's own.
+  signoffCredentialTypeId Int?
 
-  template EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  scores   EvalScore[]
+  template              EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  group                 EvalFormGroup?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  signoffCredentialType CredentialType?  @relation("ChecklistItemSignoffLevel", fields: [signoffCredentialTypeId], references: [id])
+  scores                EvalScore[]
+  signoffs              ChecklistSignoff[]
 
-  @@unique([templateId, order])
+  @@index([templateId])
+  @@index([groupId])
+}
+
+/// One trainer putting their name to one checklist line for one trainee.
+///
+/// Rows are kept after revocation rather than deleted, so a checklist can
+/// answer "who signed this, and did anyone take it back" — which is the whole
+/// point of signing it. The live sign-off is the newest un-revoked row.
+model ChecklistSignoff {
+  id           Int       @id @default(autoincrement())
+  memberId     Int
+  itemId       Int
+  signedById   Int
+  signedAt     DateTime  @default(now())
+  note         String?
+  revokedAt    DateTime?
+  revokedById  Int?
+  revokeReason String?
+
+  member    Member       @relation("ChecklistSubject", fields: [memberId], references: [id], onDelete: Cascade)
+  item      EvalFormItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  signedBy  Member       @relation("ChecklistSigner", fields: [signedById], references: [id])
+  revokedBy Member?      @relation("ChecklistRevoker", fields: [revokedById], references: [id])
+
+  @@index([memberId, itemId])
+  @@index([itemId])
 }
 
 enum EvalStatus {
@@ -376,6 +460,10 @@ model EvalScore {
   textValue    String?
   /// For OPTIONS: the chosen option's value.
   optionValue  String?
+  /// For MULTI_SELECT: every chosen value, in the item's offer order.
+  optionValues String[]
+  /// For NUMBER.
+  numberValue  Float?
 
   evaluation Evaluation   @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
   item       EvalFormItem @relation(fields: [itemId], references: [id])
@@ -632,6 +720,20 @@ model AppSetting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+/// What the boot-time seeder has already provisioned.
+///
+/// A row here means "never create this again", which is what makes deleting
+/// reference data in the console stick: without it every seeder is
+/// create-if-missing, so a deployment quietly restores anything an
+/// administrator removed.
+model SeededReference {
+  kind     String
+  key      String
+  seededAt DateTime @default(now())
+
+  @@id([kind, key])
 }
 
 model SchedulingSetting {

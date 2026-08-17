@@ -9,27 +9,69 @@ import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
-import { ScoreType } from '../generated/prisma/enums';
+import { ScoreType, TemplateKind } from '../generated/prisma/enums';
 
 export interface TemplateItemInput {
-  order: number;
+  order?: number;
   prompt: string;
   scoreType: ScoreType;
-  /** For OPTIONS items: the choices, in the order they are offered. */
+  /** For OPTIONS and MULTI_SELECT: the choices, in the order they are offered. */
   options?: Array<{ value: string; label: string }>;
+  /** NUMBER only. */
+  minValue?: number | null;
+  maxValue?: number | null;
+  unit?: string | null;
+  /** Checklists only: raises the signing bar above the checklist's own. */
+  signoffCredentialTypeId?: number | null;
 }
 
-/** Only OPTIONS items carry choices; the column stays null otherwise. */
-function toItemData(item: TemplateItemInput) {
+export interface TemplateGroupInput {
+  heading: string;
+  description?: string | null;
+  items: TemplateItemInput[];
+}
+
+/**
+ * A form is an ordered run of nodes, each either a loose item or a group of
+ * them. One list rather than two, because a group and a single item share a
+ * position: moving either one has to move it past the other.
+ */
+export type TemplateNodeInput =
+  | ({ kind: 'ITEM' } & TemplateItemInput)
+  | ({ kind: 'GROUP' } & TemplateGroupInput);
+
+/** Choices belong only to the item types that offer them. */
+const HAS_OPTIONS: ScoreType[] = ['OPTIONS', 'MULTI_SELECT'];
+
+function toItemData(item: TemplateItemInput, order: number) {
+  const numeric = item.scoreType === 'NUMBER';
   return {
-    order: item.order,
+    order,
     prompt: item.prompt,
     scoreType: item.scoreType,
     options:
-      item.scoreType === 'OPTIONS' && item.options?.length
+      HAS_OPTIONS.includes(item.scoreType) && item.options?.length
         ? (item.options as object)
         : undefined,
+    minValue: numeric ? (item.minValue ?? null) : null,
+    maxValue: numeric ? (item.maxValue ?? null) : null,
+    unit: numeric ? (item.unit?.trim() || null) : null,
+    signoffCredentialTypeId:
+      item.scoreType === 'SIGNOFF' ? (item.signoffCredentialTypeId ?? null) : null,
   };
+}
+
+/**
+ * Writes a template's nodes: loose items and groups interleaved, each keeping
+ * the position it was given. Callers that still send a flat item list get the
+ * old behaviour — every item loose, in the order supplied.
+ */
+function toNodes(
+  nodes: TemplateNodeInput[] | undefined,
+  items: TemplateItemInput[] | undefined,
+): TemplateNodeInput[] {
+  if (nodes?.length) return nodes;
+  return (items ?? []).map((item) => ({ kind: 'ITEM' as const, ...item }));
 }
 
 export interface ScoreInput {
@@ -38,6 +80,8 @@ export interface ScoreInput {
   passed?: boolean | null;
   textValue?: string | null;
   optionValue?: string | null;
+  optionValues?: string[] | null;
+  numberValue?: number | null;
 }
 
 @Injectable()
@@ -50,48 +94,149 @@ export class EvalsService {
 
   // ---- templates ----
 
-  listTemplates(includeInactive = false) {
-    return this.prisma.evalFormTemplate.findMany({
-      where: includeInactive ? {} : { active: true },
+  /** Everything a caller needs to render a form, groups included. */
+  private static readonly TEMPLATE_INCLUDE = {
+    items: { orderBy: { order: 'asc' } },
+    groups: {
+      orderBy: { order: 'asc' },
       include: { items: { orderBy: { order: 'asc' } } },
+    },
+    signoffCredentialType: { select: { id: true, key: true, name: true } },
+  } as const;
+
+  listTemplates(opts: { includeInactive?: boolean; kind?: TemplateKind } = {}) {
+    return this.prisma.evalFormTemplate.findMany({
+      where: {
+        ...(opts.includeInactive ? {} : { active: true }),
+        ...(opts.kind ? { kind: opts.kind } : {}),
+      },
+      include: EvalsService.TEMPLATE_INCLUDE,
       orderBy: [{ name: 'asc' }, { version: 'desc' }],
     });
   }
 
-  createTemplate(name: string, items: TemplateItemInput[]) {
-    return this.prisma.evalFormTemplate.create({
-      data: { name, items: { create: items.map(toItemData) } },
-      include: { items: true },
+  /**
+   * Writes the nodes of a template that already exists and has none.
+   *
+   * Groups are created one at a time because their items need the group's id,
+   * which a single nested create cannot give while also keeping loose items
+   * and groups in one ordering space.
+   */
+  private async writeNodes(templateId: number, nodes: TemplateNodeInput[]) {
+    for (const [index, node] of nodes.entries()) {
+      if (node.kind === 'GROUP') {
+        await this.prisma.evalFormGroup.create({
+          data: {
+            templateId,
+            order: index,
+            heading: node.heading,
+            description: node.description?.trim() || null,
+            items: {
+              create: node.items.map((item, i) => ({
+                templateId,
+                ...toItemData(item, i),
+              })),
+            },
+          },
+        });
+      } else {
+        await this.prisma.evalFormItem.create({
+          data: { templateId, ...toItemData(node, index) },
+        });
+      }
+    }
+  }
+
+  private assertChecklist(
+    kind: TemplateKind | undefined,
+    signoffCredentialTypeId: number | null | undefined,
+  ) {
+    if (kind === 'CHECKLIST' && !signoffCredentialTypeId) {
+      throw new BadRequestException(
+        'A checklist must say which credential a signer needs',
+      );
+    }
+  }
+
+  async createTemplate(opts: {
+    name: string;
+    kind?: TemplateKind;
+    signoffCredentialTypeId?: number | null;
+    nodes?: TemplateNodeInput[];
+    items?: TemplateItemInput[];
+  }) {
+    this.assertChecklist(opts.kind, opts.signoffCredentialTypeId);
+    const template = await this.prisma.evalFormTemplate.create({
+      data: {
+        name: opts.name,
+        kind: opts.kind ?? 'EVALUATION',
+        signoffCredentialTypeId: opts.signoffCredentialTypeId ?? null,
+      },
+    });
+    await this.writeNodes(template.id, toNodes(opts.nodes, opts.items));
+    return this.prisma.evalFormTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+      include: EvalsService.TEMPLATE_INCLUDE,
     });
   }
 
   /** Editing an in-use template creates a new version (submitted evals pin the old one). */
-  async reviseTemplate(templateId: number, items: TemplateItemInput[]) {
+  async reviseTemplate(
+    templateId: number,
+    opts: {
+      signoffCredentialTypeId?: number | null;
+      nodes?: TemplateNodeInput[];
+      items?: TemplateItemInput[];
+    },
+  ) {
     const existing = await this.prisma.evalFormTemplate.findUnique({
       where: { id: templateId },
       include: { _count: { select: { evaluations: true } } },
     });
     if (!existing) throw new NotFoundException('Template not found');
 
-    if (existing._count.evaluations === 0) {
+    const signoffCredentialTypeId =
+      opts.signoffCredentialTypeId !== undefined
+        ? opts.signoffCredentialTypeId
+        : existing.signoffCredentialTypeId;
+    this.assertChecklist(existing.kind, signoffCredentialTypeId);
+    const nodes = toNodes(opts.nodes, opts.items);
+
+    // A checklist is never re-versioned: sign-offs point at item rows, and
+    // moving a trainee's half-finished checklist onto fresh rows would erase
+    // work that was already witnessed. Editing one in place is deliberate.
+    const inUse = existing.kind === 'CHECKLIST' ? false : existing._count.evaluations > 0;
+
+    if (!inUse) {
+      await this.prisma.evalFormGroup.deleteMany({ where: { templateId } });
       await this.prisma.evalFormItem.deleteMany({ where: { templateId } });
-      return this.prisma.evalFormTemplate.update({
+      await this.prisma.evalFormTemplate.update({
         where: { id: templateId },
-        data: { items: { create: items.map(toItemData) } },
-        include: { items: true },
+        data: { signoffCredentialTypeId },
+      });
+      await this.writeNodes(templateId, nodes);
+      return this.prisma.evalFormTemplate.findUniqueOrThrow({
+        where: { id: templateId },
+        include: EvalsService.TEMPLATE_INCLUDE,
       });
     }
+
     await this.prisma.evalFormTemplate.update({
       where: { id: templateId },
       data: { active: false },
     });
-    return this.prisma.evalFormTemplate.create({
+    const created = await this.prisma.evalFormTemplate.create({
       data: {
         name: existing.name,
+        kind: existing.kind,
+        signoffCredentialTypeId,
         version: existing.version + 1,
-        items: { create: items.map(toItemData) },
       },
-      include: { items: true },
+    });
+    await this.writeNodes(created.id, nodes);
+    return this.prisma.evalFormTemplate.findUniqueOrThrow({
+      where: { id: created.id },
+      include: EvalsService.TEMPLATE_INCLUDE,
     });
   }
 
@@ -140,17 +285,22 @@ export class EvalsService {
     }
 
     for (const score of scores) {
+      // Written the same way on both paths: an answer cleared on a later save
+      // has to become null rather than keep the value it used to have.
+      const value = {
+        scaleValue: score.scaleValue ?? null,
+        passed: score.passed ?? null,
+        textValue: score.textValue ?? null,
+        optionValue: score.optionValue ?? null,
+        optionValues: score.optionValues ?? [],
+        numberValue: score.numberValue ?? null,
+      };
       await this.prisma.evalScore.upsert({
         where: {
           evaluationId_itemId: { evaluationId, itemId: score.itemId },
         },
-        create: { evaluationId, ...score },
-        update: {
-          scaleValue: score.scaleValue ?? null,
-          passed: score.passed ?? null,
-          textValue: score.textValue ?? null,
-          optionValue: score.optionValue ?? null,
-        },
+        create: { evaluationId, itemId: score.itemId, ...value },
+        update: value,
       });
     }
     const updated = await this.prisma.evaluation.update({

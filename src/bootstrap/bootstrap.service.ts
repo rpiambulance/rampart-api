@@ -5,7 +5,11 @@ import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { nyToday } from '../common/dates';
 import { backfillObservers } from '../credentials/observer';
-import { ensureReferenceData } from './reference-data';
+import {
+  ensureReferenceData,
+  markObserverBackfillDone,
+  observerBackfillDone,
+} from './reference-data';
 
 /**
  * Solves the first-admin chicken-and-egg: the admin console requires a
@@ -35,9 +39,18 @@ export class BootstrapService implements OnApplicationBootstrap {
     // Reference data first: the admin bootstrap below needs the seed roles to
     // exist, and a deployed environment only ever runs `prisma migrate deploy`.
     try {
-      await ensureReferenceData(this.prisma, (message) => this.logger.log(message));
-      // After the ladder exists, so the Observer type is there to grant.
-      await backfillObservers(this.prisma, (message) => this.logger.log(message));
+      await ensureReferenceData(this.prisma, (message) =>
+        this.logger.log(message),
+      );
+      // After the ladder exists, so the Observer type is there to grant. Once
+      // only: members are given Observer when they are created, so re-running
+      // this would restore a credential an officer had deliberately revoked.
+      if (!(await observerBackfillDone(this.prisma))) {
+        await backfillObservers(this.prisma, (message) =>
+          this.logger.log(message),
+        );
+        await markObserverBackfillDone(this.prisma);
+      }
     } catch (error) {
       this.logger.error(
         `Could not ensure reference data: ${
@@ -81,8 +94,12 @@ export class BootstrapService implements OnApplicationBootstrap {
       return;
     }
 
-    const configuredName = this.config.get<string>('BOOTSTRAP_ADMIN_NAME')?.trim();
-    const [firstName, ...rest] = (configuredName || email.split('@')[0]).split(' ');
+    const configuredName = this.config
+      .get<string>('BOOTSTRAP_ADMIN_NAME')
+      ?.trim();
+    const [firstName, ...rest] = (configuredName || email.split('@')[0]).split(
+      ' ',
+    );
     const lastName = rest.join(' ') || 'Administrator';
 
     const member = await this.prisma.member.upsert({
@@ -93,10 +110,16 @@ export class BootstrapService implements OnApplicationBootstrap {
     await this.prisma.memberRole.create({
       data: { memberId: member.id, roleId: role.id, startDate: now },
     });
-    await this.audit.log('system', 'bootstrap.admin.grant', 'MemberRole', member.id, {
-      email,
-      role: roleName,
-    });
+    await this.audit.log(
+      'system',
+      'bootstrap.admin.grant',
+      'MemberRole',
+      member.id,
+      {
+        email,
+        role: roleName,
+      },
+    );
 
     this.logger.warn(
       `Bootstrapped "${roleName}" for ${email} (member ${member.id}). ` +
