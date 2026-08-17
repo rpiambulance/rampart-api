@@ -337,11 +337,10 @@ model EvalFormTemplate {
   active    Boolean      @default(true)
   createdAt DateTime     @default(now())
 
-  /// Checklists only: the credential a signer must hold, or anything above it
-  /// on the ladder. An item may raise this bar but never lower it.
-  signoffCredentialTypeId Int?
-
-  signoffCredentialType CredentialType? @relation("ChecklistSignoffLevel", fields: [signoffCredentialTypeId], references: [id])
+  /// Checklists only: the credentials that let someone sign. Holding any one
+  /// of them — or anything above it on the ladder — is enough. An item may
+  /// name its own set instead.
+  signoffCredentialTypes CredentialType[] @relation("ChecklistSignoffLevel")
 
   groups                 EvalFormGroup[]
   items                  EvalFormItem[]
@@ -383,12 +382,12 @@ model EvalFormItem {
   minValue   Float?
   maxValue   Float?
   unit       String?
-  /// Checklists only: raises the signing bar above the checklist's own.
-  signoffCredentialTypeId Int?
 
   template              EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   group                 EvalFormGroup?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  signoffCredentialType CredentialType?  @relation("ChecklistItemSignoffLevel", fields: [signoffCredentialTypeId], references: [id])
+  /// Checklists only: who may sign this line, instead of the checklist's own
+  /// set. Empty means the checklist's set applies.
+  signoffCredentialTypes CredentialType[] @relation("ChecklistItemSignoffLevel")
   scores                EvalScore[]
   signoffs              ChecklistSignoff[]
 

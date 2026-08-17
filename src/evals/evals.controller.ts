@@ -79,10 +79,11 @@ class TemplateItemDto {
   @IsString()
   unit?: string | null;
 
-  /** Checklist items only: a higher bar than the checklist's own. */
+  /** Checklist items only: who may sign this line, instead of the checklist's set. */
   @IsOptional()
-  @IsInt()
-  signoffCredentialTypeId?: number | null;
+  @IsArray()
+  @IsInt({ each: true })
+  signoffCredentialTypeIds?: number[];
 }
 
 class TemplateGroupDto {
@@ -132,8 +133,9 @@ class TemplateNodeDto {
   unit?: string | null;
 
   @IsOptional()
-  @IsInt()
-  signoffCredentialTypeId?: number | null;
+  @IsArray()
+  @IsInt({ each: true })
+  signoffCredentialTypeIds?: number[];
 
   // GROUP
   @IsOptional()
@@ -159,10 +161,11 @@ class CreateTemplateDto {
   @IsIn(['EVALUATION', 'CHECKLIST'])
   kind?: 'EVALUATION' | 'CHECKLIST';
 
-  /** Required for a checklist: the credential a signer must hold. */
+  /** Required for a checklist: the credentials that let someone sign it. */
   @IsOptional()
-  @IsInt()
-  signoffCredentialTypeId?: number | null;
+  @IsArray()
+  @IsInt({ each: true })
+  signoffCredentialTypeIds?: number[];
 
   /** The current shape. */
   @IsOptional()
@@ -269,7 +272,7 @@ export class EvalsController {
     return this.evals.createTemplate({
       name: body.name,
       kind: body.kind,
-      signoffCredentialTypeId: body.signoffCredentialTypeId,
+      signoffCredentialTypeIds: body.signoffCredentialTypeIds,
       nodes: body.nodes as TemplateNodeInput[] | undefined,
       items: body.items,
     });
@@ -282,7 +285,7 @@ export class EvalsController {
     @Body() body: CreateTemplateDto,
   ) {
     return this.evals.reviseTemplate(id, {
-      signoffCredentialTypeId: body.signoffCredentialTypeId,
+      signoffCredentialTypeIds: body.signoffCredentialTypeIds,
       nodes: body.nodes as TemplateNodeInput[] | undefined,
       items: body.items,
     });

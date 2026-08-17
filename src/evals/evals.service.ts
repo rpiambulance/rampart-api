@@ -21,8 +21,11 @@ export interface TemplateItemInput {
   minValue?: number | null;
   maxValue?: number | null;
   unit?: string | null;
-  /** Checklists only: raises the signing bar above the checklist's own. */
-  signoffCredentialTypeId?: number | null;
+  /**
+   * Checklists only: who may sign this line, instead of the checklist's own
+   * set. Empty or absent means the checklist's set applies.
+   */
+  signoffCredentialTypeIds?: number[];
 }
 
 export interface TemplateGroupInput {
@@ -56,8 +59,10 @@ function toItemData(item: TemplateItemInput, order: number) {
     minValue: numeric ? (item.minValue ?? null) : null,
     maxValue: numeric ? (item.maxValue ?? null) : null,
     unit: numeric ? (item.unit?.trim() || null) : null,
-    signoffCredentialTypeId:
-      item.scoreType === 'SIGNOFF' ? (item.signoffCredentialTypeId ?? null) : null,
+    signoffCredentialTypes:
+      item.scoreType === 'SIGNOFF' && item.signoffCredentialTypeIds?.length
+        ? { connect: item.signoffCredentialTypeIds.map((id) => ({ id })) }
+        : undefined,
   };
 }
 
@@ -95,15 +100,28 @@ export class EvalsService {
   // ---- templates ----
 
   /** Everything a caller needs to render a form, groups included. */
+  private static readonly CREDENTIAL_SELECT = {
+    select: { id: true, key: true, name: true },
+  } as const;
+
   private static readonly TEMPLATE_INCLUDE = {
     // Loose items only: a grouped item is reached through its group, and
     // listing it in both places would show it twice on every form.
-    items: { where: { groupId: null }, orderBy: { order: 'asc' } },
+    items: {
+      where: { groupId: null },
+      orderBy: { order: 'asc' },
+      include: { signoffCredentialTypes: EvalsService.CREDENTIAL_SELECT },
+    },
     groups: {
       orderBy: { order: 'asc' },
-      include: { items: { orderBy: { order: 'asc' } } },
+      include: {
+        items: {
+          orderBy: { order: 'asc' },
+          include: { signoffCredentialTypes: EvalsService.CREDENTIAL_SELECT },
+        },
+      },
     },
-    signoffCredentialType: { select: { id: true, key: true, name: true } },
+    signoffCredentialTypes: EvalsService.CREDENTIAL_SELECT,
   } as const;
 
   listTemplates(opts: { includeInactive?: boolean; kind?: TemplateKind } = {}) {
@@ -151,11 +169,11 @@ export class EvalsService {
 
   private assertChecklist(
     kind: TemplateKind | undefined,
-    signoffCredentialTypeId: number | null | undefined,
+    signoffCredentialTypeIds: number[] | undefined,
   ) {
-    if (kind === 'CHECKLIST' && !signoffCredentialTypeId) {
+    if (kind === 'CHECKLIST' && !signoffCredentialTypeIds?.length) {
       throw new BadRequestException(
-        'A checklist must say which credential a signer needs',
+        'A checklist must say which credentials let someone sign it',
       );
     }
   }
@@ -163,16 +181,22 @@ export class EvalsService {
   async createTemplate(opts: {
     name: string;
     kind?: TemplateKind;
-    signoffCredentialTypeId?: number | null;
+    signoffCredentialTypeIds?: number[];
     nodes?: TemplateNodeInput[];
     items?: TemplateItemInput[];
   }) {
-    this.assertChecklist(opts.kind, opts.signoffCredentialTypeId);
+    this.assertChecklist(opts.kind, opts.signoffCredentialTypeIds);
     const template = await this.prisma.evalFormTemplate.create({
       data: {
         name: opts.name,
         kind: opts.kind ?? 'EVALUATION',
-        signoffCredentialTypeId: opts.signoffCredentialTypeId ?? null,
+        ...(opts.signoffCredentialTypeIds?.length
+          ? {
+              signoffCredentialTypes: {
+                connect: opts.signoffCredentialTypeIds.map((id) => ({ id })),
+              },
+            }
+          : {}),
       },
     });
     await this.writeNodes(template.id, toNodes(opts.nodes, opts.items));
@@ -186,22 +210,24 @@ export class EvalsService {
   async reviseTemplate(
     templateId: number,
     opts: {
-      signoffCredentialTypeId?: number | null;
+      signoffCredentialTypeIds?: number[];
       nodes?: TemplateNodeInput[];
       items?: TemplateItemInput[];
     },
   ) {
     const existing = await this.prisma.evalFormTemplate.findUnique({
       where: { id: templateId },
-      include: { _count: { select: { evaluations: true } } },
+      include: {
+        _count: { select: { evaluations: true } },
+        signoffCredentialTypes: { select: { id: true } },
+      },
     });
     if (!existing) throw new NotFoundException('Template not found');
 
-    const signoffCredentialTypeId =
-      opts.signoffCredentialTypeId !== undefined
-        ? opts.signoffCredentialTypeId
-        : existing.signoffCredentialTypeId;
-    this.assertChecklist(existing.kind, signoffCredentialTypeId);
+    const signoffCredentialTypeIds =
+      opts.signoffCredentialTypeIds ??
+      existing.signoffCredentialTypes.map((type) => type.id);
+    this.assertChecklist(existing.kind, signoffCredentialTypeIds);
     const nodes = toNodes(opts.nodes, opts.items);
 
     // A checklist is never re-versioned: sign-offs point at item rows, and
@@ -214,7 +240,13 @@ export class EvalsService {
       await this.prisma.evalFormItem.deleteMany({ where: { templateId } });
       await this.prisma.evalFormTemplate.update({
         where: { id: templateId },
-        data: { signoffCredentialTypeId },
+        // `set` rather than `connect`: removing a credential from the list has
+        // to actually remove it.
+        data: {
+          signoffCredentialTypes: {
+            set: signoffCredentialTypeIds.map((id) => ({ id })),
+          },
+        },
       });
       await this.writeNodes(templateId, nodes);
       return this.prisma.evalFormTemplate.findUniqueOrThrow({
@@ -231,8 +263,14 @@ export class EvalsService {
       data: {
         name: existing.name,
         kind: existing.kind,
-        signoffCredentialTypeId,
         version: existing.version + 1,
+        ...(signoffCredentialTypeIds.length
+          ? {
+              signoffCredentialTypes: {
+                connect: signoffCredentialTypeIds.map((id) => ({ id })),
+              },
+            }
+          : {}),
       },
     });
     await this.writeNodes(created.id, nodes);

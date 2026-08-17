@@ -22,24 +22,24 @@ const SIGNOFF_SELECT = {
   signedBy: { select: { id: true, firstName: true, lastName: true } },
 } as const;
 
+const CREDENTIALS = {
+  select: { id: true, key: true, name: true },
+} as const;
+
 const TEMPLATE_INCLUDE = {
-  signoffCredentialType: { select: { id: true, key: true, name: true } },
+  signoffCredentialTypes: CREDENTIALS,
   // Loose items only; grouped ones come through their group.
   items: {
     where: { groupId: null },
     orderBy: { order: 'asc' },
-    include: {
-      signoffCredentialType: { select: { id: true, key: true, name: true } },
-    },
+    include: { signoffCredentialTypes: CREDENTIALS },
   },
   groups: {
     orderBy: { order: 'asc' },
     include: {
       items: {
         orderBy: { order: 'asc' },
-        include: {
-          signoffCredentialType: { select: { id: true, key: true, name: true } },
-        },
+        include: { signoffCredentialTypes: CREDENTIALS },
       },
     },
   },
@@ -191,13 +191,15 @@ export class ChecklistsService {
       order: number;
       prompt: string;
       scoreType: string;
-      signoffCredentialType: { id: number; key: string; name: string } | null;
+      signoffCredentialTypes: Array<{ id: number; key: string; name: string }>;
     }) => ({
       ...item,
       signoff: byItem.get(item.id) ?? null,
-      // What this line needs, resolved: the item's own bar if it raises one,
-      // otherwise the checklist's.
-      requires: item.signoffCredentialType ?? template.signoffCredentialType,
+      // Who this line needs, resolved: the item's own set if it names one,
+      // otherwise the checklist's. Any one of them is enough.
+      requires: item.signoffCredentialTypes.length
+        ? item.signoffCredentialTypes
+        : template.signoffCredentialTypes,
     });
 
     const lineIds = this.lines(template);
@@ -206,7 +208,7 @@ export class ChecklistsService {
         id: template.id,
         name: template.name,
         version: template.version,
-        signoffCredentialType: template.signoffCredentialType,
+        signoffCredentialTypes: template.signoffCredentialTypes,
       },
       member,
       leadsTo: await this.leadsTo(templateId),
@@ -245,13 +247,13 @@ export class ChecklistsService {
     return out;
   }
 
-  /** The credential a signer needs for one line, item override included. */
+  /** Who may sign one line: the item's own set, or the checklist's. */
   private async requiredFor(itemId: number) {
     const item = await this.prisma.evalFormItem.findUnique({
       where: { id: itemId },
       include: {
-        signoffCredentialType: true,
-        template: { include: { signoffCredentialType: true } },
+        signoffCredentialTypes: true,
+        template: { include: { signoffCredentialTypes: true } },
       },
     });
     if (!item) throw new NotFoundException('Checklist item not found');
@@ -261,9 +263,10 @@ export class ChecklistsService {
     if (item.scoreType === 'HEADING') {
       throw new BadRequestException('A heading is not signed off');
     }
-    const required =
-      item.signoffCredentialType ?? item.template.signoffCredentialType;
-    if (!required) {
+    const required = item.signoffCredentialTypes.length
+      ? item.signoffCredentialTypes
+      : item.template.signoffCredentialTypes;
+    if (!required.length) {
       throw new BadRequestException(
         'This checklist does not say who may sign it',
       );
@@ -283,10 +286,20 @@ export class ChecklistsService {
     }
     const { item, required } = await this.requiredFor(itemId);
 
+    // Any one of them qualifies, each satisfied by itself or anything above
+    // it on the ladder.
     const held = await this.graph.heldKeys(signerId);
-    if (!(await this.graph.satisfies(held, required.key))) {
+    const qualifies = await Promise.all(
+      required.map((credential) => this.graph.satisfies(held, credential.key)),
+    );
+    if (!qualifies.some(Boolean)) {
+      const names = required.map((credential) => credential.name);
       throw new ForbiddenException(
-        `Signing this line needs ${required.name} or above`,
+        names.length === 1
+          ? `Signing this line needs ${names[0]} or above`
+          : `Signing this line needs ${names.slice(0, -1).join(', ')} or ${
+              names[names.length - 1]
+            }, or above`,
       );
     }
 
