@@ -123,13 +123,19 @@ export class CalendarController {
       );
     }
 
-    // Events: mine, or all (per scope)
+    // Events: mine, or all (per scope). Only approved ones — a request still
+    // being worked out is not something to put in anyone's calendar, and a
+    // declined one should never have appeared.
+    const publishable = {
+      hidden: false,
+      workflowStatus: 'APPROVED' as const,
+    };
     const events =
       icsToken.scope === 'MY_SCHEDULE'
         ? await this.prisma.event.findMany({
-            where: { signups: { some: { memberId } }, hidden: false },
+            where: { signups: { some: { memberId } }, ...publishable },
           })
-        : await this.prisma.event.findMany({ where: { hidden: false } });
+        : await this.prisma.event.findMany({ where: publishable });
     for (const event of events) {
       lines.push(
         'BEGIN:VEVENT',

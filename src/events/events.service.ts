@@ -187,14 +187,45 @@ export class EventsService {
       });
     }
     await this.audit.log(auth, 'events.update', 'Event', eventId);
-    const gcalEventId = await this.gcal.upsertEvent(event.gcalEventId, event);
+    await this.syncCalendar(event);
+    return event;
+  }
+
+  /**
+   * Keeps Google Calendar in step with an event's state. Only an approved,
+   * visible event belongs there: a request still being worked out is not
+   * something to put in the corps' calendar, and one that was approved and
+   * later declined has to come back out again.
+   */
+  private async syncCalendar(event: {
+    id: number;
+    hidden: boolean;
+    workflowStatus: string;
+    gcalEventId: string | null;
+  }) {
+    const publishable = !event.hidden && event.workflowStatus === 'APPROVED';
+
+    if (!publishable) {
+      if (event.gcalEventId) {
+        await this.gcal.deleteEvent(event.gcalEventId);
+        await this.prisma.event.update({
+          where: { id: event.id },
+          data: { gcalEventId: null },
+        });
+      }
+      return;
+    }
+
+    const gcalEventId = await this.gcal.upsertEvent(
+      event.gcalEventId,
+      event as never,
+    );
     if (gcalEventId && gcalEventId !== event.gcalEventId) {
       await this.prisma.event.update({
-        where: { id: eventId },
+        where: { id: event.id },
         data: { gcalEventId },
       });
     }
-    return event;
   }
 
   async setLocked(auth: AuthContext, eventId: number, locked: boolean) {
@@ -355,15 +386,9 @@ export class EventsService {
         `Can you work ${event.title} on ${event.startsAt.toISOString().slice(0, 10)}? Respond on the portal event page.`,
       );
     }
-    if (action === 'APPROVE') {
-      const gcalEventId = await this.gcal.upsertEvent(event.gcalEventId, updated);
-      if (gcalEventId && gcalEventId !== updated.gcalEventId) {
-        await this.prisma.event.update({
-          where: { id: eventId },
-          data: { gcalEventId },
-        });
-      }
-    }
+    // Approving publishes it; declining or cancelling takes it back out of
+    // the calendar if it had already been published.
+    await this.syncCalendar(updated);
     if ((action === 'APPROVE' || action === 'DENY') && event.coverageRequest) {
       const request = event.coverageRequest;
       const statusUrl = `${process.env.WEB_BASE_URL ?? 'http://localhost:3000'}/request-coverage/status/${request.token}`;

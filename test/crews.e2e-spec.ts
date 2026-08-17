@@ -1534,6 +1534,101 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('only approved events reach calendars', () => {
+    async function icsFor(memberId: number): Promise<string> {
+      const token = `ics-${stamp}-${memberId}`;
+      await prisma.icsToken.upsert({
+        where: { token },
+        create: { memberId, token, scope: 'MY_SCHEDULE' },
+        update: {},
+      });
+      const res = await request(app.getHttpServer())
+        .get(`/v1/calendar/feed/${token}.ics`)
+        .expect(200);
+      return res.text;
+    }
+
+    it('leaves an unapproved event out of the feed, and adds it once approved', async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const event = await prisma.event.create({
+        data: {
+          title: `Pending coverage ${stamp}`,
+          startsAt: new Date('2027-04-01T18:00:00Z'),
+          endsAt: new Date('2027-04-01T22:00:00Z'),
+          kindId: kind.id,
+          workflowStatus: 'PENDING_APPROVAL',
+          hidden: false,
+          signups: { create: [{ memberId: bob }] },
+        },
+      });
+      try {
+        expect(await icsFor(bob)).not.toContain(`Pending coverage ${stamp}`);
+
+        await request(app.getHttpServer())
+          .post(`/v1/events/${event.id}/workflow`)
+          .set({
+            'x-test-member-id': String(alice),
+            'x-test-permissions': 'events:create,events:approve',
+          })
+          .send({ action: 'APPROVE' })
+          .expect(201);
+
+        expect(await icsFor(bob)).toContain(`Pending coverage ${stamp}`);
+      } finally {
+        await prisma.icsToken.deleteMany({ where: { memberId: bob } });
+        await prisma.event.delete({ where: { id: event.id } });
+      }
+    });
+
+    it('drops an event back out of the feed when it stops being publishable', async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const event = await prisma.event.create({
+        data: {
+          title: `Approved then hidden ${stamp}`,
+          startsAt: new Date('2027-04-02T18:00:00Z'),
+          endsAt: new Date('2027-04-02T22:00:00Z'),
+          kindId: kind.id,
+          workflowStatus: 'PENDING_APPROVAL',
+          hidden: false,
+          signups: { create: [{ memberId: charlie }] },
+        },
+      });
+      try {
+        await request(app.getHttpServer())
+          .post(`/v1/events/${event.id}/workflow`)
+          .set({
+            'x-test-member-id': String(alice),
+            'x-test-permissions': 'events:create,events:approve',
+          })
+          .send({ action: 'APPROVE' })
+          .expect(201);
+        expect(await icsFor(charlie)).toContain(`Approved then hidden ${stamp}`);
+
+        // Hiding an approved event takes it back off calendars.
+        await request(app.getHttpServer())
+          .put(`/v1/events/${event.id}`)
+          .set({
+            'x-test-member-id': String(alice),
+            'x-test-permissions': 'events:create',
+          })
+          .send({
+            title: `Approved then hidden ${stamp}`,
+            startsAt: '2027-04-02T18:00:00.000Z',
+            endsAt: '2027-04-02T22:00:00.000Z',
+            kindId: kind.id,
+            hidden: true,
+          })
+          .expect(200);
+        expect(await icsFor(charlie)).not.toContain(
+          `Approved then hidden ${stamp}`,
+        );
+      } finally {
+        await prisma.icsToken.deleteMany({ where: { memberId: charlie } });
+        await prisma.event.delete({ where: { id: event.id } });
+      }
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')
