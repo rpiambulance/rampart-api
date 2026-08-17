@@ -144,6 +144,20 @@ export class CertificationsController {
     return this.certs.submit(requireMember(auth), body);
   }
 
+  /**
+   * Record a certification for another member. Gated on certs:verify — the
+   * people who approve certifications are the ones who hold this data.
+   */
+  @Post('member/:memberId')
+  @RequirePermissions(PERMISSIONS.CERTS_VERIFY)
+  submitFor(
+    @CurrentAuth() auth: AuthContext,
+    @Param('memberId', ParseIntPipe) memberId: number,
+    @Body() body: SubmitCertDto,
+  ) {
+    return this.certs.submit(memberId, body, { enteredBy: auth });
+  }
+
   @Post(':id/documents')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   upload(

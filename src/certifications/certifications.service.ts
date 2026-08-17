@@ -90,6 +90,13 @@ export class CertificationsService {
       issuedAt?: string;
       expiresAt?: string;
     },
+    /**
+     * Set when an officer enters this on a member's behalf. It lands verified
+     * rather than pending: the person entering it is the one who would have
+     * approved it, and leaving it in the queue would ask them to verify their
+     * own entry.
+     */
+    opts: { enteredBy?: AuthContext } = {},
   ) {
     const type = await this.prisma.certificationType.findUnique({
       where: { id: input.typeId },
@@ -103,16 +110,37 @@ export class CertificationsService {
       expiresAt = d;
     }
 
-    return this.prisma.memberCertification.create({
+    const enteredBy = opts.enteredBy;
+    const byOfficer =
+      enteredBy && enteredBy.kind === 'member' ? enteredBy.memberId : undefined;
+
+    const created = await this.prisma.memberCertification.create({
       data: {
         memberId,
         typeId: input.typeId,
         identifier: input.identifier,
         issuedAt: input.issuedAt ? new Date(input.issuedAt) : null,
         expiresAt,
+        ...(byOfficer
+          ? {
+              status: 'VERIFIED' as const,
+              verifiedById: byOfficer,
+              verifiedAt: new Date(),
+            }
+          : {}),
       },
       include: { type: true },
     });
+    if (enteredBy) {
+      await this.audit.log(
+        enteredBy,
+        'certs.record',
+        'MemberCertification',
+        created.id,
+        { memberId, typeId: input.typeId },
+      );
+    }
+    return created;
   }
 
   async attachDocument(

@@ -753,6 +753,58 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('certifications', () => {
+    async function cprTypeId(): Promise<number> {
+      const type = await prisma.certificationType.findFirstOrThrow({
+        where: { abbreviation: 'CPR' },
+      });
+      return type.id;
+    }
+
+    it('lets a member submit their own, pending verification', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/certifications')
+        .set(as(bob))
+        .send({ typeId: await cprTypeId(), issuedAt: '2026-01-15' })
+        .expect(201);
+      expect(res.body.status).toBe('PENDING_VERIFICATION');
+      // CPR is valid 24 months, so expiry is derived from the issue date.
+      expect(res.body.expiresAt.slice(0, 10)).toBe('2028-01-15');
+      await prisma.memberCertification.delete({ where: { id: res.body.id } });
+    });
+
+    it('records one for another member, already verified', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/v1/certifications/member/${bob}`)
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'certs:verify',
+        })
+        .send({ typeId: await cprTypeId(), identifier: 'C-1234' })
+        .expect(201);
+      expect(res.body.status).toBe('VERIFIED');
+      expect(res.body.verifiedById).toBe(alice);
+      expect(res.body.verifiedAt).toBeTruthy();
+      await prisma.memberCertification.delete({ where: { id: res.body.id } });
+    });
+
+    it('refuses to record for others without certs:verify', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/certifications/member/${bob}`)
+        .set(as(bob))
+        .send({ typeId: await cprTypeId() })
+        .expect(403);
+    });
+
+    it('rejects an unknown certification type', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/certifications')
+        .set(as(bob))
+        .send({ typeId: 999999 })
+        .expect(404);
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')
