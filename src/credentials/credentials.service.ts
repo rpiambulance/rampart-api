@@ -10,6 +10,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { nyToday } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from '../certifications/certification-graph.service';
+import { ChecklistsService } from '../checklists/checklists.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { CredentialGraphService } from './credential-graph.service';
@@ -36,7 +37,13 @@ function requirementLabelFor(req: {
 }
 
 export interface ChecklistItem {
-  kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'PREREQUISITE' | 'CUSTOM';
+  kind:
+    | 'CERTIFICATION'
+    | 'EVALUATION_COUNT'
+    | 'CLASS'
+    | 'CHECKLIST'
+    | 'PREREQUISITE'
+    | 'CUSTOM';
   label: string;
   satisfied: boolean;
   detail?: string;
@@ -49,6 +56,7 @@ export interface ChecklistItem {
 export class CredentialsService {
   constructor(
     private readonly certGraph: CertificationGraphService,
+    private readonly checklists: ChecklistsService,
     private readonly prisma: PrismaService,
     private readonly graph: CredentialGraphService,
     private readonly audit: AuditService,
@@ -91,7 +99,7 @@ export class CredentialsService {
   addRequirement(
     credentialTypeId: number,
     data: {
-      kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS';
+      kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
       certificationTypeId?: number;
       evalTemplateId?: number;
       count?: number;
@@ -103,6 +111,9 @@ export class CredentialsService {
     }
     if (data.kind === 'EVALUATION_COUNT' && (!data.evalTemplateId || !data.count)) {
       throw new BadRequestException('evalTemplateId and count required');
+    }
+    if (data.kind === 'CHECKLIST' && !data.evalTemplateId) {
+      throw new BadRequestException('evalTemplateId required');
     }
     if (data.kind === 'CLASS' && !data.classId) {
       throw new BadRequestException('classId required');
@@ -209,6 +220,15 @@ export class CredentialsService {
           label: `${req.count} signed “${req.evalTemplate.name}” evaluations`,
           satisfied: count >= (req.count ?? 1),
           detail: `${count}/${req.count}`,
+          requirementId: req.id,
+        });
+      } else if (req.kind === 'CHECKLIST' && req.evalTemplate) {
+        // Every line signed off, by whoever each line calls for.
+        const done = await this.checklists.isComplete(req.evalTemplateId!, memberId);
+        items.push({
+          kind: 'CHECKLIST',
+          label: `Complete the “${req.evalTemplate.name}” checklist`,
+          satisfied: done,
           requirementId: req.id,
         });
       } else if (req.kind === 'CLASS' && req.class) {

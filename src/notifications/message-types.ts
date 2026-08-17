@@ -96,6 +96,29 @@ export const MESSAGE_TYPES: MessageType[] = [
     audience: 'member',
     defaults: { email: true, slack: true },
   },
+  {
+    key: 'checklist.complete',
+    label: 'Checklist finished',
+    description: 'Every line of a training checklist has been signed off.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
+    key: 'checklist.complete.officers',
+    label: 'A checklist was finished',
+    description:
+      'A member has finished a checklist, which may unlock a credential.',
+    audience: 'officers',
+    defaults: { email: true, slack: true },
+  },
+  {
+    key: 'checklist.revoked',
+    label: 'Checklist sign-off withdrawn',
+    description:
+      'A line that had been signed off has been un-signed and needs doing again.',
+    audience: 'member',
+    defaults: { email: true, slack: false },
+  },
 ];
 
 export const MESSAGE_TYPE_KEYS = MESSAGE_TYPES.map((t) => t.key);

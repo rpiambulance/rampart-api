@@ -19,6 +19,9 @@ export const PERMISSIONS = {
   EVALS_DELETE_DRAFT: 'evals:delete-draft',
   /** Erase an evaluation that has been submitted or signed. Held separately. */
   EVALS_DELETE_COMPLETED: 'evals:delete-completed',
+  /** Withdraw a checklist sign-off someone else made. Signers may always
+   *  withdraw their own. */
+  CHECKLISTS_REVOKE: 'checklists:revoke-signoff',
   PROMOTIONS_REVIEW: 'promotions:review',
   PROMOTIONS_VOTE: 'promotions:vote',
   PROMOTIONS_CAPTAIN_APPROVE: 'promotions:captain-approve',

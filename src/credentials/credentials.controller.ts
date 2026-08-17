@@ -72,8 +72,8 @@ class LinkedRolesDto {
 }
 
 class RequirementDto {
-  @IsIn(['CERTIFICATION', 'EVALUATION_COUNT', 'CLASS'])
-  kind!: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS';
+  @IsIn(['CERTIFICATION', 'EVALUATION_COUNT', 'CLASS', 'CHECKLIST'])
+  kind!: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
 
   @IsOptional()
   @IsInt()

@@ -23,6 +23,7 @@ import { CertificationsModule } from './certifications/certifications.module';
 import { CommonModule } from './common/common.module';
 import { CredentialsModule } from './credentials/credentials.module';
 import { CrewsModule } from './crews/crews.module';
+import { ChecklistsModule } from './checklists/checklists.module';
 import { EvalsModule } from './evals/evals.module';
 import { EventsModule } from './events/events.module';
 import { HealthController } from './health/health.controller';
@@ -47,6 +48,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     EventsModule,
     CredentialsModule,
     CertificationsModule,
+    ChecklistsModule,
     EvalsModule,
     PromotionsModule,
     TrainingsModule,

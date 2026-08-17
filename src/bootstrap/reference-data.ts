@@ -186,6 +186,7 @@ const ALL = [
   'evals:read-all',
   'evals:delete-draft',
   'evals:delete-completed',
+  'checklists:revoke-signoff',
   'promotions:review',
   'promotions:vote',
   'promotions:captain-approve',
