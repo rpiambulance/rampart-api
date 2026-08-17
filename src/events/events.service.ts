@@ -11,6 +11,7 @@ import { CredentialGraphService } from '../credentials/credential-graph.service'
 import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { formatCredentialKey } from '../common/credential-format';
+import { normalizePosition } from '../common/position';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface EventPositionInput {
@@ -126,7 +127,7 @@ export class EventsService {
         workflowStatus: input.workflowStatus ?? 'APPROVED',
         positions: {
           create: (input.positions ?? []).map((p) => ({
-            position: p.position,
+            position: normalizePosition(p.position),
             count: p.count,
             requiredCredentialKey: p.requiredCredentialKey ?? null,
           })),
@@ -177,7 +178,7 @@ export class EventsService {
       await this.prisma.eventPosition.createMany({
         data: input.positions.map((p) => ({
           eventId,
-          position: p.position,
+          position: normalizePosition(p.position),
           count: p.count,
           requiredCredentialKey: p.requiredCredentialKey ?? null,
         })),
@@ -214,9 +215,11 @@ export class EventsService {
   async signup(
     memberId: number,
     eventId: number,
-    position: string | null,
+    rawPosition: string | null,
     opts: { override?: boolean } = {},
   ) {
+    // Positions are matched by value, so compare in the stored form.
+    const position = normalizePosition(rawPosition);
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: { positions: true, signups: true },
@@ -385,10 +388,13 @@ export class EventsService {
         'This event is not collecting availability',
       );
     }
+    // Offered positions are matched against the event's own, so store them
+    // in the same form.
+    const offered = positions.map((p) => normalizePosition(p));
     return this.prisma.eventAvailability.upsert({
       where: { eventId_memberId: { eventId, memberId } },
-      create: { eventId, memberId, positions, note },
-      update: { positions, note },
+      create: { eventId, memberId, positions: offered, note },
+      update: { positions: offered, note },
     });
   }
 
