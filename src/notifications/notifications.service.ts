@@ -269,6 +269,49 @@ export class NotificationsService {
     }
   }
 
+  /**
+   * To everyone holding a permission — the people who can actually act on it.
+   * Used for a task that names a job rather than a role.
+   */
+  async notifyPermissionHolders(permission: string, notice: Notice) {
+    const today = new Date();
+    const [byRole, byCredential] = await Promise.all([
+      this.prisma.memberRole.findMany({
+        where: {
+          startDate: { lte: today },
+          OR: [{ endDate: null }, { endDate: { gte: today } }],
+          member: { active: true },
+          role: { permissions: { some: { permission } } },
+        },
+        select: { memberId: true },
+      }),
+      this.prisma.memberCredential.findMany({
+        where: {
+          status: 'ACTIVE',
+          member: { active: true },
+          type: {
+            linkedRoles: {
+              some: { role: { permissions: { some: { permission } } } },
+            },
+          },
+        },
+        select: { memberId: true },
+      }),
+    ]);
+    const recipients = new Set([
+      ...byRole.map((r) => r.memberId),
+      ...byCredential.map((r) => r.memberId),
+    ]);
+    for (const memberId of recipients) {
+      await this.notify(memberId, notice);
+    }
+    if (!recipients.size) {
+      this.logger.warn(
+        `nobody holds ${permission}; notice went nowhere :: ${notice.subject}`,
+      );
+    }
+  }
+
   /** Broadcast to every active member (availability requests). */
   async notifyAllActiveMembers(notice: Notice) {
     const members = await this.prisma.member.findMany({

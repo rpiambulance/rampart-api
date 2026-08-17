@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -8,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from '../certifications/certification-graph.service';
+import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { CredentialGraphService } from './credential-graph.service';
 
@@ -331,6 +333,88 @@ export class CredentialsService {
    * real promotion date out of the old records, so this can be filled in
    * long after the fact. Passing null clears it back to unknown.
    */
+  /**
+   * What a trainer may clear a member for. Authority comes from the trainer's
+   * own credential rather than a permission: a crew chief trainer clears the
+   * entry rung of the crew chief track, a driver trainer the driver one.
+   */
+  private static readonly TRAINER_GRANTS: Array<{
+    trainer: string;
+    grants: string;
+  }> = [
+    { trainer: 'CC_T', grants: 'A_CC' },
+    { trainer: 'D_T', grants: 'A_D' },
+  ];
+
+  /** Credentials this member may clear others for, by their own training. */
+  async trainerGrants(memberId: number): Promise<string[]> {
+    const held = await this.graph.heldKeys(memberId);
+    const out: string[] = [];
+    for (const rule of CredentialsService.TRAINER_GRANTS) {
+      // "or above" — a DS outranks the ladder and may clear either track.
+      if (await this.graph.satisfies(held, rule.trainer)) out.push(rule.grants);
+    }
+    return out;
+  }
+
+  /**
+   * A trainer clearing a member for calls. Separate from grant() because the
+   * authority is the trainer's credential, not credentials:grant, and because
+   * it raises the 900 number that has to follow.
+   */
+  async trainerGrant(auth: AuthContext, memberId: number, credentialKey: string) {
+    if (auth.kind !== 'member') {
+      throw new ForbiddenException('This requires a member session');
+    }
+    const allowed = await this.trainerGrants(auth.memberId);
+    if (!allowed.includes(credentialKey)) {
+      throw new ForbiddenException(
+        `Your training does not let you clear anyone for ${credentialKey.replace(/_/g, '-')}`,
+      );
+    }
+    if (auth.memberId === memberId) {
+      throw new ForbiddenException('You cannot clear yourself');
+    }
+
+    const type = await this.prisma.credentialType.findUnique({
+      where: { key: credentialKey },
+    });
+    if (!type) throw new NotFoundException('Credential type not found');
+
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: { id: true, firstName: true, lastName: true, nineHundredNumber: true },
+    });
+    if (!member) throw new NotFoundException('Member not found');
+
+    const credential = await this.grant(auth, memberId, type.id);
+
+    await this.notifications.notify(memberId, {
+      type: 'promotion.decided',
+      subject: `You are cleared for calls as ${credentialKey.replace(/_/g, '-')}`,
+      body: `${type.name} was granted by a trainer.`,
+    });
+
+    // The captain issues the number; only raise it if one is actually missing.
+    if (!member.nineHundredNumber) {
+      await this.notifications.notifyPermissionHolders(
+        PERMISSIONS.MEMBERS_WRITE,
+        {
+          type: 'promotion.number',
+          subject: `900 number needed: ${member.firstName} ${member.lastName}`,
+          body:
+            `${member.firstName} ${member.lastName} was cleared as ` +
+            `${credentialKey.replace(/_/g, '-')} and has no 900 number yet.`,
+          task: {
+            actionLabel: 'Issue the number',
+            actionUrl: `/admin/members/${member.id}`,
+          },
+        },
+      );
+    }
+    return credential;
+  }
+
   async setEffectiveDate(
     auth: AuthContext,
     memberId: number,

@@ -25,6 +25,14 @@ import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { CredentialsService } from './credentials.service';
 
+class TrainerGrantDto {
+  @IsInt()
+  memberId!: number;
+
+  @IsIn(['A_CC', 'A_D'])
+  credentialKey!: 'A_CC' | 'A_D';
+}
+
 class GrantDto {
   @IsInt()
   memberId!: number;
@@ -162,6 +170,25 @@ export class CredentialsController {
   ) {
     if (auth.kind !== 'member') return [];
     return this.credentials.checklist(auth.memberId, credentialTypeId);
+  }
+
+  /** What the caller's own training lets them clear others for. */
+  @Get('trainer-grants')
+  trainerGrants(@CurrentAuth() auth: AuthContext) {
+    if (auth.kind !== 'member') return [];
+    return this.credentials.trainerGrants(auth.memberId);
+  }
+
+  /**
+   * A trainer clearing a member for calls. Gated on the trainer's credential
+   * rather than a permission, so no separate grant is needed.
+   */
+  @Post('trainer-grant')
+  trainerGrant(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: TrainerGrantDto,
+  ) {
+    return this.credentials.trainerGrant(auth, body.memberId, body.credentialKey);
   }
 
   @Post('grant')

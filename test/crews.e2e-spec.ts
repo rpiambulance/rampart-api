@@ -1810,6 +1810,99 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('trainers clearing members for calls', () => {
+    let student: number;
+
+    beforeAll(async () => {
+      student = await createMember('Student', ['O', 'A']);
+      // Somebody has to be able to issue the number, or the task has nobody
+      // to go to — which is itself the correct behaviour, just not the case
+      // under test here.
+      const captain = await prisma.role.findUniqueOrThrow({
+        where: { name: 'Captain' },
+      });
+      await prisma.memberRole.create({
+        data: { memberId: alice, roleId: captain.id, startDate: new Date() },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.memberRole.deleteMany({ where: { memberId: alice } });
+    });
+
+    it('lets a crew chief trainer clear A-CC, and raises the 900 number', async () => {
+      // tina holds CC_T; alice can edit members, so the task lands with her.
+      await request(app.getHttpServer())
+        .post('/v1/credentials/trainer-grant')
+        .set(as(tina))
+        .send({ memberId: student, credentialKey: 'A_CC' })
+        .expect(201);
+
+      const type = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'A_CC' },
+      });
+      const held = await prisma.memberCredential.findUnique({
+        where: { memberId_typeId: { memberId: student, typeId: type.id } },
+      });
+      expect(held?.status).toBe('ACTIVE');
+
+      // The student is told...
+      const theirs = await prisma.inboxMessage.findMany({
+        where: { memberId: student },
+      });
+      expect(theirs.some((m) => m.subject.includes('cleared for calls'))).toBe(
+        true,
+      );
+
+      // ...and somebody who can edit members is asked for the number.
+      const task = await prisma.inboxMessage.findFirst({
+        where: { type: 'promotion.number', isTask: true, memberId: alice },
+      });
+      expect(task).toBeTruthy();
+      expect(task!.actionUrl).toBe(`/admin/members/${student}`);
+    });
+
+    it('refuses a track the trainer does not train', async () => {
+      // tina is a CC trainer, not a driver trainer.
+      const res = await request(app.getHttpServer())
+        .post('/v1/credentials/trainer-grant')
+        .set(as(tina))
+        .send({ memberId: student, credentialKey: 'A_D' })
+        .expect(403);
+      expect(res.body.message).toContain('A-D');
+    });
+
+    it('refuses a member who is not a trainer at all', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/credentials/trainer-grant')
+        .set(as(bob))
+        .send({ memberId: student, credentialKey: 'A_CC' })
+        .expect(403);
+    });
+
+    it('will not let a trainer clear themselves', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/credentials/trainer-grant')
+        .set(as(tina))
+        .send({ memberId: tina, credentialKey: 'A_CC' })
+        .expect(403);
+    });
+
+    it('reports what the caller may clear', async () => {
+      const trainer = await request(app.getHttpServer())
+        .get('/v1/credentials/trainer-grants')
+        .set(as(tina))
+        .expect(200);
+      expect(trainer.body).toEqual(['A_CC']);
+
+      const plain = await request(app.getHttpServer())
+        .get('/v1/credentials/trainer-grants')
+        .set(as(bob))
+        .expect(200);
+      expect(plain.body).toEqual([]);
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')
