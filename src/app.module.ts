@@ -7,6 +7,7 @@ import { AuthGuard } from './auth/auth.guard';
 import { BootstrapService } from './bootstrap/bootstrap.service';
 import { AvailabilityController } from './availability/availability.controller';
 import { CoverageController } from './coverage/coverage.controller';
+import { EmailSettingsController } from './notifications/email-settings.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
 import {
   LegacyMigrationController,
@@ -55,6 +56,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     CalendarController,
     TokensController,
     OpsController,
+    EmailSettingsController,
   ],
   providers: [
     // Registered useExisting (not useClass) so tests can override AuthGuard.

@@ -1256,6 +1256,138 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('email settings', () => {
+    const asAdmin = {
+      'x-test-member-id': String(alice),
+      'x-test-permissions': 'settings:write',
+    };
+
+    it('saves settings and never returns the password', async () => {
+      await request(app.getHttpServer())
+        .put('/v1/settings/email')
+        .set(asAdmin)
+        .send({
+          host: 'localhost',
+          port: 1025,
+          secure: false,
+          user: 'postmaster',
+          pass: 'hunter2',
+          from: 'RPI Ambulance <no-reply@rpiambulance.test>',
+        })
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/settings/email')
+        .set(asAdmin)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        configured: true,
+        host: 'localhost',
+        port: 1025,
+        user: 'postmaster',
+        hasPassword: true,
+      });
+      expect(JSON.stringify(res.body)).not.toContain('hunter2');
+    });
+
+    it('keeps the stored password when the field is omitted', async () => {
+      await request(app.getHttpServer())
+        .put('/v1/settings/email')
+        .set(asAdmin)
+        .send({
+          host: 'mail.example.test',
+          port: 587,
+          secure: false,
+          user: 'postmaster',
+          from: 'RPI Ambulance <no-reply@rpiambulance.test>',
+        })
+        .expect(200);
+      const stored = await prisma.appSetting.findUniqueOrThrow({
+        where: { key: 'email.smtp' },
+      });
+      expect((stored.value as { pass?: string }).pass).toBe('hunter2');
+    });
+
+    it('reports a failed test send rather than throwing', async () => {
+      // Port 1 refuses, so this exercises the failure path deterministically.
+      await request(app.getHttpServer())
+        .put('/v1/settings/email')
+        .set(asAdmin)
+        .send({
+          host: '127.0.0.1',
+          port: 1,
+          secure: false,
+          pass: '',
+          from: 'RPI Ambulance <no-reply@rpiambulance.test>',
+        })
+        .expect(200);
+      const res = await request(app.getHttpServer())
+        .post('/v1/settings/email/test')
+        .set(asAdmin)
+        .send({ to: 'officer@example.test' })
+        .expect(201);
+      expect(res.body.ok).toBe(false);
+      expect(typeof res.body.detail).toBe('string');
+    });
+
+    it('delivers a themed test message when a server is reachable', async () => {
+      // Skipped unless a local SMTP sink is listening (docker mailpit).
+      const reachable = await fetch('http://localhost:8025/api/v1/messages')
+        .then((r) => r.ok)
+        .catch(() => false);
+      if (!reachable) return;
+
+      await request(app.getHttpServer())
+        .put('/v1/settings/email')
+        .set(asAdmin)
+        .send({
+          host: 'localhost',
+          port: 1025,
+          secure: false,
+          pass: '',
+          from: 'RPI Ambulance <no-reply@rpiambulance.test>',
+        })
+        .expect(200);
+      const res = await request(app.getHttpServer())
+        .post('/v1/settings/email/test')
+        .set(asAdmin)
+        .send({ to: 'officer@example.test' })
+        .expect(201);
+      expect(res.body.ok).toBe(true);
+
+      const inbox = (await (
+        await fetch('http://localhost:8025/api/v1/messages')
+      ).json()) as { messages: Array<{ ID: string; Subject: string }> };
+      const message = inbox.messages.find((m) =>
+        m.Subject.includes('test message'),
+      );
+      expect(message).toBeTruthy();
+      const full = (await (
+        await fetch(`http://localhost:8025/api/v1/message/${message!.ID}`)
+      ).json()) as { HTML: string; Text: string };
+      // Both parts, and the HTML carries the brand rule and the wordmark.
+      expect(full.Text).toContain('test from the Rampart admin console');
+      expect(full.HTML).toContain('RPI Ambulance');
+      expect(full.HTML.toLowerCase()).toContain('#e21f26');
+    });
+
+    it('requires settings:write', async () => {
+      await request(app.getHttpServer())
+        .get('/v1/settings/email')
+        .set(as(bob))
+        .expect(403);
+      await request(app.getHttpServer())
+        .post('/v1/settings/email/test')
+        .set(as(bob))
+        .send({ to: 'x@example.test' })
+        .expect(403);
+    });
+
+    afterAll(async () => {
+      await prisma.appSetting.deleteMany({ where: { key: 'email.smtp' } });
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

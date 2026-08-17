@@ -2,33 +2,88 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
+import { renderEmail } from './email-template';
+
+/** Email settings as held in AppSetting; see the console's Email card. */
+export interface EmailSettings {
+  host: string;
+  port: number;
+  secure: boolean;
+  user?: string | null;
+  pass?: string | null;
+  from: string;
+}
+
+export const EMAIL_SETTING_KEY = 'email.smtp';
 
 /**
- * Notification fan-out. Transports are enabled by environment:
- *   SMTP_URL + EMAIL_FROM            → email
- *   SLACK_BOT_TOKEN                  → Slack DMs (member.slackId)
- *   SLACK_OFFICERS_CHANNEL           → officer broadcasts
+ * Notification fan-out.
+ *
+ * Email is configured in the console and stored in AppSetting, so an
+ * administrator can fix a mail problem without a redeploy. SMTP_URL and
+ * EMAIL_FROM still work as a fallback for environments configured before
+ * that existed. Slack uses SLACK_BOT_TOKEN and SLACK_OFFICERS_CHANNEL.
+ *
  * Unset transports degrade to log-only so the rest of the system never blocks.
  */
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
-  private readonly mailer?: nodemailer.Transporter;
-  private readonly emailFrom?: string;
+  private readonly envMailer?: nodemailer.Transporter;
+  private readonly envEmailFrom?: string;
   private readonly slackToken?: string;
   private readonly officersChannel?: string;
+  /** Rebuilt when the console saves new settings. */
+  private stored?: { at: number; transport?: nodemailer.Transporter; from?: string };
 
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
   ) {
     const smtpUrl = config.get<string>('SMTP_URL');
-    this.emailFrom = config.get<string>('EMAIL_FROM');
-    if (smtpUrl && this.emailFrom) {
-      this.mailer = nodemailer.createTransport(smtpUrl);
+    this.envEmailFrom = config.get<string>('EMAIL_FROM');
+    if (smtpUrl && this.envEmailFrom) {
+      this.envMailer = nodemailer.createTransport(smtpUrl);
     }
     this.slackToken = config.get<string>('SLACK_BOT_TOKEN');
     this.officersChannel = config.get<string>('SLACK_OFFICERS_CHANNEL');
+  }
+
+  /** Drop the cached transport so the next send picks up saved settings. */
+  invalidateEmailSettings(): void {
+    this.stored = undefined;
+  }
+
+  async readEmailSettings(): Promise<EmailSettings | null> {
+    const row = await this.prisma.appSetting.findUnique({
+      where: { key: EMAIL_SETTING_KEY },
+    });
+    return (row?.value as unknown as EmailSettings) ?? null;
+  }
+
+  /** The transport to use: console settings first, environment as fallback. */
+  private async transport(): Promise<{
+    mailer?: nodemailer.Transporter;
+    from?: string;
+  }> {
+    if (this.stored && Date.now() - this.stored.at < 60_000) {
+      return { mailer: this.stored.transport, from: this.stored.from };
+    }
+    const settings = await this.readEmailSettings().catch(() => null);
+    if (settings?.host && settings.from) {
+      const transport = nodemailer.createTransport({
+        host: settings.host,
+        port: settings.port,
+        secure: settings.secure,
+        ...(settings.user
+          ? { auth: { user: settings.user, pass: settings.pass ?? '' } }
+          : {}),
+      });
+      this.stored = { at: Date.now(), transport, from: settings.from };
+      return { mailer: transport, from: settings.from };
+    }
+    this.stored = { at: Date.now() };
+    return { mailer: this.envMailer, from: this.envEmailFrom };
   }
 
   async notifyMember(memberId: number, subject: string, body: string) {
@@ -39,18 +94,10 @@ export class NotificationsService {
     if (!member) return;
 
     let delivered = false;
-    if (this.mailer && member.email) {
-      try {
-        await this.mailer.sendMail({
-          from: this.emailFrom,
-          to: member.email,
-          subject: `[RPIA] ${subject}`,
-          text: body,
-        });
-        delivered = true;
-      } catch (error) {
-        this.logger.error(`email to member=${memberId} failed: ${error}`);
-      }
+    if (member.email) {
+      // Through sendEmail so members get the same themed message, and the
+      // same console-configured transport, as anyone outside the corps.
+      delivered = await this.sendEmail(member.email, subject, body);
     }
     if (this.slackToken && member.slackId) {
       delivered = (await this.postSlack(member.slackId, `*${subject}*\n${body}`)) || delivered;
@@ -62,16 +109,55 @@ export class NotificationsService {
 
   /** Raw email to an outside address (e.g. coverage requesters). */
   async sendEmail(to: string, subject: string, body: string): Promise<boolean> {
-    if (!this.mailer) {
-      this.logger.log(`email (no transport) to=${to} :: ${subject} — ${body}`);
+    const { mailer, from } = await this.transport();
+    if (!mailer) {
+      this.logger.warn(
+        `email (no transport configured) to=${to} :: ${subject} — ${body}`,
+      );
       return false;
     }
     try {
-      await this.mailer.sendMail({ from: this.emailFrom, to, subject, text: body });
+      // Both parts: HTML for clients that render it, the original text for
+      // those that do not, and for anyone reading it as plain mail.
+      await mailer.sendMail({
+        from,
+        to,
+        subject,
+        text: body,
+        html: renderEmail({ subject, text: body }),
+      });
       return true;
     } catch (error) {
       this.logger.error(`email to ${to} failed: ${error}`);
       return false;
+    }
+  }
+
+  /** Sends a themed test message, surfacing why it failed rather than a bool. */
+  async sendTestEmail(to: string): Promise<{ ok: boolean; detail?: string }> {
+    const { mailer, from } = await this.transport();
+    if (!mailer) {
+      return {
+        ok: false,
+        detail: 'No mail server is configured yet — save the settings first.',
+      };
+    }
+    const subject = 'RPI Ambulance — test message';
+    const text =
+      'This is a test from the Rampart admin console.\n\n' +
+      'If you can read this, outgoing mail is working: coverage ' +
+      'confirmations, approvals and follow-ups will reach their recipients.';
+    try {
+      await mailer.sendMail({
+        from,
+        to,
+        subject,
+        text,
+        html: renderEmail({ subject, text }),
+      });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, detail: error instanceof Error ? error.message : String(error) };
     }
   }
 

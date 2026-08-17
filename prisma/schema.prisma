@@ -581,6 +581,15 @@ model AvailabilityResponse {
   @@id([pollId, memberId, weekday])
 }
 
+/// Operational configuration an administrator edits in the console, rather
+/// than an environment variable only a deployer can reach. Values are JSON so
+/// a setting can grow fields without a migration.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
 model SchedulingSetting {
   key   String @id // minAgeYears, riderSignupOpen, rotationWeeks, dayOfUnlockTime, probationaryRequiresTrainer, dropDeadline, ...
   value Json
