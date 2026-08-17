@@ -77,6 +77,18 @@ class PatchCertTypeDto {
   active?: boolean;
 }
 
+class LadderDto {
+  /** Highest rung first; each outranks the next. */
+  @IsArray()
+  @IsInt({ each: true })
+  typeIds!: number[];
+
+  /** Break the ladder instead of saving it. */
+  @IsOptional()
+  @IsBoolean()
+  unlink?: boolean;
+}
+
 class SupersedesDto {
   @IsArray()
   @IsInt({ each: true })
@@ -143,6 +155,13 @@ export class CertificationsController {
     @Body() body: PatchCertTypeDto,
   ) {
     return this.certs.updateType(id, body);
+  }
+
+  /** Save an ordered ladder, highest rung first. */
+  @Put('ladder')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  saveLadder(@CurrentAuth() auth: AuthContext, @Body() body: LadderDto) {
+    return this.certs.saveLadder(auth, body.typeIds, { unlink: body.unlink });
   }
 
   /** Replace the certifications this type outranks. */

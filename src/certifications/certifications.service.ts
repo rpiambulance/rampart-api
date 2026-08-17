@@ -318,6 +318,73 @@ export class CertificationsService {
     return { ok: true };
   }
 
+  /**
+   * Saves a ladder: an ordered chain from highest to lowest, where each rung
+   * outranks the one below it. Only the neighbouring step is stored — the
+   * graph resolves the rest — so a four-rung ladder is three links, not six.
+   *
+   * Saving replaces the entire chain the rungs belong to, not merely the links
+   * they own. Dropping a rung from a ladder must take its links with it, or a
+   * shortened ladder would keep ranking through a certification no longer on
+   * it. Ladders that share no certification are untouched.
+   */
+  async saveLadder(
+    auth: AuthContext,
+    typeIds: number[],
+    opts: { unlink?: boolean } = {},
+  ) {
+    const rungs = typeIds.filter((id, i) => typeIds.indexOf(id) === i);
+    if (!rungs.length) {
+      throw new BadRequestException('A ladder needs at least one certification');
+    }
+
+    // Everything transitively linked to any rung, in either direction.
+    const edges = await this.prisma.certificationSupersession.findMany();
+    const neighbours = new Map<number, Set<number>>();
+    const link = (a: number, b: number) => {
+      if (!neighbours.has(a)) neighbours.set(a, new Set());
+      neighbours.get(a)!.add(b);
+    };
+    for (const edge of edges) {
+      link(edge.higherTypeId, edge.lowerTypeId);
+      link(edge.lowerTypeId, edge.higherTypeId);
+    }
+    const chain = new Set<number>(rungs);
+    const queue = [...rungs];
+    while (queue.length) {
+      for (const next of neighbours.get(queue.pop()!) ?? []) {
+        if (chain.has(next)) continue;
+        chain.add(next);
+        queue.push(next);
+      }
+    }
+
+    const pairs = opts.unlink
+      ? []
+      : rungs
+          .slice(0, -1)
+          .map((higherTypeId, i) => ({ higherTypeId, lowerTypeId: rungs[i + 1] }));
+
+    await this.prisma.$transaction([
+      this.prisma.certificationSupersession.deleteMany({
+        where: {
+          OR: [
+            { higherTypeId: { in: [...chain] } },
+            { lowerTypeId: { in: [...chain] } },
+          ],
+        },
+      }),
+      this.prisma.certificationSupersession.createMany({ data: pairs }),
+    ]);
+    this.graph.invalidate();
+    await this.audit.log(auth, 'certs.ladder', 'CertificationType', undefined, {
+      rungs,
+      replaced: [...chain],
+      unlink: opts.unlink ?? false,
+    });
+    return { ok: true, rungs: rungs.length, links: pairs.length };
+  }
+
   async verify(
     auth: AuthContext,
     certificationId: number,

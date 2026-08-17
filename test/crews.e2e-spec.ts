@@ -1069,6 +1069,80 @@ describe('Night crews engine (e2e)', () => {
       }
     });
 
+    // These build ladders out of throwaway types, so they cannot disturb the
+    // seeded NYS ladder that the tests around them rely on.
+    describe('ladder editing', () => {
+      let rungs: number[];
+      const asSettings = {
+        'x-test-member-id': String(alice),
+        'x-test-permissions': 'settings:write',
+      };
+
+      beforeAll(async () => {
+        rungs = [];
+        for (const level of ['Low', 'Mid', 'High']) {
+          const type = await prisma.certificationType.create({
+            data: {
+              name: `${level} Test ${stamp}`,
+              abbreviation: `${level[0]}T${stamp}`,
+            },
+          });
+          rungs.push(type.id);
+        }
+      });
+
+      afterAll(async () => {
+        await prisma.certificationType.deleteMany({
+          where: { id: { in: rungs } },
+        });
+      });
+
+      it('stores an ordered ladder as neighbouring links only', async () => {
+        const [low, mid, high] = rungs;
+        const res = await request(app.getHttpServer())
+          .put('/v1/certifications/ladder')
+          .set(asSettings)
+          .send({ typeIds: [high, mid, low] })
+          .expect(200);
+        // Three rungs, two links — not every pair.
+        expect(res.body).toMatchObject({ rungs: 3, links: 2 });
+
+        const graph = app.get(CertificationGraphService);
+        graph.invalidate();
+        expect((await graph.satisfying(low)).sort()).toEqual(
+          [low, mid, high].sort(),
+        );
+        expect(await graph.satisfying(high)).toEqual([high]);
+      });
+
+      it('drops a rung and its links when the ladder is shortened', async () => {
+        const [low, mid, high] = rungs;
+        await request(app.getHttpServer())
+          .put('/v1/certifications/ladder')
+          .set(asSettings)
+          .send({ typeIds: [high, low] })
+          .expect(200);
+        const graph = app.get(CertificationGraphService);
+        graph.invalidate();
+        // Mid is no longer between them, and no longer outranks anything.
+        expect((await graph.satisfying(low)).sort()).toEqual([low, high].sort());
+        expect(await graph.satisfying(mid)).toEqual([mid]);
+      });
+
+      it('breaks a ladder when asked to unlink', async () => {
+        const [low, , high] = rungs;
+        await request(app.getHttpServer())
+          .put('/v1/certifications/ladder')
+          .set(asSettings)
+          .send({ typeIds: [high, low], unlink: true })
+          .expect(200);
+        const graph = app.get(CertificationGraphService);
+        graph.invalidate();
+        expect(await graph.satisfying(low)).toEqual([low]);
+      });
+
+    });
+
     it('refuses a link that would make a certification outrank itself', async () => {
       const emt = await typeIdFor('NYS EMT');
       const medic = await typeIdFor('NYS Paramedic');
