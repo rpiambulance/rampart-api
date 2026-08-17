@@ -84,7 +84,7 @@ export class CoverageController {
 
   private statusUrl(token: string): string {
     const base = this.config.get('WEB_BASE_URL') ?? 'http://localhost:3000';
-    return `${base}/coverage/status/${token}`;
+    return `${base}/request-coverage/status/${token}`;
   }
 
   private derivedStatus(request: {

@@ -355,7 +355,7 @@ export class EventsService {
     }
     if ((action === 'APPROVE' || action === 'DENY') && event.coverageRequest) {
       const request = event.coverageRequest;
-      const statusUrl = `${process.env.WEB_BASE_URL ?? 'http://localhost:3000'}/coverage/status/${request.token}`;
+      const statusUrl = `${process.env.WEB_BASE_URL ?? 'http://localhost:3000'}/request-coverage/status/${request.token}`;
       await this.notifications.sendEmail(
         request.requesterEmail,
         `RPI Ambulance — coverage request ${action === 'APPROVE' ? 'approved' : 'declined'}`,
