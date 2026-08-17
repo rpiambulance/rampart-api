@@ -313,7 +313,13 @@ export class EventsService {
         to: 'PENDING_APPROVAL',
       },
       APPROVE: { from: ['PENDING_APPROVAL'], to: 'APPROVED' },
-      DENY: { from: ['PENDING_APPROVAL'], to: 'DENIED' },
+      // A request can be turned down at any point before it is approved —
+      // there is no reason to walk a request that will never be staffed all
+      // the way to the approval step just to decline it there.
+      DENY: {
+        from: ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'],
+        to: 'DENIED',
+      },
       CANCEL: {
         from: ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'],
         to: 'CANCELLED',
