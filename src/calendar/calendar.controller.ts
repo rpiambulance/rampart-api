@@ -12,7 +12,8 @@ import { randomBytes } from 'crypto';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { Public } from '../auth/public.decorator';
-import { fromDbDate } from '../common/dates';
+import { addDays, fromDbDate, nyWallToUtc } from '../common/dates';
+import { crewPositionLabel } from '../common/crew-positions';
 import { PrismaService } from '../prisma/prisma.service';
 import { IcsScope } from '../generated/prisma/enums';
 
@@ -22,6 +23,10 @@ function requireMember(auth: AuthContext): number {
   }
   return auth.memberId;
 }
+
+/** Night crews run 1800 to 0600 the following morning. */
+const CREW_START = '18:00';
+const CREW_END = '06:00';
 
 const ICS_UID_DOMAIN =
   process.env.ICS_UID_DOMAIN ?? 'rampart.rpiambulance.com';
@@ -88,6 +93,9 @@ export class CalendarController {
     if (!icsToken) throw new NotFoundException();
 
     const memberId = icsToken.member.id;
+    // DTSTAMP is required on every VEVENT (RFC 5545 §3.6.1); one timestamp
+    // for the whole feed is correct — it marks when this copy was produced.
+    const stamp = fmtUtc(new Date());
     const lines: string[] = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
@@ -102,12 +110,15 @@ export class CalendarController {
       include: { crew: true },
     });
     for (const slot of slots) {
-      const date = fromDbDate(slot.crew.date).replace(/-/g, '');
+      // A night crew runs 1800 to 0600 the next morning, not an all-day block.
+      const date = fromDbDate(slot.crew.date);
       lines.push(
         'BEGIN:VEVENT',
         `UID:crew-${slot.crew.id}-${slot.position}@${ICS_UID_DOMAIN}`,
-        `DTSTART;VALUE=DATE:${date}`,
-        `SUMMARY:${icsEscape(`Night Crew — ${slot.position}`)}`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART:${fmtUtc(nyWallToUtc(date, CREW_START))}`,
+        `DTEND:${fmtUtc(nyWallToUtc(addDays(date, 1), CREW_END))}`,
+        `SUMMARY:${icsEscape(`Night Crew — ${crewPositionLabel(slot.position)}`)}`,
         'END:VEVENT',
       );
     }
@@ -123,6 +134,7 @@ export class CalendarController {
       lines.push(
         'BEGIN:VEVENT',
         `UID:event-${event.id}@${ICS_UID_DOMAIN}`,
+        `DTSTAMP:${stamp}`,
         `DTSTART:${fmtUtc(event.startsAt)}`,
         `DTEND:${fmtUtc(event.endsAt)}`,
         `SUMMARY:${icsEscape(event.title)}`,

@@ -82,3 +82,34 @@ export function ageInYears(dob: Date, onDate: string): number {
   if (m < bm || (m === bm && d < bd)) age -= 1;
   return age;
 }
+
+/**
+ * A wall-clock time on a given date in the agency's timezone, as a UTC
+ * instant. The offset changes with DST, so it is resolved by trying both and
+ * keeping the one that formats back to the time asked for — 18:00 on a date
+ * in January and one in July are different offsets from UTC.
+ */
+export function nyWallToUtc(dateStr: string, time: string): Date {
+  const [hour, minute] = time.split(':').map(Number);
+  const naive = Date.parse(
+    `${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`,
+  );
+  for (const offsetMinutes of [240, 300]) {
+    const candidate = new Date(naive + offsetMinutes * 60_000);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: AGENCY_TZ,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(candidate);
+    const get = (type: string) => parts.find((p) => p.type === type)!.value;
+    if (
+      `${get('year')}-${get('month')}-${get('day')}` === dateStr &&
+      Number(get('hour')) % 24 === hour &&
+      Number(get('minute')) === minute
+    ) {
+      return candidate;
+    }
+  }
+  // Inside the spring-forward gap the time does not exist; EST keeps it sane.
+  return new Date(naive + 300 * 60_000);
+}
