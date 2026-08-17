@@ -1166,6 +1166,96 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  describe('declining a coverage request on receipt', () => {
+    const asApprover = {
+      'x-test-member-id': String(alice),
+      'x-test-permissions': 'events:approve',
+    };
+
+    async function makeRequest(): Promise<number> {
+      const created = await prisma.coverageRequest.create({
+        data: {
+          token: `tok-${stamp}-${Math.round(Number(String(stamp).slice(-5)) + Math.abs(1))}`,
+          requesterName: 'Outside Group',
+          requesterEmail: `outside-${stamp}@example.invalid`,
+          description: 'Something we cannot staff',
+        },
+      });
+      return created.id;
+    }
+
+    it('declines before any event exists, and reports it as denied', async () => {
+      const id = await makeRequest();
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(asApprover)
+        .send({ reason: 'No crews available that weekend' })
+        .expect(201);
+
+      const row = await prisma.coverageRequest.findUniqueOrThrow({ where: { id } });
+      expect(row.declinedAt).toBeTruthy();
+      expect(row.declineReason).toBe('No crews available that weekend');
+
+      const listed = await request(app.getHttpServer())
+        .get('/v1/coverage-requests')
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'events:create',
+        })
+        .expect(200);
+      expect(
+        listed.body.find((r: { id: number }) => r.id === id).status,
+      ).toBe('DENIED');
+      await prisma.coverageRequest.delete({ where: { id } });
+    });
+
+    it('refuses a second decline', async () => {
+      const id = await makeRequest();
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(asApprover)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(asApprover)
+        .expect(400);
+      await prisma.coverageRequest.delete({ where: { id } });
+    });
+
+    it('sends you to the event workflow once an event exists', async () => {
+      const id = await makeRequest();
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const event = await prisma.event.create({
+        data: {
+          title: `Drafted ${stamp}`,
+          startsAt: new Date('2027-01-01T18:00:00Z'),
+          endsAt: new Date('2027-01-01T22:00:00Z'),
+          kindId: kind.id,
+        },
+      });
+      await prisma.coverageRequest.update({
+        where: { id },
+        data: { eventId: event.id },
+      });
+      const res = await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(asApprover)
+        .expect(400);
+      expect(res.body.message).toContain('event workflow');
+      await prisma.coverageRequest.delete({ where: { id } });
+      await prisma.event.delete({ where: { id: event.id } });
+    });
+
+    it('requires events:approve', async () => {
+      const id = await makeRequest();
+      await request(app.getHttpServer())
+        .post(`/v1/coverage-requests/${id}/decline`)
+        .set(as(bob))
+        .expect(403);
+      await prisma.coverageRequest.delete({ where: { id } });
+    });
+  });
+
   it('returns two weeks with slot eligibility', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/crews')

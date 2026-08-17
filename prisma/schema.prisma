@@ -697,6 +697,9 @@ model CoverageRequest {
   requestedDate  DateTime? @db.Date
   location       String?
   createdAt      DateTime  @default(now())
+  /// Set when a request is turned down before any event exists for it.
+  declinedAt     DateTime?
+  declineReason  String?
   eventId        Int?      @unique
 
   event    Event?            @relation(fields: [eventId], references: [id])

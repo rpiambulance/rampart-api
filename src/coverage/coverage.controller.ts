@@ -51,6 +51,14 @@ class RequestedEventDto {
 
 }
 
+class DeclineDto {
+  /** Shared with the requester in the decline email. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  reason?: string;
+}
+
 class IntakeDto {
   @IsString()
   @MaxLength(100)
@@ -125,7 +133,11 @@ export class CoverageController {
 
   private derivedStatus(request: {
     event: { workflowStatus: string } | null;
+    declinedAt?: Date | null;
   }): string {
+    // A request can be turned down before any event exists for it, so the
+    // decline is recorded on the request itself.
+    if (!request.event && request.declinedAt) return 'DENIED';
     return request.event?.workflowStatus ?? 'RECEIVED';
   }
 
@@ -262,6 +274,48 @@ export class CoverageController {
       orderBy: { createdAt: 'desc' },
     });
     return requests.map((r) => ({ ...r, status: this.derivedStatus(r) }));
+  }
+
+  /**
+   * Turn down a request that has no event yet. Once one exists the event's own
+   * workflow owns the outcome, and DENY there is the way to decline.
+   */
+  @Post(':id/decline')
+  @RequirePermissions(PERMISSIONS.EVENTS_APPROVE)
+  async decline(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: DeclineDto,
+  ) {
+    const request = await this.prisma.coverageRequest.findUnique({
+      where: { id },
+      include: { event: { select: { id: true } } },
+    });
+    if (!request) throw new NotFoundException();
+    if (request.event) {
+      throw new BadRequestException(
+        'This request already has an event — decline it from the event workflow',
+      );
+    }
+    if (request.declinedAt) {
+      throw new BadRequestException('This request was already declined');
+    }
+
+    const updated = await this.prisma.coverageRequest.update({
+      where: { id },
+      data: { declinedAt: new Date(), declineReason: body.reason ?? null },
+    });
+    await this.audit.log(auth, 'coverage.decline', 'CoverageRequest', id, {
+      reason: body.reason,
+    });
+    await this.notifications.sendEmail(
+      updated.requesterEmail,
+      'RPI Ambulance — coverage request declined',
+      `We're sorry — we can't staff this request.${
+        body.reason ? `\n\n${body.reason}` : ''
+      }\n\nDetails: ${this.statusUrl(updated.token)}`,
+    );
+    return { ok: true };
   }
 
   @Get(':id')
