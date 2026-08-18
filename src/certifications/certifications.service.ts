@@ -185,7 +185,7 @@ export class CertificationsService {
     });
   }
 
-  async getDocument(documentId: number) {
+  async getDocument(documentId: string) {
     const doc = await this.prisma.certificationDocument.findUnique({
       where: { id: documentId },
     });

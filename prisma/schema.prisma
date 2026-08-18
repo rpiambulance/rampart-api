@@ -176,8 +176,15 @@ model MemberCertification {
   @@index([expiresAt])
 }
 
+/// Uploaded proof of a certification — licence cards, course certificates.
+///
+/// The id is a random UUID rather than a sequence: it addresses a file of
+/// somebody's personal paperwork, and a sequential one lets anyone who can
+/// open a single document walk the whole archive by counting, and read off
+/// how many exist. Nothing points at these rows, so the opaque id costs
+/// nothing elsewhere.
 model CertificationDocument {
-  id              Int      @id @default(autoincrement())
+  id              String   @id @default(uuid(4))
   certificationId Int
   storageKey      String // key in the object store (local driver or S3)
   fileName        String

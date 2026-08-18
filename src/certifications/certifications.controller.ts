@@ -230,7 +230,7 @@ export class CertificationsController {
   @Get('documents/:documentId')
   @RequirePermissions(PERMISSIONS.CERTS_VERIFY)
   async document(
-    @Param('documentId', ParseIntPipe) documentId: number,
+    @Param('documentId') documentId: string,
     @Res() res: Response,
   ) {
     const { doc, object } = await this.certs.getDocument(documentId);
