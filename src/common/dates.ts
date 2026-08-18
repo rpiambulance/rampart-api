@@ -130,8 +130,12 @@ export function nyWallToUtc(dateStr: string, time: string): Date {
     const candidate = new Date(naive + offsetMinutes * 60_000);
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: AGENCY_TZ,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
     }).formatToParts(candidate);
     const get = (type: string) => parts.find((p) => p.type === type)!.value;
     if (

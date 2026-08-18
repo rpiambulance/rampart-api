@@ -6,7 +6,9 @@
  * number carrying a country code, or free text — is kept exactly as entered
  * rather than mangled into a shape it does not fit.
  */
-export function normalizePhone<T extends string | null | undefined>(value: T): T {
+export function normalizePhone<T extends string | null | undefined>(
+  value: T,
+): T {
   if (typeof value !== 'string') return value;
   const digits = value.replace(/\D/g, '');
   if (digits.length !== 10) return value;

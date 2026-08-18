@@ -1066,8 +1066,39 @@ model AuditLog {
   entity    String
   entityId  String?
   diff      Json?
+  /// Where the request came from, as reported by the proxy in front of the
+  /// API. Null for anything not raised by an HTTP request — scheduled jobs,
+  /// boot-time work.
+  ip        String?
+  userAgent String?
   at        DateTime  @default(now())
 
   @@index([entity, entityId])
   @@index([at])
+}
+
+/// Every request the API served, and every page the portals rendered.
+///
+/// Separate from AuditLog on purpose: that one records decisions somebody
+/// made and is meant to be read, while this one records traffic and grows by
+/// a row per request. Keeping them apart means a retention sweep here never
+/// touches the record of who changed what.
+model AccessLog {
+  id         BigInt   @id @default(autoincrement())
+  at         DateTime @default(now())
+  /// 'API' for a request this service served, 'PAGE' for one of the portals
+  /// reporting a page it rendered.
+  kind       String   @default("API")
+  memberId   Int?
+  apiTokenId Int?
+  method     String
+  path       String
+  status     Int?
+  durationMs Int?
+  ip         String?
+  userAgent  String?
+
+  @@index([at])
+  @@index([memberId, at])
+  @@index([path])
 }

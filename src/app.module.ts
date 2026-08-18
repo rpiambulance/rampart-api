@@ -1,6 +1,8 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { AccessLogController } from './audit/access-log.controller';
+import { RequestContextMiddleware } from './common/request-context.middleware';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthGuard } from './auth/auth.guard';
@@ -65,6 +67,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     EmailSettingsController,
     InboxController,
     NotificationSettingsController,
+    AccessLogController,
   ],
   providers: [
     // Registered useExisting (not useClass) so tests can override AuthGuard.
@@ -77,4 +80,13 @@ import { TrainingsModule } from './trainings/trainings.module';
     { provide: APP_GUARD, useExisting: PermissionsGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * Everything goes through here: the request context has to be in place
+   * before the guards run, and the access log records requests that never
+   * reach a handler as readily as those that do.
+   */
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestContextMiddleware).forRoutes('*splat');
+  }
+}
