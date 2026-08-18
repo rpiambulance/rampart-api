@@ -416,6 +416,7 @@ export class CertificationsService {
     }
     const cert = await this.prisma.memberCertification.findUnique({
       where: { id: certificationId },
+      include: { type: { select: { name: true } } },
     });
     if (!cert) throw new NotFoundException('Certification not found');
 
@@ -436,12 +437,19 @@ export class CertificationsService {
           },
     });
     await this.audit.log(auth, 'certs.verify', 'MemberCertification', certificationId, decision);
+    // Named, so the member knows which of theirs this is about, and told why
+    // when it was turned down — a rejection with no reason leaves them to
+    // resubmit the same thing and hope.
+    const reason = decision.reason?.trim();
     await this.notifications.notify(cert.memberId, {
       type: 'cert.decided',
-      subject: `Certification ${decision.approve ? 'verified' : 'rejected'}`,
+      subject: `${cert.type.name} ${decision.approve ? 'verified' : 'rejected'}`,
       body: decision.approve
-        ? 'Your certification was verified.'
-        : `Your certification was rejected${decision.reason ? `: ${decision.reason}` : ''}.`,
+        ? `Your ${cert.type.name} has been verified.`
+        : `Your ${cert.type.name} was rejected.` +
+          (reason
+            ? ` Reason given: ${reason}`
+            : ' No reason was given — ask a training officer what to change.'),
       ...(decision.approve
         ? {}
         : {

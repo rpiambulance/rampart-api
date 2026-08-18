@@ -110,10 +110,17 @@ export class PromotionsService {
     const request = await this.prisma.promotionRequest.create({
       data: { memberId, credentialTypeId, status: 'IN_VOTE' },
     });
+    // By name: an officer reading this should not have to look up an id to
+    // find out who it is about.
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: { firstName: true, lastName: true },
+    });
+    const who = member ? `${member.firstName} ${member.lastName}` : `Member ${memberId}`;
     await this.notifications.notifyOfficerInboxes({
       type: 'promotion.requested',
-      subject: 'New promotion request',
-      body: `Member ${memberId} requested ${match.name}.`,
+      subject: `Promotion request: ${who} — ${match.name}`,
+      body: `${who} has requested ${match.name}.`,
       task: {
         actionLabel: 'Review the request',
         actionUrl: `/promotions/${request.id}`,
@@ -275,7 +282,7 @@ export class PromotionsService {
       });
       await this.notifications.notify(request.memberId, {
         type: 'promotion.decided',
-        subject: 'Promotion request denied',
+        subject: `${request.credentialType.name} request denied`,
         body: `Your request for ${request.credentialType.name} was denied. You may submit a new request when ready.`,
       });
       return { status: 'DENIED' };
@@ -291,7 +298,7 @@ export class PromotionsService {
       });
       await this.notifications.notifyOfficerInboxes({
         type: 'promotion.vote',
-        subject: 'Promotion awaiting captain approval',
+        subject: `${request.credentialType.name} awaiting captain approval`,
         body: `${request.credentialType.name} passed the Training Committee unanimously.`,
         task: {
           actionLabel: 'Give a decision',
@@ -347,13 +354,13 @@ export class PromotionsService {
       );
       await this.notifications.notify(request.memberId, {
         type: 'promotion.decided',
-        subject: 'Promotion approved',
+        subject: `Promotion approved: ${request.credentialType.name}`,
         body: `Congratulations — you are now a ${request.credentialType.name}.`,
       });
     } else {
       await this.notifications.notify(request.memberId, {
         type: 'promotion.decided',
-        subject: 'Promotion request denied',
+        subject: `${request.credentialType.name} request denied`,
         body: `Your request for ${request.credentialType.name} was denied at captain review. You may submit a new request when ready.`,
       });
     }

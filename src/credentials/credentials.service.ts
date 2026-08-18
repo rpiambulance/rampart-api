@@ -511,7 +511,7 @@ export class CredentialsService {
     });
     await this.notifications.notify(memberId, {
       type: 'promotion.decided',
-      subject: 'Credential appointed',
+      subject: `Appointed ${opts.senior ? SDS_TITLE : type.name}`,
       body: `You have been appointed ${opts.senior ? SDS_TITLE : type.name}.`,
     });
     return credential;
