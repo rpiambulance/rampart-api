@@ -379,6 +379,74 @@ export class CredentialsService {
   }
 
   /**
+   * Who this trainer could actually clear, per credential they may grant.
+   *
+   * Two exclusions, both of which the trainer would otherwise have to work
+   * out by eye from a roster: anyone already at that level or above — a full
+   * crew chief does not need clearing as a probationary one — and anyone who
+   * has not finished what the credential asks for. The second reuses the
+   * promotion checklist, so this page and the promotion path can never
+   * disagree about who is ready.
+   */
+  async trainerCandidates(trainerId: number) {
+    const grants = await this.trainerGrants(trainerId);
+    if (!grants.length) return [];
+
+    const types = await this.prisma.credentialType.findMany({
+      where: { key: { in: grants } },
+      include: { prerequisites: { include: { requiresType: true } } },
+    });
+    const members = await this.prisma.member.findMany({
+      where: { active: true, id: { not: trainerId } },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        credentials: {
+          where: { status: 'ACTIVE' },
+          select: { title: true, type: { select: { key: true, name: true } } },
+        },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+
+    const out: Array<{
+      key: string;
+      name: string;
+      members: typeof members;
+    }> = [];
+
+    for (const type of types) {
+      const eligible: typeof members = [];
+      for (const member of members) {
+        const held = new Set(member.credentials.map((c) => c.type.key));
+
+        // Already there, or past it.
+        if (await this.graph.satisfies(held, type.key)) continue;
+
+        // The cheap half of the checklist first: without the prerequisite
+        // there is no point pricing up the rest, and most of the roster is
+        // excluded here.
+        let prerequisitesMet = true;
+        for (const prereq of type.prerequisites) {
+          if (!(await this.graph.satisfies(held, prereq.requiresType.key))) {
+            prerequisitesMet = false;
+            break;
+          }
+        }
+        if (!prerequisitesMet) continue;
+
+        const checklist = await this.checklist(member.id, type.id);
+        if (!checklist.every((item) => item.satisfied)) continue;
+
+        eligible.push(member);
+      }
+      out.push({ key: type.key, name: type.name, members: eligible });
+    }
+    return out;
+  }
+
+  /**
    * A trainer clearing a member for calls. Separate from grant() because the
    * authority is the trainer's credential, not credentials:grant, and because
    * it raises the 900 number that has to follow.

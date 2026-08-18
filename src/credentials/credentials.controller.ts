@@ -180,6 +180,18 @@ export class CredentialsController {
   }
 
   /**
+   * The same, with the members each one could be given to.
+   *
+   * Deliberately not gated on members:read: a trainer is being shown exactly
+   * the people they may act on, which is a narrower thing than the roster.
+   */
+  @Get('trainer-candidates')
+  trainerCandidates(@CurrentAuth() auth: AuthContext) {
+    if (auth.kind !== 'member') return [];
+    return this.credentials.trainerCandidates(auth.memberId);
+  }
+
+  /**
    * A trainer clearing a member for calls. Gated on the trainer's credential
    * rather than a permission, so no separate grant is needed.
    */
