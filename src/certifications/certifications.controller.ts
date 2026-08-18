@@ -227,13 +227,17 @@ export class CertificationsController {
     return this.certs.attachDocument(requireMember(auth), id, file);
   }
 
+  /**
+   * Undecorated on purpose: a member may open their own documents, which no
+   * single permission expresses, so the service decides and answers 403.
+   */
   @Get('documents/:documentId')
-  @RequirePermissions(PERMISSIONS.CERTS_VERIFY)
   async document(
+    @CurrentAuth() auth: AuthContext,
     @Param('documentId') documentId: string,
     @Res() res: Response,
   ) {
-    const { doc, object } = await this.certs.getDocument(documentId);
+    const { doc, object } = await this.certs.getDocument(documentId, auth);
     res.setHeader('Content-Type', object.contentType);
     res.setHeader(
       'Content-Disposition',

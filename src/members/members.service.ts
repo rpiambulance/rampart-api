@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
-import { nyDayStart, toDbDate } from '../common/dates';
+import { fromDbDate, nyDayStart, nyNow, toDbDate } from '../common/dates';
 import { normalizePhone } from '../common/phone';
 import { grantObserver } from '../credentials/observer';
 import { PrismaService } from '../prisma/prisma.service';
@@ -147,17 +147,24 @@ export class MembersService {
         select: { memberId: true, event: { select: { startsAt: true } } },
       }),
     ]);
-    const lastSeen = new Map<number, Date>();
-    const note = (memberId: number, at: Date) => {
+    // Reduced to calendar days before being compared: a crew's date and an
+    // event's start are not the same kind of value, and the answer is shown
+    // as a day either way. Comparing the strings compares the days, since
+    // YYYY-MM-DD sorts chronologically.
+    const lastSeen = new Map<number, string>();
+    const note = (memberId: number, day: string) => {
       const current = lastSeen.get(memberId);
-      if (!current || at > current) lastSeen.set(memberId, at);
+      if (!current || day > current) lastSeen.set(memberId, day);
     };
-    for (const row of crewHistory) note(row.memberId!, row.crew.date);
-    for (const row of eventHistory) note(row.memberId, row.event.startsAt);
+    for (const row of crewHistory) note(row.memberId!, fromDbDate(row.crew.date));
+    for (const row of eventHistory) {
+      note(row.memberId, nyNow(row.event.startsAt).dateStr);
+    }
 
     return candidates.map((c) => ({
       ...c,
-      lastParticipation: lastSeen.get(c.id)?.toISOString() ?? null,
+      /** A plain YYYY-MM-DD: the day they were last on something. */
+      lastParticipation: lastSeen.get(c.id) ?? null,
       /** Joined after the cutoff, so they never had the chance to take part. */
       joinedAfterCutoff: c.createdAt >= nyDayStart(since),
     }));

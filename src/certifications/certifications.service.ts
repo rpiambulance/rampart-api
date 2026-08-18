@@ -185,11 +185,30 @@ export class CertificationsService {
     });
   }
 
-  async getDocument(documentId: string) {
+  /**
+   * A document, for someone entitled to see it: the member whose record it
+   * belongs to, or anyone who reviews certifications.
+   *
+   * Members upload these themselves, so being unable to open one back is a
+   * gap rather than a safeguard — and a verifier reaching a document has to
+   * be reaching it as part of reviewing that member's record.
+   */
+  async getDocument(documentId: string, auth: AuthContext) {
     const doc = await this.prisma.certificationDocument.findUnique({
       where: { id: documentId },
+      include: { certification: { select: { memberId: true } } },
     });
     if (!doc) throw new NotFoundException('Document not found');
+
+    const own =
+      auth.kind === 'member' && auth.memberId === doc.certification.memberId;
+    const mayReview =
+      auth.permissions.has(PERMISSIONS.CERTS_VERIFY) ||
+      auth.permissions.has(PERMISSIONS.CERTS_READ_ALL);
+    if (!own && !mayReview) {
+      throw new ForbiddenException('Not your document');
+    }
+
     const object = await this.storage.get(doc.storageKey);
     return { doc, object };
   }
