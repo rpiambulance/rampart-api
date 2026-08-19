@@ -285,11 +285,28 @@ export class EvalsController {
     private readonly permissionHolders: PermissionHoldersService,
   ) {}
 
+  /**
+   * Forms. `mine=true` narrows evaluations to the ones the caller is
+   * qualified to complete, for the picker they start one from — offering a
+   * form you cannot finish is an invitation to waste a trainee's time.
+   */
   @Get('templates')
-  templates(@Query('kind') kind?: string) {
-    return this.evals.listTemplates({
+  async templates(
+    @CurrentAuth() auth: AuthContext,
+    @Query('kind') kind?: string,
+    @Query('mine') mine?: string,
+  ) {
+    const templates = await this.evals.listTemplates({
       kind: kind === 'CHECKLIST' || kind === 'EVALUATION' ? kind : undefined,
     });
+    if (mine !== 'true' || auth.kind !== 'member') return templates;
+
+    const qualified = await Promise.all(
+      templates.map((template) =>
+        this.evals.canComplete(auth.memberId, template.id),
+      ),
+    );
+    return templates.filter((_, index) => qualified[index]);
   }
 
   @Post('templates')

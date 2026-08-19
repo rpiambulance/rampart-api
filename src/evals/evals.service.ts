@@ -320,6 +320,15 @@ export class EvalsService {
     if (!template?.active) {
       throw new BadRequestException('Template not found or inactive');
     }
+    if (template.kind !== 'EVALUATION') {
+      throw new BadRequestException(
+        'That form is a checklist, not an evaluation',
+      );
+    }
+    // Refused here rather than at the first save: starting an evaluation you
+    // cannot finish wastes the trainee's time as well as your own.
+    await this.assertQualified(evaluatorId, templateId);
+
     return this.prisma.evaluation.create({
       data: {
         templateId,
@@ -362,7 +371,9 @@ export class EvalsService {
   async eligibleEvaluators(templateId: number) {
     const template = await this.prisma.evalFormTemplate.findUnique({
       where: { id: templateId },
-      include: { signoffCredentialTypes: { select: { key: true, name: true } } },
+      include: {
+        signoffCredentialTypes: { select: { key: true, name: true } },
+      },
     });
     if (!template) throw new NotFoundException('Template not found');
 
@@ -374,11 +385,30 @@ export class EvalsService {
 
     const members: typeof writers = [];
     for (const member of writers) {
-      if (await this.holdsOneOf(member.id, required.map((r) => r.key))) {
+      if (
+        await this.holdsOneOf(
+          member.id,
+          required.map((r) => r.key),
+        )
+      ) {
         members.push(member);
       }
     }
     return { required, members };
+  }
+
+  /** Whether this member may complete a given form. */
+  async canComplete(memberId: number, templateId: number): Promise<boolean> {
+    const template = await this.prisma.evalFormTemplate.findUnique({
+      where: { id: templateId },
+      select: { signoffCredentialTypes: { select: { key: true } } },
+    });
+    return this.holdsOneOf(
+      memberId,
+      (template?.signoffCredentialTypes ?? []).map(
+        (credential) => credential.key,
+      ),
+    );
   }
 
   /** Whether a member holds any of these credentials, or anything above one. */
@@ -401,11 +431,19 @@ export class EvalsService {
   private async assertQualified(evaluatorId: number, templateId: number) {
     const template = await this.prisma.evalFormTemplate.findUnique({
       where: { id: templateId },
-      include: { signoffCredentialTypes: { select: { key: true, name: true } } },
+      include: {
+        signoffCredentialTypes: { select: { key: true, name: true } },
+      },
     });
     const required = template?.signoffCredentialTypes ?? [];
     if (!required.length) return;
-    if (await this.holdsOneOf(evaluatorId, required.map((r) => r.key))) return;
+    if (
+      await this.holdsOneOf(
+        evaluatorId,
+        required.map((r) => r.key),
+      )
+    )
+      return;
     throw new ForbiddenException(
       `This evaluation is completed by ${required
         .map((credential) => credential.name)
@@ -716,7 +754,10 @@ export class EvalsService {
     const requires = required?.signoffCredentialTypes ?? [];
     const mayComplete =
       evaluation.evaluatorId === viewerId &&
-      (await this.holdsOneOf(viewerId, requires.map((r) => r.key)));
+      (await this.holdsOneOf(
+        viewerId,
+        requires.map((r) => r.key),
+      ));
 
     return { ...evaluation, requires, mayComplete };
   }
