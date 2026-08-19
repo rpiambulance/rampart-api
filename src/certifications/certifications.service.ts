@@ -89,16 +89,52 @@ export class CertificationsService {
       },
       include: {
         type: true,
-        member: { select: { id: true, firstName: true, lastName: true, email: true } },
+        member: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
       },
       orderBy: { expiresAt: 'asc' },
+    });
+  }
+
+  /**
+   * Creates the type a member proposed, if the list did not have it.
+   *
+   * It is a real type from the moment it is made — the certification has to
+   * point at something — but marked as proposed so nobody mistakes a guessed
+   * abbreviation and validity period for the agency's considered answer. An
+   * existing type with the same name is reused rather than duplicated.
+   */
+  private async typeForProposal(memberId: number, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('A certification needs a name');
+    }
+    const existing = await this.prisma.certificationType.findFirst({
+      where: { name: { equals: trimmed, mode: 'insensitive' } },
+    });
+    if (existing) return existing;
+
+    return this.prisma.certificationType.create({
+      data: {
+        name: trimmed,
+        // Placeholders, deliberately obvious: whoever vets this is meant to
+        // set them, and a blank tells them it has not been done.
+        abbreviation: trimmed.slice(0, 8).toUpperCase(),
+        defaultValidityMonths: null,
+        proposed: true,
+        proposedById: memberId,
+        proposedAt: new Date(),
+      },
     });
   }
 
   async submit(
     memberId: number,
     input: {
-      typeId: number;
+      typeId?: number;
+      /** Used when the member could not find their certification on the list. */
+      proposedTypeName?: string;
       identifier?: string;
       issuedAt?: string;
       expiresAt?: string;
@@ -111,9 +147,11 @@ export class CertificationsService {
      */
     opts: { enteredBy?: AuthContext } = {},
   ) {
-    const type = await this.prisma.certificationType.findUnique({
-      where: { id: input.typeId },
-    });
+    const type = input.typeId
+      ? await this.prisma.certificationType.findUnique({
+          where: { id: input.typeId },
+        })
+      : await this.typeForProposal(memberId, input.proposedTypeName ?? '');
     if (!type) throw new NotFoundException('Unknown certification type');
 
     let expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
@@ -130,7 +168,7 @@ export class CertificationsService {
     const created = await this.prisma.memberCertification.create({
       data: {
         memberId,
-        typeId: input.typeId,
+        typeId: type.id,
         identifier: input.identifier,
         issuedAt: input.issuedAt ? new Date(input.issuedAt) : null,
         expiresAt,
@@ -186,6 +224,48 @@ export class CertificationsService {
   }
 
   /**
+   * Removes a document from a certification.
+   *
+   * The member may remove their own while it is still pending — replacing a
+   * blurred photo before anyone looks at it — and an officer who verifies
+   * certifications may remove any, since they are the ones who have to work
+   * out what a file actually shows. The stored object goes with the row: a
+   * file nothing points at is just an orphan in the bucket.
+   */
+  async removeDocument(auth: AuthContext, documentId: string) {
+    const doc = await this.prisma.certificationDocument.findUnique({
+      where: { id: documentId },
+      include: { certification: { select: { memberId: true, status: true } } },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    const mine =
+      auth.kind === 'member' && auth.memberId === doc.certification.memberId;
+    const officer = auth.permissions.has(PERMISSIONS.CERTS_VERIFY);
+    const pending = doc.certification.status === 'PENDING_VERIFICATION';
+    if (!officer && !(mine && pending)) {
+      throw new ForbiddenException(
+        'Only an officer can remove a document once it has been checked',
+      );
+    }
+
+    await this.prisma.certificationDocument.delete({
+      where: { id: documentId },
+    });
+    await this.storage.delete(doc.storageKey).catch(() => {
+      // The row is what matters; a stranded object is tidy-up, not an error.
+    });
+    await this.audit.log(
+      auth,
+      'certs.document.remove',
+      'CertificationDocument',
+      documentId,
+      { certificationId: doc.certificationId, fileName: doc.fileName },
+    );
+    return { ok: true };
+  }
+
+  /**
    * A document, for someone entitled to see it: the member whose record it
    * belongs to, or anyone who reviews certifications.
    *
@@ -225,8 +305,7 @@ export class CertificationsService {
   ) {
     const cert = await this.requireOwnOrVerifier(auth, certificationId);
     const isVerifier =
-      auth.permissions.has(PERMISSIONS.CERTS_VERIFY) &&
-      auth.kind === 'member';
+      auth.permissions.has(PERMISSIONS.CERTS_VERIFY) && auth.kind === 'member';
 
     const updated = await this.prisma.memberCertification.update({
       where: { id: certificationId },
@@ -253,7 +332,13 @@ export class CertificationsService {
       },
       include: { type: true },
     });
-    await this.audit.log(auth, 'certs.amend', 'MemberCertification', certificationId, input);
+    await this.audit.log(
+      auth,
+      'certs.amend',
+      'MemberCertification',
+      certificationId,
+      input,
+    );
     return updated;
   }
 
@@ -263,18 +348,28 @@ export class CertificationsService {
     await this.prisma.memberCertification.delete({
       where: { id: certificationId },
     });
-    await this.audit.log(auth, 'certs.delete', 'MemberCertification', certificationId);
+    await this.audit.log(
+      auth,
+      'certs.delete',
+      'MemberCertification',
+      certificationId,
+    );
     return { ok: true };
   }
 
-  private async requireOwnOrVerifier(auth: AuthContext, certificationId: number) {
+  private async requireOwnOrVerifier(
+    auth: AuthContext,
+    certificationId: number,
+  ) {
     const cert = await this.prisma.memberCertification.findUnique({
       where: { id: certificationId },
     });
     if (!cert) throw new NotFoundException('Certification not found');
     const isOwn = auth.kind === 'member' && cert.memberId === auth.memberId;
     if (!isOwn && !auth.permissions.has(PERMISSIONS.CERTS_VERIFY)) {
-      throw new ForbiddenException('That certification belongs to someone else');
+      throw new ForbiddenException(
+        'That certification belongs to someone else',
+      );
     }
     return cert;
   }
@@ -356,7 +451,9 @@ export class CertificationsService {
   ) {
     const rungs = typeIds.filter((id, i) => typeIds.indexOf(id) === i);
     if (!rungs.length) {
-      throw new BadRequestException('A ladder needs at least one certification');
+      throw new BadRequestException(
+        'A ladder needs at least one certification',
+      );
     }
 
     // Everything transitively linked to any rung, in either direction.
@@ -382,9 +479,10 @@ export class CertificationsService {
 
     const pairs = opts.unlink
       ? []
-      : rungs
-          .slice(0, -1)
-          .map((higherTypeId, i) => ({ higherTypeId, lowerTypeId: rungs[i + 1] }));
+      : rungs.slice(0, -1).map((higherTypeId, i) => ({
+          higherTypeId,
+          lowerTypeId: rungs[i + 1],
+        }));
 
     await this.prisma.$transaction([
       this.prisma.certificationSupersession.deleteMany({
@@ -406,10 +504,38 @@ export class CertificationsService {
     return { ok: true, rungs: rungs.length, links: pairs.length };
   }
 
+  /**
+   * Approves or rejects a submission.
+   *
+   * The approver may correct what was submitted in the same step. A pending
+   * certification is somebody's best attempt at their own paperwork, and the
+   * person checking it against the card in front of them is exactly the one
+   * who should be able to fix a mistyped date rather than bouncing it back
+   * and waiting for a second attempt.
+   *
+   * `typeConfig` vets a proposed type at the same time: an abbreviation and
+   * validity guessed at submission become the agency's answer only when
+   * somebody with settings permission says so.
+   */
   async verify(
     auth: AuthContext,
     certificationId: number,
-    decision: { approve: boolean; reason?: string },
+    decision: {
+      approve: boolean;
+      reason?: string;
+      corrections?: {
+        typeId?: number;
+        identifier?: string | null;
+        issuedAt?: string | null;
+        expiresAt?: string | null;
+      };
+      typeConfig?: {
+        name?: string;
+        abbreviation?: string;
+        issuingOrg?: string | null;
+        defaultValidityMonths?: number | null;
+      };
+    },
   ) {
     if (auth.kind !== 'member') {
       throw new ForbiddenException('Verification requires a member session');
@@ -419,6 +545,76 @@ export class CertificationsService {
       include: { type: { select: { name: true } } },
     });
     if (!cert) throw new NotFoundException('Certification not found');
+
+    const corrections = decision.corrections;
+    if (corrections) {
+      // Applied before the decision so the record that gets approved is the
+      // corrected one, and an audit reader sees one coherent change.
+      await this.prisma.memberCertification.update({
+        where: { id: certificationId },
+        data: {
+          ...(corrections.typeId ? { typeId: corrections.typeId } : {}),
+          ...(corrections.identifier === undefined
+            ? {}
+            : { identifier: corrections.identifier?.trim() || null }),
+          ...(corrections.issuedAt === undefined
+            ? {}
+            : {
+                issuedAt: corrections.issuedAt
+                  ? new Date(corrections.issuedAt)
+                  : null,
+              }),
+          ...(corrections.expiresAt === undefined
+            ? {}
+            : {
+                expiresAt: corrections.expiresAt
+                  ? new Date(corrections.expiresAt)
+                  : null,
+              }),
+        },
+      });
+      await this.audit.log(
+        auth,
+        'certs.correct',
+        'MemberCertification',
+        certificationId,
+        corrections,
+      );
+    }
+
+    if (decision.typeConfig) {
+      if (!auth.permissions.has(PERMISSIONS.SETTINGS_WRITE)) {
+        throw new ForbiddenException(
+          'Changing a certification type needs the settings permission',
+        );
+      }
+      const typeId = corrections?.typeId ?? cert.typeId;
+      const config = decision.typeConfig;
+      await this.prisma.certificationType.update({
+        where: { id: typeId },
+        data: {
+          ...(config.name?.trim() ? { name: config.name.trim() } : {}),
+          ...(config.abbreviation?.trim()
+            ? { abbreviation: config.abbreviation.trim().toUpperCase() }
+            : {}),
+          ...(config.issuingOrg === undefined
+            ? {}
+            : { issuingOrg: config.issuingOrg?.trim() || null }),
+          ...(config.defaultValidityMonths === undefined
+            ? {}
+            : { defaultValidityMonths: config.defaultValidityMonths }),
+          // Vetted: it is the agency's type now, not a guess.
+          proposed: false,
+        },
+      });
+      await this.audit.log(
+        auth,
+        'certs.type.vet',
+        'CertificationType',
+        typeId,
+        config,
+      );
+    }
 
     const updated = await this.prisma.memberCertification.update({
       where: { id: certificationId },
@@ -436,17 +632,33 @@ export class CertificationsService {
             rejectionReason: decision.reason ?? null,
           },
     });
-    await this.audit.log(auth, 'certs.verify', 'MemberCertification', certificationId, decision);
+    await this.audit.log(
+      auth,
+      'certs.verify',
+      'MemberCertification',
+      certificationId,
+      decision,
+    );
     // Named, so the member knows which of theirs this is about, and told why
     // when it was turned down — a rejection with no reason leaves them to
     // resubmit the same thing and hope.
+    // The corrected type, if the approver changed it — the member should be
+    // told the name of what was actually approved.
+    const named = corrections?.typeId
+      ? ((
+          await this.prisma.certificationType.findUnique({
+            where: { id: corrections.typeId },
+            select: { name: true },
+          })
+        )?.name ?? cert.type.name)
+      : cert.type.name;
     const reason = decision.reason?.trim();
     await this.notifications.notify(cert.memberId, {
       type: 'cert.decided',
-      subject: `${cert.type.name} ${decision.approve ? 'verified' : 'rejected'}`,
+      subject: `${named} ${decision.approve ? 'verified' : 'rejected'}`,
       body: decision.approve
-        ? `Your ${cert.type.name} has been verified.`
-        : `Your ${cert.type.name} was rejected.` +
+        ? `Your ${named} has been verified.`
+        : `Your ${named} was rejected.` +
           (reason
             ? ` Reason given: ${reason}`
             : ' No reason was given — ask a training officer what to change.'),

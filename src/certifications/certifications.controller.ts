@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -23,12 +24,49 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { CertificationsService } from './certifications.service';
+
+class CorrectionsDto {
+  @IsOptional()
+  @IsInt()
+  typeId?: number;
+
+  @IsOptional()
+  @IsString()
+  identifier?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  issuedAt?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string | null;
+}
+
+class TypeConfigDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  abbreviation?: string;
+
+  @IsOptional()
+  @IsString()
+  issuingOrg?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  defaultValidityMonths?: number | null;
+}
 
 class VerifyDto {
   @IsBoolean()
@@ -37,6 +75,18 @@ class VerifyDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  /** Fixes applied to the submission as part of approving it. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CorrectionsDto)
+  corrections?: CorrectionsDto;
+
+  /** Vets a proposed type. Requires settings:write. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TypeConfigDto)
+  typeConfig?: TypeConfigDto;
 }
 
 class CertTypeDto {
@@ -110,8 +160,14 @@ class AmendCertDto {
 }
 
 class SubmitCertDto {
+  /** One of these: an existing type, or a name for one that is not listed. */
+  @IsOptional()
   @IsInt()
-  typeId!: number;
+  typeId?: number;
+
+  @IsOptional()
+  @IsString()
+  proposedTypeName?: string;
 
   @IsOptional()
   @IsString()
@@ -218,13 +274,28 @@ export class CertificationsController {
   }
 
   @Post(':id/documents')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
   upload(
     @CurrentAuth() auth: AuthContext,
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    return this.certs.attachDocument(requireMember(auth), id, file);
+    // Whoever verifies certifications may attach to anyone's: they are often
+    // the one holding the card, and entering it on a member's behalf without
+    // being able to attach the proof would be half a job.
+    return this.certs.attachDocument(requireMember(auth), id, file, {
+      asOfficer: auth.permissions.has(PERMISSIONS.CERTS_VERIFY),
+    });
+  }
+
+  @Delete('documents/:documentId')
+  removeDocument(
+    @CurrentAuth() auth: AuthContext,
+    @Param('documentId') documentId: string,
+  ) {
+    return this.certs.removeDocument(auth, documentId);
   }
 
   /**

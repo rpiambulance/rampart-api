@@ -6,7 +6,11 @@ import { CertificationsService } from './certifications.service';
 
 @Module({
   controllers: [CertificationsController],
-  providers: [CertificationsService, CertificationsJobs, CertificationGraphService],
+  providers: [
+    CertificationsService,
+    CertificationsJobs,
+    CertificationGraphService,
+  ],
   exports: [CertificationsService, CertificationGraphService],
 })
 export class CertificationsModule {}

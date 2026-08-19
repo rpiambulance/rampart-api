@@ -55,6 +55,7 @@ model Member {
   choresAssigned     Chore[]               @relation("ChoreAssignee")
   choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
   runNumbersIssued   RunNumber[]           @relation("RunNumberIssuer")
+  certTypesProposed  CertificationType[]   @relation("CertTypeProposer")
   checklistSigned    ChecklistSignoff[]    @relation("ChecklistSigner")
   checklistRevoked   ChecklistSignoff[]    @relation("ChecklistRevoker")
   promotionRequests  PromotionRequest[]
@@ -129,6 +130,16 @@ model CertificationType {
   issuingOrg            String?
   defaultValidityMonths Int? // null = non-expiring
   active                Boolean @default(true)
+  /// Suggested by a member submitting a certification the list did not have.
+  /// It works like any other type, but is marked until somebody with settings
+  /// permission has looked at how it is configured — an abbreviation and a
+  /// validity period guessed by whoever happened to submit first should not
+  /// silently become the agency's.
+  proposed              Boolean @default(false)
+  proposedById          Int?
+  proposedAt            DateTime?
+
+  proposedBy Member? @relation("CertTypeProposer", fields: [proposedById], references: [id])
 
   memberCertifications  MemberCertification[]
   credentialRequirements CredentialRequirement[]

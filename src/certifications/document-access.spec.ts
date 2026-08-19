@@ -13,7 +13,11 @@ function serviceFor(doc: unknown) {
     certificationDocument: { findUnique: () => Promise.resolve(doc) },
   };
   const storage = {
-    get: () => Promise.resolve({ body: Buffer.from('pdf'), contentType: 'application/pdf' }),
+    get: () =>
+      Promise.resolve({
+        body: Buffer.from('pdf'),
+        contentType: 'application/pdf',
+      }),
   };
   return new CertificationsService(
     {} as never,
@@ -29,7 +33,7 @@ function member(id: number, ...permissions: string[]): AuthContext {
     kind: 'member',
     memberId: id,
     permissions: new Set(permissions),
-  } as AuthContext;
+  };
 }
 
 const DOC = {

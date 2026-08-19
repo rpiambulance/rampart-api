@@ -42,8 +42,8 @@ export class CertificationsJobs {
         await this.notifications.notify(cert.member.id, {
           type: 'cert.expiring',
           subject: `${cert.type.name} expires in ${days} days`,
-          body: `Your ${cert.type.name} expires on ${cert.expiresAt!
-            .toISOString()
+          body: `Your ${cert.type.name} expires on ${cert
+            .expiresAt!.toISOString()
             .slice(0, 10)}.`,
           task: {
             actionLabel: 'Upload your renewal',
