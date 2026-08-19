@@ -67,6 +67,13 @@ class ChoreDto {
   dueOn?: string;
 }
 
+class AssignDto {
+  /** Omitted or null puts the night back to the chore's own assignee. */
+  @IsOptional()
+  @IsInt()
+  memberId?: number | null;
+}
+
 class CompleteDto {
   @IsOptional()
   @IsString()
@@ -181,6 +188,22 @@ export class ChoresController {
       note: body.note,
       auth,
     });
+  }
+
+  /**
+   * Hands one night to somebody, or clears the override.
+   *
+   * Separate from editing the chore because it means something different: a
+   * swap for one night, not a change to whose job this is.
+   */
+  @Post(':id/assign')
+  @RequirePermissions(PERMISSIONS.CHORES_MANAGE)
+  assign(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: AssignDto,
+  ) {
+    return this.chores.assignNight(auth, id, body.memberId ?? null);
   }
 
   @Post(':id/reopen')

@@ -97,19 +97,56 @@ export class ChoresService {
     return this.occurrencesOn(dateStr);
   }
 
+  /** The chore, its standing assignee, and whoever has this night. */
+  private static readonly OCCURRENCE_INCLUDE = {
+    chore: {
+      include: {
+        assignee: { select: { id: true, firstName: true, lastName: true } },
+      },
+    },
+    assignee: { select: { id: true, firstName: true, lastName: true } },
+    completedBy: { select: { id: true, firstName: true, lastName: true } },
+  } as const;
+
   occurrencesOn(dateStr: string) {
     return this.prisma.choreOccurrence.findMany({
       where: { dueOn: toDbDate(dateStr) },
-      include: {
-        chore: {
-          include: {
-            assignee: { select: { id: true, firstName: true, lastName: true } },
-          },
-        },
-        completedBy: { select: { id: true, firstName: true, lastName: true } },
-      },
+      include: ChoresService.OCCURRENCE_INCLUDE,
       orderBy: { id: 'asc' },
     });
+  }
+
+  /**
+   * Who this night falls to: the override if one was set, otherwise the
+   * chore's standing assignee, otherwise nobody in particular.
+   */
+  private static whoseNight(occurrence: {
+    assignee: { firstName: string; lastName: string } | null;
+    chore: { assignee: { firstName: string; lastName: string } | null };
+  }) {
+    return occurrence.assignee ?? occurrence.chore.assignee;
+  }
+
+  /** Hands one night to somebody, or puts it back to the standing assignee. */
+  async assignNight(
+    auth: AuthContext,
+    occurrenceId: number,
+    memberId: number | null,
+  ) {
+    const updated = await this.prisma.choreOccurrence.update({
+      where: { id: occurrenceId },
+      data: { assigneeId: memberId },
+      include: ChoresService.OCCURRENCE_INCLUDE,
+    });
+    await this.audit.log(
+      auth,
+      'chore.assign',
+      'ChoreOccurrence',
+      occurrenceId,
+      { memberId, chore: updated.chore.name },
+    );
+    await this.refreshSlack(occurrenceId);
+    return updated;
   }
 
   /** Today and the next fortnight, for the portal. */
@@ -119,14 +156,7 @@ export class ChoresService {
       where: {
         dueOn: { gte: toDbDate(today), lt: toDbDate(addDays(today, days)) },
       },
-      include: {
-        chore: {
-          include: {
-            assignee: { select: { id: true, firstName: true, lastName: true } },
-          },
-        },
-        completedBy: { select: { id: true, firstName: true, lastName: true } },
-      },
+      include: ChoresService.OCCURRENCE_INCLUDE,
       orderBy: [{ dueOn: 'asc' }, { id: 'asc' }],
     });
   }
@@ -140,9 +170,8 @@ export class ChoresService {
     const line = (
       occurrence: (typeof occurrences)[number],
     ): Record<string, unknown> => {
-      const assigned = occurrence.chore.assignee
-        ? ` _(${occurrence.chore.assignee.firstName} ${occurrence.chore.assignee.lastName})_`
-        : '';
+      const whose = ChoresService.whoseNight(occurrence);
+      const assigned = whose ? ` _(${whose.firstName} ${whose.lastName})_` : '';
       if (occurrence.completedAt) {
         const who = occurrence.completedBy
           ? `${occurrence.completedBy.firstName} ${occurrence.completedBy.lastName}`

@@ -54,6 +54,7 @@ model Member {
   webhooksCreated    Webhook[]             @relation("WebhookCreator")
   choresAssigned     Chore[]               @relation("ChoreAssignee")
   choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
+  choreNightsAssigned ChoreOccurrence[]    @relation("ChoreOccurrenceAssignee")
   runNumbersIssued   RunNumber[]           @relation("RunNumberIssuer")
   certTypesProposed  CertificationType[]   @relation("CertTypeProposer")
   checklistSigned    ChecklistSignoff[]    @relation("ChecklistSigner")
@@ -1213,6 +1214,10 @@ model ChoreOccurrence {
   id          Int       @id @default(autoincrement())
   choreId     Int
   dueOn       DateTime  @db.Date
+  /// Overrides the chore's standing assignee for this night only, so one
+  /// shift can be handed over without disturbing the arrangement behind it.
+  /// Null means the chore's own assignee applies.
+  assigneeId  Int?
   completedAt DateTime?
   completedById Int?
   /// Whatever the member typed back, from Slack or the portal.
@@ -1224,6 +1229,7 @@ model ChoreOccurrence {
   postedAt     DateTime?
 
   chore       Chore   @relation(fields: [choreId], references: [id], onDelete: Cascade)
+  assignee    Member? @relation("ChoreOccurrenceAssignee", fields: [assigneeId], references: [id])
   completedBy Member? @relation("ChoreCompleter", fields: [completedById], references: [id])
 
   @@unique([choreId, dueOn])
