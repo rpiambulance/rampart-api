@@ -8,6 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { ServiceStatusService } from '../service-status/service-status.service';
 import { SettingsService } from '../settings/settings.service';
+import { SlackLinkService } from '../notifications/slack-link.service';
 import { SlackService } from '../notifications/slack.service';
 import { StorageService } from '../storage/storage.service';
 
@@ -23,6 +24,7 @@ import { StorageService } from '../storage/storage.service';
     PermissionHoldersService,
     ServiceStatusService,
     SettingsService,
+    SlackLinkService,
     SlackService,
     StorageService,
   ],
@@ -36,6 +38,7 @@ import { StorageService } from '../storage/storage.service';
     PermissionHoldersService,
     ServiceStatusService,
     SettingsService,
+    SlackLinkService,
     SlackService,
     StorageService,
   ],

@@ -10,6 +10,7 @@ import { Public } from '../auth/public.decorator';
 import { ChoresService } from '../chores/chores.service';
 import { addDays, nyNow } from '../common/dates';
 import { whosOnText } from '../crews/whoson';
+import { SlackLinkService } from '../notifications/slack-link.service';
 import { SlackService } from '../notifications/slack.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -32,6 +33,7 @@ interface SlashCommand {
 export class SlackController {
   constructor(
     private readonly chores: ChoresService,
+    private readonly links: SlackLinkService,
     private readonly prisma: PrismaService,
     private readonly slack: SlackService,
   ) {}
@@ -72,7 +74,20 @@ export class SlackController {
   async command(@Req() req: Request): Promise<unknown> {
     await this.assertFromSlack(req);
     const body = req.body as SlashCommand;
-    if ((body.command ?? '').replace('/', '') !== 'whoson') {
+    const command = (body.command ?? '').replace('/', '');
+
+    // Always private: it is about one person's account, and a channel full of
+    // "linked to Dev Member" helps nobody.
+    if (command === 'linkme') {
+      return {
+        response_type: 'ephemeral',
+        text: body.user_id
+          ? await this.links.linkBySlackUser(body.user_id)
+          : 'Slack did not say who you are.',
+      };
+    }
+
+    if (command !== 'whoson') {
       return { response_type: 'ephemeral', text: 'Unknown command.' };
     }
 

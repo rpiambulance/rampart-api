@@ -63,6 +63,7 @@ export class MembersService {
       homeAddress?: string;
       rcsId?: string;
       nineHundredNumber?: string;
+      slackId?: string;
       rin?: string;
       keycloakSubject?: string;
     },
@@ -221,6 +222,7 @@ export class MembersService {
       timeFormat: string;
       rcsId: string;
       nineHundredNumber: string;
+      slackId: string;
       rin: string;
       keycloakSubject: string;
       active: boolean;

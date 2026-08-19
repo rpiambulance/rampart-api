@@ -104,6 +104,15 @@ class CreateMemberDto {
   @IsString()
   nineHundredNumber?: string;
 
+  /**
+   * The member's Slack account, so direct messages, mentions and chore
+   * button presses can find them. Absent from SelfEditDto: a member setting
+   * their own would be claiming to be somebody in Slack unverified.
+   */
+  @IsOptional()
+  @IsString()
+  slackId?: string;
+
   @IsOptional()
   @IsString()
   rin?: string;

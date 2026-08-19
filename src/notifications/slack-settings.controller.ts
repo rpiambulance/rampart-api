@@ -1,5 +1,13 @@
-import { Body, Controller, Get, Put } from '@nestjs/common';
-import { IsObject, IsOptional, IsString } from 'class-validator';
+import { Body, Controller, Get, Post, Put } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -12,7 +20,23 @@ import {
   SLACK_SETTING_KEY,
   type SlackConfig,
 } from './slack-settings';
+import { SlackLinkService } from './slack-link.service';
 import { SlackService } from './slack.service';
+
+class ApplyLinksDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LinkPairDto)
+  pairs!: LinkPairDto[];
+}
+
+class LinkPairDto {
+  @IsInt()
+  memberId!: number;
+
+  @IsString()
+  slackId!: string;
+}
 
 class SlackSettingsDto {
   /** Omitted means "leave it as it is"; the form never shows the stored one. */
@@ -35,6 +59,7 @@ export class SlackSettingsController {
     private readonly prisma: PrismaService,
     private readonly slack: SlackService,
     private readonly audit: AuditService,
+    private readonly links_: SlackLinkService,
   ) {}
 
   /**
@@ -64,6 +89,32 @@ export class SlackSettingsController {
   @Get('check')
   check() {
     return this.slack.checkChannels();
+  }
+
+  /** How many members Slack can reach, and who it cannot. */
+  @Get('links')
+  async links() {
+    const [counts, unlinked] = await Promise.all([
+      this.links_.counts(),
+      this.links_.unlinked(),
+    ]);
+    return { ...counts, unlinked };
+  }
+
+  /**
+   * What matching on email would link, without linking it.
+   *
+   * Separate from applying because this writes to member records in bulk off
+   * another system's data — worth seeing first.
+   */
+  @Get('links/proposals')
+  proposals() {
+    return this.links_.proposals();
+  }
+
+  @Post('links/apply')
+  apply(@CurrentAuth() auth: AuthContext, @Body() body: ApplyLinksDto) {
+    return this.links_.apply(auth, body.pairs);
   }
 
   @Put()
