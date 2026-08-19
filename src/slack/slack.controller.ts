@@ -56,9 +56,16 @@ export class SlackController {
   /**
    * /whoson — tonight's crew, or a named night.
    *
-   * Answers in the channel rather than privately: the usual reason to ask is
-   * so that everyone reading along knows too. Accepts "tomorrow" or a plain
-   * date, since the question is often asked the night before.
+   * Answers only to whoever asked. Checking who is on is a glance, not an
+   * announcement, and a channel that fills with the same roster four times an
+   * evening trains people to scroll past it.
+   *
+   * It also means the reply does not depend on the bot being in the channel:
+   * an ephemeral response goes back through the command itself, so /whoson
+   * works anywhere the app is installed.
+   *
+   * Accepts "tomorrow" or a plain date, since the question is often asked the
+   * night before.
    */
   @Public()
   @Post('commands')
@@ -87,7 +94,7 @@ export class SlackController {
     }
 
     return {
-      response_type: 'in_channel',
+      response_type: 'ephemeral',
       text: await whosOnText(this.prisma, date),
     };
   }
