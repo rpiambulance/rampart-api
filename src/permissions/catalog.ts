@@ -48,6 +48,8 @@ export const PERMISSIONS = {
   RUN_NUMBERS_MANAGE: 'run-numbers:manage',
   /** Create and edit chores, and the rota they are posted on. */
   CHORES_MANAGE: 'chores:manage',
+  /** Put the agency in or out of service. */
+  SERVICE_STATUS: 'service:status',
   DISPATCHES_READ: 'dispatches:read',
   AUDIT_READ: 'audit:read',
   INTEGRATIONS_MANAGE: 'integrations:manage',

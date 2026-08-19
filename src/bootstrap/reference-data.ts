@@ -208,6 +208,7 @@ const ALL = [
   'dispatches:ingest',
   'run-numbers:manage',
   'chores:manage',
+  'service:status',
   'dispatches:read',
   'audit:read',
   'integrations:manage',

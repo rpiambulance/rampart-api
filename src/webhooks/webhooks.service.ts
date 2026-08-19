@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, randomBytes } from 'crypto';
+import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Attempts, and how long to wait before each retry. */
@@ -64,7 +65,13 @@ export class WebhooksService {
     await Promise.all(
       wanted.map(async (hook) => {
         const delivery = await this.prisma.webhookDelivery.create({
-          data: { webhookId: hook.id, event, payload: payload as object },
+          // Through `unknown`: a plain `as object` is stripped by the lint
+          // rule for unnecessary assertions, which leaves it uncompilable.
+          data: {
+            webhookId: hook.id,
+            event,
+            payload: payload as unknown as Prisma.InputJsonObject,
+          },
         });
         await this.attempt(
           hook.id,

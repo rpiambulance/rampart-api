@@ -4,6 +4,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { addDays, nyNow, toDbDate, weekdayOf } from '../common/dates';
 import { SlackService } from '../notifications/slack.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ServiceStatusService } from '../service-status/service-status.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import type { ChoreCadence } from '../generated/prisma/enums';
 
@@ -49,6 +50,7 @@ export class ChoresService {
     private readonly slack: SlackService,
     private readonly audit: AuditService,
     private readonly webhooks: WebhooksService,
+    private readonly serviceStatus: ServiceStatusService,
   ) {}
 
   /** Whether a chore falls on a given date. */
@@ -216,6 +218,15 @@ export class ChoresService {
 
   /** Posts the day's chores, or edits the existing post if there is one. */
   async postToSlack(dateStr = nyNow().dateStr): Promise<boolean> {
+    // Nothing is asked of anybody while the agency is shut down. The
+    // occurrences are still created, so the record of what was due survives
+    // and the portal can show it — only the asking stops.
+    const status = await this.serviceStatus.current();
+    if (!status.inService) {
+      this.logger.log('chores: agency is out of service, not posting');
+      return false;
+    }
+
     const occurrences = await this.ensureOccurrences(dateStr);
     const blocks = this.blocksFor(dateStr, occurrences);
     const text = occurrences.length

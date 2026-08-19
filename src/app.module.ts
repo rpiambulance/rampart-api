@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { AccessLogController } from './audit/access-log.controller';
+import { ServiceStatusController } from './service-status/service-status.controller';
 import { SlackController } from './slack/slack.controller';
 import { SlackSettingsController } from './notifications/slack-settings.controller';
 import { ChoresModule } from './chores/chores.module';
@@ -76,6 +77,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     InboxController,
     NotificationSettingsController,
     AccessLogController,
+    ServiceStatusController,
     SlackController,
     SlackSettingsController,
   ],
