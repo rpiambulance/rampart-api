@@ -111,6 +111,77 @@ export class SlackService {
     }
   }
 
+  /**
+   * Posts and reports back where it landed, so the message can be edited
+   * later. Editing in place is what keeps a channel from filling with one
+   * line per button press.
+   */
+  async postReturning(
+    channelKey: string,
+    text: string,
+    blocks?: unknown[],
+  ): Promise<{ channel: string; ts: string } | null> {
+    const config = await this.settings();
+    const channel = config.channels[channelKey];
+    if (!config.botToken || !channel) return null;
+    try {
+      const res = await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.botToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({ channel, text, ...(blocks ? { blocks } : {}) }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        channel?: string;
+        ts?: string;
+      };
+      if (!data.ok || !data.ts || !data.channel) {
+        this.logger.error(`slack post to ${channel} failed: ${data.error}`);
+        return null;
+      }
+      return { channel: data.channel, ts: data.ts };
+    } catch (error) {
+      this.logger.error(`slack post to ${channel} failed: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /** Edits a message already posted. */
+  async update(
+    channel: string,
+    ts: string,
+    text: string,
+    blocks?: unknown[],
+  ): Promise<boolean> {
+    const { botToken } = await this.settings();
+    if (!botToken) return false;
+    try {
+      const res = await fetch('https://slack.com/api/chat.update', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({
+          channel,
+          ts,
+          text,
+          ...(blocks ? { blocks } : {}),
+        }),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) this.logger.error(`slack update failed: ${data.error}`);
+      return data.ok;
+    } catch (error) {
+      this.logger.error(`slack update failed: ${String(error)}`);
+      return false;
+    }
+  }
+
   /** Replies to an interaction using the response_url Slack supplied. */
   async respond(responseUrl: string, body: unknown): Promise<void> {
     try {

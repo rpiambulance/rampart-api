@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Public } from '../auth/public.decorator';
+import { ChoresService } from '../chores/chores.service';
 import { addDays, nyNow } from '../common/dates';
 import { whosOnText } from '../crews/whoson';
 import { SlackService } from '../notifications/slack.service';
@@ -30,6 +31,7 @@ interface SlashCommand {
 @Controller({ path: 'slack', version: '1' })
 export class SlackController {
   constructor(
+    private readonly chores: ChoresService,
     private readonly prisma: PrismaService,
     private readonly slack: SlackService,
   ) {}
@@ -88,5 +90,48 @@ export class SlackController {
       response_type: 'in_channel',
       text: await whosOnText(this.prisma, date),
     };
+  }
+
+  /**
+   * Button presses. Slack sends these as a `payload` field holding JSON.
+   *
+   * Answered immediately with 200 and nothing else: Slack gives three seconds
+   * before it shows the user an error, and the message is redrawn through the
+   * API rather than in this response.
+   */
+  @Public()
+  @Post('interactions')
+  async interaction(@Req() req: Request): Promise<void> {
+    await this.assertFromSlack(req);
+    const raw = (req.body as { payload?: string }).payload;
+    if (!raw) return;
+
+    let payload: {
+      user?: { id?: string };
+      actions?: Array<{ action_id?: string; value?: string }>;
+    };
+    try {
+      payload = JSON.parse(raw) as typeof payload;
+    } catch {
+      throw new BadRequestException('Unreadable payload');
+    }
+
+    for (const action of payload.actions ?? []) {
+      const id = action.action_id ?? '';
+      if (!id.startsWith('chore:')) continue;
+      const occurrenceId = Number(id.slice('chore:'.length));
+      if (!Number.isInteger(occurrenceId)) continue;
+
+      // Slack knows the presser by their Slack id; a member who has never
+      // been linked still gets the chore marked done, just unattributed —
+      // better than refusing the press and leaving the list stale.
+      const member = payload.user?.id
+        ? await this.prisma.member.findFirst({
+            where: { slackId: payload.user.id },
+            select: { id: true },
+          })
+        : null;
+      await this.chores.complete(occurrenceId, member?.id ?? null);
+    }
   }
 }

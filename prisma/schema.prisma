@@ -54,6 +54,7 @@ model Member {
   webhooksCreated    Webhook[]             @relation("WebhookCreator")
   choresAssigned     Chore[]               @relation("ChoreAssignee")
   choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
+  runNumbersIssued   RunNumber[]           @relation("RunNumberIssuer")
   checklistSigned    ChecklistSignoff[]    @relation("ChecklistSigner")
   checklistRevoked   ChecklistSignoff[]    @relation("ChecklistRevoker")
   promotionRequests  PromotionRequest[]
@@ -818,6 +819,7 @@ model Event {
   kind      EventKind       @relation(fields: [kindId], references: [id])
   tier      EventTier?      @relation(fields: [tierId], references: [id])
   positions EventPosition[]
+  runNumbers RunNumber[]
   signups   EventSignup[]
   availabilityResponses EventAvailability[]
   coverageRequest        CoverageRequest?
@@ -1215,4 +1217,47 @@ model ChoreOccurrence {
 
   @@unique([choreId, dueOn])
   @@index([dueOn])
+}
+
+/// A place standbys happen, and its slice of the run-number sequence.
+///
+/// Ported from strng: run numbers read <LOC>-<DIV><YY><NNN>, e.g. DCC-S25001.
+/// Each location counts independently, so the next number is held per
+/// location rather than globally.
+model RunNumberLocation {
+  id      Int     @id @default(autoincrement())
+  name    String
+  abbr    String  @unique
+  active  Boolean @default(true)
+  /// The number the next run at this location will take.
+  nextRun Int     @default(1)
+
+  runNumbers RunNumber[]
+}
+
+/// One issued run number.
+///
+/// strng kept only a counter, so a number on a report could not be traced
+/// back to anything. Every issue is recorded here instead: who took it, when,
+/// and what for.
+model RunNumber {
+  id         Int      @id @default(autoincrement())
+  number     String   @unique
+  locationId Int
+  /// The academic-term division letter this number was issued under.
+  division   String
+  /// Two digits, matching the number itself.
+  year       String
+  sequence   Int
+  note       String?
+  eventId    Int?
+  issuedById Int?
+  issuedAt   DateTime @default(now())
+
+  location RunNumberLocation @relation(fields: [locationId], references: [id])
+  event    Event?            @relation(fields: [eventId], references: [id])
+  issuedBy Member?           @relation("RunNumberIssuer", fields: [issuedById], references: [id])
+
+  @@index([issuedAt])
+  @@index([locationId, sequence])
 }

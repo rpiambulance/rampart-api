@@ -43,6 +43,11 @@ export const PERMISSIONS = {
   VEHICLES_MANAGE: 'vehicles:manage',
   TOKENS_MANAGE: 'tokens:manage',
   DISPATCHES_INGEST: 'dispatches:ingest',
+  /** Edit standby locations and their run-number counters. Issuing a number
+   *  needs nothing: anyone standing by may need one. */
+  RUN_NUMBERS_MANAGE: 'run-numbers:manage',
+  /** Create and edit chores, and the rota they are posted on. */
+  CHORES_MANAGE: 'chores:manage',
   DISPATCHES_READ: 'dispatches:read',
   AUDIT_READ: 'audit:read',
   INTEGRATIONS_MANAGE: 'integrations:manage',
