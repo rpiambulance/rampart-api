@@ -28,15 +28,24 @@ export interface DivisionConfig {
   ambiguous: AmbiguousMonths[];
 }
 
-/** strng's defaults: fall from October, spring from March. */
+/**
+ * The three academic terms, as strng was configured in production: fall from
+ * October, spring from March, summer from July.
+ *
+ * Each ambiguous window spans a changeover — the last month of the outgoing
+ * term and the first of the incoming one — because a standby in those months
+ * can belong to either depending on what it is for.
+ */
 export const DEFAULT_DIVISIONS: DivisionConfig = {
   divisions: [
     { abbr: 'F', start: 9, end: 1 },
-    { abbr: 'S', start: 2, end: 8 },
+    { abbr: 'S', start: 2, end: 5 },
+    { abbr: 'U', start: 6, end: 8 },
   ],
   ambiguous: [
     { start: 1, end: 2, options: ['F', 'S'] },
-    { start: 8, end: 9, options: ['S', 'F'] },
+    { start: 5, end: 6, options: ['S', 'U'] },
+    { start: 8, end: 9, options: ['U', 'F'] },
   ],
 };
 
