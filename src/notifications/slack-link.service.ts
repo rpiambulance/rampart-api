@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { looksLikeSlackId } from './slack-id';
 import { SlackService } from './slack.service';
 
 export interface SlackWorkspaceUser {
@@ -90,27 +91,43 @@ export class SlackLinkService {
     return users;
   }
 
-  /** Active members with no Slack account against them. */
-  unlinked() {
-    return this.prisma.member.findMany({
-      where: { active: true, slackId: null },
+  /**
+   * Active members Slack cannot reach.
+   *
+   * A stored value that is not an ID counts as unlinked, not linked: the
+   * legacy import left handles behind, and they are useless for mentions and
+   * direct messages alike. Counting them as unlinked is what lets the
+   * matching below repair them.
+   */
+  async unlinked() {
+    const members = await this.prisma.member.findMany({
+      where: { active: true },
       select: {
         id: true,
         firstName: true,
         lastName: true,
         email: true,
         personalEmail: true,
+        slackId: true,
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
+    return members
+      .filter((member) => !looksLikeSlackId(member.slackId))
+      .map(({ slackId, ...member }) => ({
+        ...member,
+        /** What is stored, when it is something unusable rather than nothing. */
+        unusableSlackId: slackId,
+      }));
   }
 
   async counts() {
-    const [linked, unlinked] = await Promise.all([
-      this.prisma.member.count({ where: { active: true, slackId: { not: null } } }),
-      this.prisma.member.count({ where: { active: true, slackId: null } }),
-    ]);
-    return { linked, unlinked };
+    const active = await this.prisma.member.findMany({
+      where: { active: true },
+      select: { slackId: true },
+    });
+    const linked = active.filter((m) => looksLikeSlackId(m.slackId)).length;
+    return { linked, unlinked: active.length - linked };
   }
 
   /**
@@ -130,13 +147,17 @@ export class SlackLinkService {
       if (user.email && !byEmail.has(user.email)) byEmail.set(user.email, user);
     }
 
+    // Only real IDs can be taken; a handle sitting in the field reserves
+    // nothing, because it never worked.
     const taken = new Set(
       (
         await this.prisma.member.findMany({
           where: { slackId: { not: null } },
           select: { slackId: true },
         })
-      ).map((row) => row.slackId!),
+      )
+        .map((row) => row.slackId)
+        .filter((id): id is string => looksLikeSlackId(id)),
     );
 
     const out: LinkProposal[] = [];
@@ -227,14 +248,14 @@ export class SlackLinkService {
         : 'Slack did not give an email for your account, so there is nothing to match on. Ask an officer to link you.';
     }
 
-    const member = await this.prisma.member.findFirst({
-      where: {
-        active: true,
-        slackId: null,
-        OR: [{ email }, { personalEmail: email }],
-      },
-      select: { id: true, firstName: true, lastName: true },
+    // A member carrying a legacy handle is still eligible: replacing it with
+    // a real id is the point.
+    const candidate = await this.prisma.member.findFirst({
+      where: { active: true, OR: [{ email }, { personalEmail: email }] },
+      select: { id: true, firstName: true, lastName: true, slackId: true },
     });
+    const member =
+      candidate && !looksLikeSlackId(candidate.slackId) ? candidate : null;
     if (!member) {
       return `No member record matches ${email}. Ask an officer to link you, or add that address to your profile.`;
     }

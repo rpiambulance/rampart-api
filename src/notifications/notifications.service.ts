@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
+import { looksLikeSlackId } from './slack-id';
 import { SlackService } from './slack.service';
 import { nyToday } from '../common/dates';
 import { renderEmail } from './email-template';
@@ -232,9 +233,11 @@ export class NotificationsService {
     if (wanted.email && member.email) {
       await this.sendEmail(member.email, notice.subject, body);
     }
-    // A direct message: the "channel" is the member's own Slack id.
-    if (wanted.slack && member.slackId) {
-      await this.slack.postTo(member.slackId, `*${notice.subject}*\n${body}`);
+    // A direct message: the "channel" is the member's own Slack id, so it has
+    // to be an id. A handle left by the legacy import would be posted to a
+    // channel that does not exist.
+    if (wanted.slack && looksLikeSlackId(member.slackId)) {
+      await this.slack.postTo(member.slackId!, `*${notice.subject}*\n${body}`);
     }
   }
 

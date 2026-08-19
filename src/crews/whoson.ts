@@ -1,4 +1,5 @@
 import { fromDbDate, nyNow, toDbDate } from '../common/dates';
+import { mentionFor } from '../notifications/slack-id';
 import type { PrismaService } from '../prisma/prisma.service';
 
 export const POSITION_LABELS: Record<string, string> = {
@@ -56,10 +57,10 @@ export async function whosOnText(
   for (const position of POSITION_ORDER) {
     if (crew.outOfService && position !== 'DUTY_SUP') continue;
     const slot = crew.slots.find((s) => s.position === position);
+    // mentionFor falls back to the name when what is stored is a handle
+    // rather than an ID, which is what the legacy import left behind.
     const who = slot?.member
-      ? slot.member.slackId
-        ? `<@${slot.member.slackId}>`
-        : `${slot.member.firstName} ${slot.member.lastName}`
+      ? mentionFor(slot.member)
       : (slot?.placeholder ?? '_open_');
     lines.push(`• ${POSITION_LABELS[position]}: ${who}`);
   }

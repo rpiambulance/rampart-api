@@ -345,10 +345,21 @@ export class EvalsController {
     });
   }
 
-  /** Who can be asked: the people who may write evaluations. */
+  /**
+   * Who can be asked, per form.
+   *
+   * Answered for every published form at once: the picker changes as the
+   * trainee chooses a form, and one round trip beats a request per change.
+   */
   @Get('evaluators')
-  evaluators() {
-    return this.permissionHolders.membersWith(PERMISSIONS.EVALS_WRITE);
+  async evaluators() {
+    const templates = await this.evals.listTemplates({ kind: 'EVALUATION' });
+    return Promise.all(
+      templates.map(async (template) => ({
+        templateId: template.id,
+        ...(await this.evals.eligibleEvaluators(template.id)),
+      })),
+    );
   }
 
   /** The trainee correcting their own answers, while it is still a draft. */

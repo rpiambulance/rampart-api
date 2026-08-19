@@ -7,7 +7,9 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
+import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScoreType, TemplateKind } from '../generated/prisma/enums';
 
@@ -111,6 +113,8 @@ export interface ScoreInput {
 export class EvalsService {
   constructor(
     private readonly audit: AuditService,
+    private readonly graph: CredentialGraphService,
+    private readonly permissionHolders: PermissionHoldersService,
     private readonly notifications: NotificationsService,
     private readonly prisma: PrismaService,
   ) {}
@@ -348,6 +352,68 @@ export class EvalsService {
   }
 
   /**
+   * Who may complete a given form: holders of evals:write who also hold one
+   * of the credentials it calls for, or anything above one on the ladder.
+   *
+   * A form naming no credential is open to anyone who may write evaluations,
+   * which is the ordinary case — the requirement is for the forms where it
+   * matters that a crew chief, not merely a trainer, signs it off.
+   */
+  async eligibleEvaluators(templateId: number) {
+    const template = await this.prisma.evalFormTemplate.findUnique({
+      where: { id: templateId },
+      include: { signoffCredentialTypes: { select: { key: true, name: true } } },
+    });
+    if (!template) throw new NotFoundException('Template not found');
+
+    const writers = await this.permissionHolders.membersWith(
+      PERMISSIONS.EVALS_WRITE,
+    );
+    const required = template.signoffCredentialTypes;
+    if (!required.length) return { required, members: writers };
+
+    const members: typeof writers = [];
+    for (const member of writers) {
+      if (await this.holdsOneOf(member.id, required.map((r) => r.key))) {
+        members.push(member);
+      }
+    }
+    return { required, members };
+  }
+
+  /** Whether a member holds any of these credentials, or anything above one. */
+  private async holdsOneOf(memberId: number, keys: string[]): Promise<boolean> {
+    if (!keys.length) return true;
+    const held = await this.graph.heldKeys(memberId);
+    for (const key of keys) {
+      if (await this.graph.satisfies(held, key)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Refuses an evaluator the form does not qualify.
+   *
+   * Checked when the evaluation is asked for and again when it is filled in:
+   * a credential can be revoked between the two, and the second check is the
+   * one that decides whose assessment this is.
+   */
+  private async assertQualified(evaluatorId: number, templateId: number) {
+    const template = await this.prisma.evalFormTemplate.findUnique({
+      where: { id: templateId },
+      include: { signoffCredentialTypes: { select: { key: true, name: true } } },
+    });
+    const required = template?.signoffCredentialTypes ?? [];
+    if (!required.length) return;
+    if (await this.holdsOneOf(evaluatorId, required.map((r) => r.key))) return;
+    throw new ForbiddenException(
+      `This evaluation is completed by ${required
+        .map((credential) => credential.name)
+        .join(' or ')}, or above.`,
+    );
+  }
+
+  /**
    * A trainee asking to be evaluated.
    *
    * The evaluation is created already carrying whatever the trainee filled
@@ -381,6 +447,7 @@ export class EvalsService {
       select: { id: true, active: true, firstName: true, lastName: true },
     });
     if (!evaluator?.active) throw new NotFoundException('Trainer not found');
+    await this.assertQualified(input.evaluatorId, input.templateId);
 
     const byItem = new Map(
       (input.scores ?? []).map((score) => [score.itemId, score]),
@@ -464,6 +531,7 @@ export class EvalsService {
     if (evaluation.status === 'SIGNED') {
       throw new BadRequestException('Signed evaluations are immutable');
     }
+    await this.assertQualified(evaluatorId, evaluation.templateId);
 
     for (const score of scores) {
       // Written the same way on both paths: an answer cleared on a later save
@@ -614,6 +682,13 @@ export class EvalsService {
     return updated;
   }
 
+  /**
+   * One evaluation, with whether this viewer may actually complete it.
+   *
+   * The flag is returned rather than the record being refused: an evaluator
+   * whose credential lapsed should see what they were asked for and why they
+   * can no longer fill it in, not a page that looks broken.
+   */
   async get(evaluationId: number, viewerId: number, canReadAll: boolean) {
     const evaluation = await this.prisma.evaluation.findUnique({
       where: { id: evaluationId },
@@ -633,7 +708,17 @@ export class EvalsService {
     if (!party && !canReadAll) {
       throw new ForbiddenException('Not your evaluation');
     }
-    return evaluation;
+
+    const required = await this.prisma.evalFormTemplate.findUnique({
+      where: { id: evaluation.templateId },
+      select: { signoffCredentialTypes: { select: { key: true, name: true } } },
+    });
+    const requires = required?.signoffCredentialTypes ?? [];
+    const mayComplete =
+      evaluation.evaluatorId === viewerId &&
+      (await this.holdsOneOf(viewerId, requires.map((r) => r.key)));
+
+    return { ...evaluation, requires, mayComplete };
   }
 
   /**

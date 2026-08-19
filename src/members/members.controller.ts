@@ -19,6 +19,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
 } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -108,9 +109,16 @@ class CreateMemberDto {
    * The member's Slack account, so direct messages, mentions and chore
    * button presses can find them. Absent from SelfEditDto: a member setting
    * their own would be claiming to be somebody in Slack unverified.
+   *
+   * A Slack member ID, not a handle. The legacy portal stored handles and
+   * they do not work for any of the three, so they are refused here rather
+   * than accepted and silently ignored later.
    */
   @IsOptional()
-  @IsString()
+  @Matches(/^$|^[UW][A-Z0-9]{6,}$/, {
+    message:
+      'A Slack member ID looks like U024BE7LH — find it under the member’s Slack profile, ⋮, Copy member ID. A handle such as @everest will not work.',
+  })
   slackId?: string;
 
   @IsOptional()
