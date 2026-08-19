@@ -55,6 +55,17 @@ export class SlackSettingsController {
     };
   }
 
+  /**
+   * Whether the bot can actually reach each configured channel.
+   *
+   * The usual failure is silent — a channel is set, everything looks right,
+   * and messages land in a log line nobody reads — so this asks Slack.
+   */
+  @Get('check')
+  check() {
+    return this.slack.checkChannels();
+  }
+
   @Put()
   async save(@CurrentAuth() auth: AuthContext, @Body() body: SlackSettingsDto) {
     const existing = (

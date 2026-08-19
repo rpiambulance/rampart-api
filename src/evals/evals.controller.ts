@@ -26,6 +26,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
+import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { EvalsService, type TemplateNodeInput } from './evals.service';
 
 class TemplateOptionDto {
@@ -84,20 +85,11 @@ class TemplateItemDto {
   @IsArray()
   @IsInt({ each: true })
   signoffCredentialTypeIds?: number[];
-}
 
-class TemplateGroupDto {
-  @IsString()
-  heading!: string;
-
+  /** Whether the trainee fills this in when requesting the evaluation. */
   @IsOptional()
-  @IsString()
-  description?: string | null;
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => TemplateItemDto)
-  items!: TemplateItemDto[];
+  @IsIn(['NONE', 'OPTIONAL', 'REQUIRED'])
+  traineeInput?: 'NONE' | 'OPTIONAL' | 'REQUIRED';
 }
 
 /** A node is a loose item or a group of them; the two share one ordering. */
@@ -136,6 +128,10 @@ class TemplateNodeDto {
   @IsArray()
   @IsInt({ each: true })
   signoffCredentialTypeIds?: number[];
+
+  @IsOptional()
+  @IsIn(['NONE', 'OPTIONAL', 'REQUIRED'])
+  traineeInput?: 'NONE' | 'OPTIONAL' | 'REQUIRED';
 
   // GROUP
   @IsOptional()
@@ -191,7 +187,34 @@ class CreateEvalDto {
 
   @IsOptional()
   @IsDateString()
-  shiftDate?: string;
+  evalDate?: string;
+}
+
+class RequestEvalDto {
+  @IsInt()
+  templateId!: number;
+
+  /** The trainer being asked. */
+  @IsInt()
+  evaluatorId!: number;
+
+  @IsOptional()
+  @IsDateString()
+  evalDate?: string;
+
+  /** Whatever the trainee was invited to fill in. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ScoreDto)
+  scores?: ScoreDto[];
+}
+
+class TraineeScoresDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ScoreDto)
+  scores!: ScoreDto[];
 }
 
 class ScoreDto {
@@ -257,7 +280,10 @@ function requireMember(auth: AuthContext): number {
 
 @Controller({ path: 'evals', version: '1' })
 export class EvalsController {
-  constructor(private readonly evals: EvalsService) {}
+  constructor(
+    private readonly evals: EvalsService,
+    private readonly permissionHolders: PermissionHoldersService,
+  ) {}
 
   @Get('templates')
   templates(@Query('kind') kind?: string) {
@@ -298,8 +324,41 @@ export class EvalsController {
       requireMember(auth),
       body.subjectId,
       body.templateId,
-      body.shiftDate,
+      body.evalDate,
     );
+  }
+
+  /**
+   * A trainee asking a trainer for an evaluation.
+   *
+   * No permission: asking to be assessed is not a privilege. Filling it in
+   * still needs evals:write, which is why the trainers offered are the people
+   * who hold it.
+   */
+  @Post('request')
+  requestEval(@CurrentAuth() auth: AuthContext, @Body() body: RequestEvalDto) {
+    return this.evals.request(requireMember(auth), {
+      templateId: body.templateId,
+      evaluatorId: body.evaluatorId,
+      evalDate: body.evalDate,
+      scores: body.scores,
+    });
+  }
+
+  /** Who can be asked: the people who may write evaluations. */
+  @Get('evaluators')
+  evaluators() {
+    return this.permissionHolders.membersWith(PERMISSIONS.EVALS_WRITE);
+  }
+
+  /** The trainee correcting their own answers, while it is still a draft. */
+  @Put(':id/trainee-scores')
+  saveTraineeScores(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: TraineeScoresDto,
+  ) {
+    return this.evals.saveTraineeScores(requireMember(auth), id, body.scores);
   }
 
   @Get('mine')
@@ -350,7 +409,10 @@ export class EvalsController {
   }
 
   @Post(':id/sign')
-  sign(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  sign(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.evals.sign(requireMember(auth), id);
   }
 }

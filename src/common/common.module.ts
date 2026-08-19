@@ -5,6 +5,7 @@ import { CredentialGraphService } from '../credentials/credential-graph.service'
 import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { SettingsService } from '../settings/settings.service';
 import { SlackService } from '../notifications/slack.service';
 import { StorageService } from '../storage/storage.service';
@@ -18,6 +19,7 @@ import { StorageService } from '../storage/storage.service';
     GoogleCalendarService,
     KeycloakAdminService,
     NotificationsService,
+    PermissionHoldersService,
     SettingsService,
     SlackService,
     StorageService,
@@ -29,6 +31,7 @@ import { StorageService } from '../storage/storage.service';
     GoogleCalendarService,
     KeycloakAdminService,
     NotificationsService,
+    PermissionHoldersService,
     SettingsService,
     SlackService,
     StorageService,

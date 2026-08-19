@@ -29,25 +29,42 @@ export interface DivisionConfig {
 }
 
 /**
- * The three academic terms, as strng was configured in production: fall from
- * October, spring from March, summer from July.
+ * The three academic terms, and the single month between each pair.
  *
- * Each ambiguous window spans a changeover — the last month of the outgoing
- * term and the first of the incoming one — because a standby in those months
- * can belong to either depending on what it is for.
+ * September through December is fall, February through April spring, June and
+ * July summer. The month either side of each pair — January, May, August — is
+ * a changeover: a standby then can belong to the term ending or the one
+ * beginning, so it is asked rather than assumed, outgoing term first.
  */
 export const DEFAULT_DIVISIONS: DivisionConfig = {
   divisions: [
-    { abbr: 'F', start: 9, end: 1 },
-    { abbr: 'S', start: 2, end: 5 },
-    { abbr: 'U', start: 6, end: 8 },
+    { abbr: 'F', start: 8, end: 11 },
+    { abbr: 'S', start: 1, end: 3 },
+    { abbr: 'U', start: 5, end: 6 },
   ],
   ambiguous: [
-    { start: 1, end: 2, options: ['F', 'S'] },
-    { start: 5, end: 6, options: ['S', 'U'] },
-    { start: 8, end: 9, options: ['U', 'F'] },
+    { start: 0, end: 0, options: ['F', 'S'] },
+    { start: 4, end: 4, options: ['S', 'U'] },
+    { start: 7, end: 7, options: ['U', 'F'] },
   ],
 };
+
+/**
+ * Once somebody says the new term has started, it has.
+ *
+ * A changeover month is only genuinely open until the first person decides
+ * it. Choosing the outgoing term is not a decision — it says "this one still
+ * belongs to the term that is ending" and leaves the question open for the
+ * next person. Choosing the incoming term is: the term has turned over, and
+ * everyone after that gets it without being asked.
+ */
+export interface TermLatch {
+  division: string;
+  /** The changeover this was decided in; a later one starts open again. */
+  window: string;
+}
+
+export const TERM_LATCH_KEY = 'runNumbers.termLatch';
 
 export function monthBetween(
   month: number,
@@ -69,6 +86,29 @@ export function divisionFor(
     if (monthBetween(month, division.start, division.end)) return division.abbr;
   }
   return null;
+}
+
+/** The changeover a month falls in, or null outside one. */
+export function windowFor(
+  config: DivisionConfig,
+  month: number,
+): AmbiguousMonths | null {
+  for (const window of config.ambiguous) {
+    if (monthBetween(month, window.start, window.end)) return window;
+  }
+  return null;
+}
+
+/**
+ * Names one occurrence of a changeover, so a decision made in January 2027
+ * does not carry into January 2028.
+ *
+ * Keyed on the window's first month rather than the current one, so a window
+ * spanning two months stays one decision. A window that wrapped a year end
+ * would start over at New Year, which none of them do.
+ */
+export function windowKey(year: string, window: AmbiguousMonths): string {
+  return `${year}-${window.start}`;
 }
 
 export function ambiguousOptions(

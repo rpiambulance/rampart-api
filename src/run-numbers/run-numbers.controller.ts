@@ -103,6 +103,13 @@ export class RunNumbersController {
     return this.runNumbers.upsertLocation(auth, body);
   }
 
+  /** Undo a changeover settled by mistake, so this month asks again. */
+  @Post('reopen-changeover')
+  @RequirePermissions(PERMISSIONS.RUN_NUMBERS_MANAGE)
+  reopenChangeover(@CurrentAuth() auth: AuthContext) {
+    return this.runNumbers.reopenChangeover(auth);
+  }
+
   @Get('divisions')
   divisions() {
     return this.runNumbers.divisionConfig();

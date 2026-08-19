@@ -26,6 +26,8 @@ export interface TemplateItemInput {
    * set. Empty or absent means the checklist's set applies.
    */
   signoffCredentialTypeIds?: number[];
+  /** Whether the trainee fills this in when requesting the evaluation. */
+  traineeInput?: 'NONE' | 'OPTIONAL' | 'REQUIRED';
 }
 
 export interface TemplateGroupInput {
@@ -58,7 +60,10 @@ function toItemData(item: TemplateItemInput, order: number) {
         : undefined,
     minValue: numeric ? (item.minValue ?? null) : null,
     maxValue: numeric ? (item.maxValue ?? null) : null,
-    unit: numeric ? (item.unit?.trim() || null) : null,
+    unit: numeric ? item.unit?.trim() || null : null,
+    // Headings ask nothing, so nobody fills them in.
+    traineeInput:
+      item.scoreType === 'HEADING' ? 'NONE' : (item.traineeInput ?? 'NONE'),
     signoffCredentialTypes:
       item.scoreType === 'SIGNOFF' && item.signoffCredentialTypeIds?.length
         ? { connect: item.signoffCredentialTypeIds.map((id) => ({ id })) }
@@ -77,6 +82,19 @@ function toNodes(
 ): TemplateNodeInput[] {
   if (nodes?.length) return nodes;
   return (items ?? []).map((item) => ({ kind: 'ITEM' as const, ...item }));
+}
+
+/** Whether a submitted score carries an answer at all. */
+function hasAnswer(score?: ScoreInput): boolean {
+  if (!score) return false;
+  return (
+    score.scaleValue != null ||
+    score.passed != null ||
+    (score.textValue?.trim().length ?? 0) > 0 ||
+    (score.optionValue?.trim().length ?? 0) > 0 ||
+    (score.optionValues?.length ?? 0) > 0 ||
+    score.numberValue != null
+  );
 }
 
 export interface ScoreInput {
@@ -233,7 +251,8 @@ export class EvalsService {
     // A checklist is never re-versioned: sign-offs point at item rows, and
     // moving a trainee's half-finished checklist onto fresh rows would erase
     // work that was already witnessed. Editing one in place is deliberate.
-    const inUse = existing.kind === 'CHECKLIST' ? false : existing._count.evaluations > 0;
+    const inUse =
+      existing.kind === 'CHECKLIST' ? false : existing._count.evaluations > 0;
 
     if (!inUse) {
       await this.prisma.evalFormGroup.deleteMany({ where: { templateId } });
@@ -282,7 +301,12 @@ export class EvalsService {
 
   // ---- evaluations ----
 
-  async create(evaluatorId: number, subjectId: number, templateId: number, shiftDate?: string) {
+  async create(
+    evaluatorId: number,
+    subjectId: number,
+    templateId: number,
+    evalDate?: string,
+  ) {
     if (evaluatorId === subjectId) {
       throw new BadRequestException('You cannot evaluate yourself');
     }
@@ -297,9 +321,124 @@ export class EvalsService {
         templateId,
         evaluatorId,
         subjectId,
-        shiftDate: shiftDate ? new Date(shiftDate) : null,
+        evalDate: evalDate ? new Date(evalDate) : null,
       },
     });
+  }
+
+  /**
+   * Every item on a template, wherever it sits, for checking what the trainee
+   * may and must fill in.
+   */
+  private async templateItems(templateId: number) {
+    const template = await this.prisma.evalFormTemplate.findUnique({
+      where: { id: templateId },
+      include: {
+        items: { where: { groupId: null } },
+        groups: { include: { items: true } },
+      },
+    });
+    if (!template?.active) {
+      throw new BadRequestException('Template not found or inactive');
+    }
+    return {
+      template,
+      items: [...template.items, ...template.groups.flatMap((g) => g.items)],
+    };
+  }
+
+  /**
+   * A trainee asking to be evaluated.
+   *
+   * The evaluation is created already carrying whatever the trainee filled
+   * in, and lands in the trainer's inbox as something to do. Required
+   * trainee fields are checked here rather than left for the trainer to chase
+   * — the point of asking for them is that the trainer should not have to.
+   */
+  async request(
+    traineeId: number,
+    input: {
+      templateId: number;
+      evaluatorId: number;
+      evalDate?: string;
+      scores?: ScoreInput[];
+    },
+  ) {
+    if (traineeId === input.evaluatorId) {
+      throw new BadRequestException(
+        'You cannot ask yourself for an evaluation',
+      );
+    }
+    const { template, items } = await this.templateItems(input.templateId);
+    if (template.kind !== 'EVALUATION') {
+      throw new BadRequestException(
+        'That form is a checklist, not an evaluation',
+      );
+    }
+
+    const evaluator = await this.prisma.member.findUnique({
+      where: { id: input.evaluatorId },
+      select: { id: true, active: true, firstName: true, lastName: true },
+    });
+    if (!evaluator?.active) throw new NotFoundException('Trainer not found');
+
+    const byItem = new Map(
+      (input.scores ?? []).map((score) => [score.itemId, score]),
+    );
+    const traineeItems = items.filter((item) => item.traineeInput !== 'NONE');
+    const missing = traineeItems
+      .filter((item) => item.traineeInput === 'REQUIRED')
+      .filter((item) => !hasAnswer(byItem.get(item.id)));
+    if (missing.length) {
+      throw new BadRequestException(
+        `Fill in ${missing.map((item) => `“${item.prompt}”`).join(', ')} before sending this.`,
+      );
+    }
+
+    const trainee = await this.prisma.member.findUniqueOrThrow({
+      where: { id: traineeId },
+      select: { firstName: true, lastName: true },
+    });
+
+    const evaluation = await this.prisma.evaluation.create({
+      data: {
+        templateId: input.templateId,
+        evaluatorId: input.evaluatorId,
+        subjectId: traineeId,
+        requestedById: traineeId,
+        requestedAt: new Date(),
+        evalDate: input.evalDate ? new Date(input.evalDate) : null,
+        // Only what the trainee was invited to answer: anything else arriving
+        // in the request is not theirs to set.
+        scores: {
+          create: traineeItems
+            .map((item) => byItem.get(item.id))
+            .filter((score): score is ScoreInput => !!score)
+            .map((score) => ({
+              itemId: score.itemId,
+              scaleValue: score.scaleValue ?? null,
+              passed: score.passed ?? null,
+              textValue: score.textValue ?? null,
+              optionValue: score.optionValue ?? null,
+              optionValues: score.optionValues ?? [],
+              numberValue: score.numberValue ?? null,
+            })),
+        },
+      },
+    });
+
+    await this.notifications.notify(input.evaluatorId, {
+      type: 'eval.requested',
+      subject: `Evaluation to fill in: ${trainee.firstName} ${trainee.lastName}`,
+      body:
+        `${trainee.firstName} ${trainee.lastName} has asked you for a ` +
+        `${template.name}${input.evalDate ? ` for ${input.evalDate}` : ''}.`,
+      task: {
+        actionLabel: 'Fill in the evaluation',
+        actionUrl: `/evals/${evaluation.id}`,
+      },
+    });
+    return evaluation;
   }
 
   async saveScores(
@@ -318,7 +457,9 @@ export class EvalsService {
     });
     if (!evaluation) throw new NotFoundException('Evaluation not found');
     if (evaluation.evaluatorId !== evaluatorId) {
-      throw new ForbiddenException('Only the evaluator can edit this evaluation');
+      throw new ForbiddenException(
+        'Only the evaluator can edit this evaluation',
+      );
     }
     if (evaluation.status === 'SIGNED') {
       throw new BadRequestException('Signed evaluations are immutable');
@@ -351,9 +492,15 @@ export class EvalsService {
         ...(opts.readyForPromotion !== undefined
           ? { readyForPromotion: opts.readyForPromotion }
           : {}),
-        ...(opts.submit ? { status: 'SUBMITTED', signedByEvaluator: new Date() } : {}),
+        ...(opts.submit
+          ? { status: 'SUBMITTED', signedByEvaluator: new Date() }
+          : {}),
       },
-      include: { scores: true, subject: { select: { id: true } }, template: true },
+      include: {
+        scores: true,
+        subject: { select: { id: true } },
+        template: true,
+      },
     });
 
     // Submitting hands it to the trainee to acknowledge.
@@ -374,6 +521,62 @@ export class EvalsService {
     return updated;
   }
 
+  /**
+   * The trainee correcting their own answers on a request they made.
+   *
+   * Confined to the items marked for trainee input, and only while the
+   * evaluation is still a draft: once the trainer has submitted it, it is
+   * their assessment and not something the subject may edit.
+   */
+  async saveTraineeScores(
+    traineeId: number,
+    evaluationId: number,
+    scores: ScoreInput[],
+  ) {
+    const evaluation = await this.prisma.evaluation.findUnique({
+      where: { id: evaluationId },
+    });
+    if (!evaluation) throw new NotFoundException('Evaluation not found');
+    if (evaluation.subjectId !== traineeId) {
+      throw new ForbiddenException('Not your evaluation');
+    }
+    if (evaluation.status !== 'DRAFT') {
+      throw new BadRequestException(
+        'This evaluation has been submitted; ask the trainer to change it.',
+      );
+    }
+
+    const { items } = await this.templateItems(evaluation.templateId);
+    const mine = new Set(
+      items
+        .filter((item) => item.traineeInput !== 'NONE')
+        .map((item) => item.id),
+    );
+    const allowed = scores.filter((score) => mine.has(score.itemId));
+    if (allowed.length !== scores.length) {
+      throw new ForbiddenException(
+        'Some of those answers are the trainer’s to give',
+      );
+    }
+
+    for (const score of allowed) {
+      const value = {
+        scaleValue: score.scaleValue ?? null,
+        passed: score.passed ?? null,
+        textValue: score.textValue ?? null,
+        optionValue: score.optionValue ?? null,
+        optionValues: score.optionValues ?? [],
+        numberValue: score.numberValue ?? null,
+      };
+      await this.prisma.evalScore.upsert({
+        where: { evaluationId_itemId: { evaluationId, itemId: score.itemId } },
+        create: { evaluationId, itemId: score.itemId, ...value },
+        update: value,
+      });
+    }
+    return this.get(evaluationId, traineeId, false);
+  }
+
   /** Both parties sign; when both have signed the eval becomes SIGNED (counts toward checklists). */
   async sign(memberId: number, evaluationId: number) {
     const evaluation = await this.prisma.evaluation.findUnique({
@@ -387,10 +590,15 @@ export class EvalsService {
     const data: Record<string, unknown> = {};
     if (memberId === evaluation.evaluatorId && !evaluation.signedByEvaluator) {
       data.signedByEvaluator = new Date();
-    } else if (memberId === evaluation.subjectId && !evaluation.signedBySubject) {
+    } else if (
+      memberId === evaluation.subjectId &&
+      !evaluation.signedBySubject
+    ) {
       data.signedBySubject = new Date();
     } else {
-      throw new ForbiddenException('You are not a party to this evaluation, or you already signed');
+      throw new ForbiddenException(
+        'You are not a party to this evaluation, or you already signed',
+      );
     }
 
     const updated = await this.prisma.evaluation.update({

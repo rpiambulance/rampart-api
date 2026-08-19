@@ -88,6 +88,7 @@ export class SlackService {
     channel: string,
     text: string,
     blocks?: unknown[],
+    opts: { retried?: boolean } = {},
   ): Promise<boolean> {
     const { botToken } = await this.settings();
     if (!botToken) return false;
@@ -101,6 +102,21 @@ export class SlackService {
         body: JSON.stringify({ channel, text, ...(blocks ? { blocks } : {}) }),
       });
       const data = (await res.json()) as { ok: boolean; error?: string };
+
+      // The bot is configured for a channel it was never added to. For a
+      // public one it can add itself and the message goes out unaided; a
+      // private one can only be joined by invitation, so say so plainly
+      // rather than logging an error code nobody can act on.
+      if (!data.ok && data.error === 'not_in_channel' && !opts.retried) {
+        if (await this.joinChannel(channel)) {
+          return this.postTo(channel, text, blocks, { retried: true });
+        }
+        this.logger.error(
+          `slack: not in ${channel} and could not join it. If it is private, ` +
+            `invite the bot with /invite in that channel.`,
+        );
+        return false;
+      }
       if (!data.ok) {
         this.logger.error(`slack post to ${channel} failed: ${data.error}`);
       }
@@ -112,6 +128,99 @@ export class SlackService {
   }
 
   /**
+   * Adds the bot to a public channel.
+   *
+   * Slack has no equivalent for private channels — a bot cannot let itself
+   * in, by design — so this returns false for those and the caller explains
+   * what a human has to do.
+   */
+  private async joinChannel(channel: string): Promise<boolean> {
+    const { botToken } = await this.settings();
+    if (!botToken) return false;
+    try {
+      const res = await fetch('https://slack.com/api/conversations.join', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({ channel }),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        this.logger.warn(`slack: could not join ${channel}: ${data.error}`);
+      }
+      return data.ok;
+    } catch (error) {
+      this.logger.warn(`slack: could not join ${channel}: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Whether the bot can actually post to each configured channel.
+   *
+   * Answered from the workspace rather than guessed, because the usual
+   * failure is silent: a channel is set, everything looks configured, and
+   * messages vanish into a log line nobody reads.
+   */
+  async checkChannels(): Promise<
+    Array<{ key: string; channel: string; ok: boolean; detail: string }>
+  > {
+    const config = await this.settings();
+    const out: Array<{ key: string; channel: string; ok: boolean; detail: string }> = [];
+    if (!config.botToken) return out;
+
+    for (const [key, channel] of Object.entries(config.channels)) {
+      if (!channel) continue;
+      try {
+        const res = await fetch(
+          `https://slack.com/api/conversations.info?channel=${encodeURIComponent(channel)}`,
+          { headers: { Authorization: `Bearer ${config.botToken}` } },
+        );
+        const data = (await res.json()) as {
+          ok: boolean;
+          error?: string;
+          channel?: { name?: string; is_private?: boolean; is_member?: boolean };
+        };
+        if (!data.ok) {
+          out.push({
+            key,
+            channel,
+            ok: false,
+            detail:
+              data.error === 'channel_not_found'
+                ? 'No such channel, or the bot cannot see it. A private channel is invisible until the bot is invited.'
+                : (data.error ?? 'unknown error'),
+          });
+          continue;
+        }
+        const name = data.channel?.name ? `#${data.channel.name}` : channel;
+        if (data.channel?.is_member) {
+          out.push({ key, channel, ok: true, detail: `In ${name}.` });
+        } else if (data.channel?.is_private) {
+          out.push({
+            key,
+            channel,
+            ok: false,
+            detail: `Not in ${name}. It is private, so a bot cannot add itself — run /invite @yourbot in that channel.`,
+          });
+        } else {
+          out.push({
+            key,
+            channel,
+            ok: false,
+            detail: `Not in ${name} yet. It will join on the first message, provided the app has the channels:join scope.`,
+          });
+        }
+      } catch (error) {
+        out.push({ key, channel, ok: false, detail: String(error) });
+      }
+    }
+    return out;
+  }
+
+  /**
    * Posts and reports back where it landed, so the message can be edited
    * later. Editing in place is what keeps a channel from filling with one
    * line per button press.
@@ -120,6 +229,7 @@ export class SlackService {
     channelKey: string,
     text: string,
     blocks?: unknown[],
+    opts: { retried?: boolean } = {},
   ): Promise<{ channel: string; ts: string } | null> {
     const config = await this.settings();
     const channel = config.channels[channelKey];
@@ -139,6 +249,18 @@ export class SlackService {
         channel?: string;
         ts?: string;
       };
+      if (data.error === 'not_in_channel' && !opts.retried) {
+        // Same as postTo: join a public channel and try once more, and say
+        // what to do about a private one.
+        if (await this.joinChannel(channel)) {
+          return this.postReturning(channelKey, text, blocks, { retried: true });
+        }
+        this.logger.error(
+          `slack: not in ${channel} and could not join it. If it is private, ` +
+            `invite the bot with /invite in that channel.`,
+        );
+        return null;
+      }
       if (!data.ok || !data.ts || !data.channel) {
         this.logger.error(`slack post to ${channel} failed: ${data.error}`);
         return null;

@@ -3,6 +3,8 @@ import {
   ambiguousOptions,
   divisionFor,
   formatRunNumber,
+  windowFor,
+  windowKey,
 } from './divisions';
 
 describe('run numbers', () => {
@@ -12,22 +14,20 @@ describe('run numbers', () => {
   });
 
   it('picks a term by month', () => {
-    expect(divisionFor(DEFAULT_DIVISIONS, 10)).toBe('F'); // November
-    expect(divisionFor(DEFAULT_DIVISIONS, 0)).toBe('F'); // January, wrapping
-    expect(divisionFor(DEFAULT_DIVISIONS, 4)).toBe('S'); // May
-    expect(divisionFor(DEFAULT_DIVISIONS, 7)).toBe('U'); // August
+    expect(divisionFor(DEFAULT_DIVISIONS, 8)).toBe('F'); // September
+    expect(divisionFor(DEFAULT_DIVISIONS, 11)).toBe('F'); // December
+    expect(divisionFor(DEFAULT_DIVISIONS, 1)).toBe('S'); // February
+    expect(divisionFor(DEFAULT_DIVISIONS, 3)).toBe('S'); // April
+    expect(divisionFor(DEFAULT_DIVISIONS, 5)).toBe('U'); // June
+    expect(divisionFor(DEFAULT_DIVISIONS, 6)).toBe('U'); // July
   });
 
-  it('asks at each changeover, offering the outgoing term first', () => {
-    // The last month of the outgoing term and the first of the incoming one:
-    // a standby in either can belong to either.
-    expect(divisionFor(DEFAULT_DIVISIONS, 1)).toBeNull(); // February
-    expect(ambiguousOptions(DEFAULT_DIVISIONS, 1)).toEqual(['F', 'S']);
-    expect(ambiguousOptions(DEFAULT_DIVISIONS, 2)).toEqual(['F', 'S']); // March
-    expect(ambiguousOptions(DEFAULT_DIVISIONS, 5)).toEqual(['S', 'U']); // June
-    expect(ambiguousOptions(DEFAULT_DIVISIONS, 6)).toEqual(['S', 'U']); // July
-    expect(ambiguousOptions(DEFAULT_DIVISIONS, 8)).toEqual(['U', 'F']); // Sept
-    expect(ambiguousOptions(DEFAULT_DIVISIONS, 9)).toEqual(['U', 'F']); // Oct
+  it('asks in the single month between each pair of terms', () => {
+    // January, May and August: the term ending, then the one beginning.
+    expect(divisionFor(DEFAULT_DIVISIONS, 0)).toBeNull();
+    expect(ambiguousOptions(DEFAULT_DIVISIONS, 0)).toEqual(['F', 'S']);
+    expect(ambiguousOptions(DEFAULT_DIVISIONS, 4)).toEqual(['S', 'U']);
+    expect(ambiguousOptions(DEFAULT_DIVISIONS, 7)).toEqual(['U', 'F']);
   });
 
   it('leaves no month without an answer', () => {
@@ -36,5 +36,14 @@ describe('run numbers', () => {
       const asked = ambiguousOptions(DEFAULT_DIVISIONS, month);
       expect(settled ?? asked?.length).toBeTruthy();
     }
+  });
+
+  it('names each changeover by its own year', () => {
+    const january = windowFor(DEFAULT_DIVISIONS, 0)!;
+    expect(windowKey('27', january)).toBe('27-0');
+    // The same month a year later is a different changeover, so a decision
+    // taken in one does not carry into the next.
+    expect(windowKey('28', january)).not.toBe(windowKey('27', january));
+    expect(windowFor(DEFAULT_DIVISIONS, 2)).toBeNull(); // March settles itself
   });
 });

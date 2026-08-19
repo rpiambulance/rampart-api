@@ -12,10 +12,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   DEFAULT_DIVISIONS,
   DIVISION_SETTING_KEY,
-  ambiguousOptions,
+  TERM_LATCH_KEY,
   divisionFor,
   formatRunNumber,
+  windowFor,
+  windowKey,
   type DivisionConfig,
+  type TermLatch,
 } from './divisions';
 
 @Injectable()
@@ -32,18 +35,47 @@ export class RunNumbersService {
     return (row?.value as unknown as DivisionConfig) ?? DEFAULT_DIVISIONS;
   }
 
-  /** The current year and division, or the choice to be made if ambiguous. */
+  private async termLatch(): Promise<TermLatch | null> {
+    const row = await this.prisma.appSetting.findUnique({
+      where: { key: TERM_LATCH_KEY },
+    });
+    return (row?.value as unknown as TermLatch) ?? null;
+  }
+
+  /**
+   * The year and term to issue under, or the choice to be made.
+   *
+   * In a changeover month the answer is open until somebody says the new term
+   * has begun. Once they have, this stops asking and reports the new term
+   * until the next changeover comes round.
+   */
   async currentTerm(now = new Date()) {
     const config = await this.divisionConfig();
     // The month in the agency's timezone: an issue just before midnight on
     // the last of the month must not be filed under the next one.
     const { dateStr } = nyNow(now);
     const month = Number(dateStr.slice(5, 7)) - 1;
-    return {
-      year: dateStr.slice(2, 4),
-      division: divisionFor(config, month),
-      options: ambiguousOptions(config, month),
-    };
+    const year = dateStr.slice(2, 4);
+
+    const window = windowFor(config, month);
+    if (!window) {
+      return {
+        year,
+        division: divisionFor(config, month),
+        options: null,
+        settledBy: null as string | null,
+      };
+    }
+
+    const latch = await this.termLatch();
+    const key = windowKey(year, window);
+    // Only the incoming term latches. A latch naming the outgoing one would
+    // mean somebody had answered "not yet", which settles nothing.
+    const incoming = window.options[window.options.length - 1];
+    if (latch?.window === key && latch.division === incoming) {
+      return { year, division: latch.division, options: null, settledBy: key };
+    }
+    return { year, division: null, options: window.options, settledBy: null };
   }
 
   listLocations(includeInactive = false) {
@@ -63,6 +95,58 @@ export class RunNumbersService {
       orderBy: { issuedAt: 'desc' },
       take: Math.min(limit, 500),
     });
+  }
+
+  /**
+   * Records that the new term has begun, for this changeover only.
+   *
+   * Stored against the changeover it was decided in, so the same month next
+   * year starts open again rather than inheriting an answer from last time.
+   */
+  private async settleTerm(division: string) {
+    const config = await this.divisionConfig();
+    const { dateStr } = nyNow();
+    const window = windowFor(config, Number(dateStr.slice(5, 7)) - 1);
+    if (!window) return;
+    const value: TermLatch = {
+      division,
+      window: windowKey(dateStr.slice(2, 4), window),
+    };
+    const stored = value as unknown as Prisma.InputJsonObject;
+    await this.prisma.appSetting.upsert({
+      where: { key: TERM_LATCH_KEY },
+      create: { key: TERM_LATCH_KEY, value: stored },
+      update: { value: stored },
+    });
+  }
+
+  /**
+   * Reopens a changeover that was settled too early.
+   *
+   * The latch is deliberately one-way for everyone else — once the term has
+   * turned over it stays turned — so undoing a mistaken first pick has to be
+   * somebody's explicit decision rather than the next person quietly
+   * choosing again.
+   */
+  async reopenChangeover(auth: AuthContext) {
+    const term = await this.currentTerm();
+    if (!term.settledBy) {
+      throw new BadRequestException(
+        'This month is not settled, so there is nothing to reopen.',
+      );
+    }
+    await this.prisma.appSetting.deleteMany({ where: { key: TERM_LATCH_KEY } });
+    await this.audit.log(
+      auth,
+      'run-number.changeover.reopen',
+      'AppSetting',
+      undefined,
+      {
+        was: term.division,
+        changeover: term.settledBy,
+      },
+    );
+    return { reopened: true };
   }
 
   /**
@@ -89,6 +173,13 @@ export class RunNumbersService {
       throw new BadRequestException(
         `${division} is not one of this month's options`,
       );
+    }
+    // Picking the incoming term settles the changeover for everyone after.
+    if (term.options) {
+      const incoming = term.options[term.options.length - 1];
+      if (division === incoming) {
+        await this.settleTerm(division);
+      }
     }
 
     const issued = await this.prisma.$transaction(async (tx) => {

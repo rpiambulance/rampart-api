@@ -89,6 +89,14 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'eval.requested',
+    label: 'Evaluation to fill in',
+    description:
+      'A trainee has asked a trainer to evaluate them, and it is waiting on the trainer.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'eval.received',
     label: 'Evaluation to acknowledge',
     description:

@@ -49,6 +49,7 @@ model Member {
   verifiedCerts      MemberCertification[] @relation("CertVerifier")
   evaluationsWritten Evaluation[]          @relation("Evaluator")
   evaluationsAbout   Evaluation[]          @relation("EvalSubject")
+  evaluationsAsked   Evaluation[]          @relation("EvalRequester")
   checklistSignoffs  ChecklistSignoff[]    @relation("ChecklistSubject")
   crewsTakenOutOfService Crew[]            @relation("CrewOutOfServiceBy")
   webhooksCreated    Webhook[]             @relation("WebhookCreator")
@@ -353,6 +354,16 @@ enum TemplateKind {
 }
 
 /// The evaluator's overall verdict on an evaluation.
+/// Whether the person being evaluated fills an item in themselves.
+enum TraineeInput {
+  /// The evaluator's to answer; the trainee never sees a field for it.
+  NONE
+  /// The trainee may answer it when asking for the evaluation.
+  OPTIONAL
+  /// The trainee must answer it before the request can be sent.
+  REQUIRED
+}
+
 enum EvalOutcome {
   NEEDS_IMPROVEMENT
   PASSED
@@ -411,6 +422,8 @@ model EvalFormItem {
   minValue   Float?
   maxValue   Float?
   unit       String?
+  /// Whether the trainee fills this in when requesting the evaluation.
+  traineeInput TraineeInput @default(NONE)
 
   template              EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   group                 EvalFormGroup?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -461,7 +474,11 @@ model Evaluation {
   evaluatorId       Int
   subjectId         Int
   status            EvalStatus @default(DRAFT)
-  shiftDate         DateTime?  @db.Date
+  /// The day being evaluated.
+  evalDate          DateTime?  @db.Date
+  /// Set when the trainee asked for this rather than the trainer starting it.
+  requestedById     Int?
+  requestedAt       DateTime?
   notes             String?
   /// The evaluator's overall verdict, and whether they would promote.
   outcome           EvalOutcome?
@@ -473,6 +490,7 @@ model Evaluation {
 
   template  EvalFormTemplate @relation(fields: [templateId], references: [id])
   evaluator Member           @relation("Evaluator", fields: [evaluatorId], references: [id])
+  requestedBy Member?        @relation("EvalRequester", fields: [requestedById], references: [id])
   subject   Member           @relation("EvalSubject", fields: [subjectId], references: [id])
   scores    EvalScore[]
 
