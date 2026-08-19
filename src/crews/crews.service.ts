@@ -175,6 +175,8 @@ export class CrewsService {
         date: dateStr,
         weekday: WEEKDAY_NAMES[weekdayOf(dateStr)],
         historical,
+        outOfService: crew.outOfService,
+        outOfServiceReason: crew.outOfServiceReason,
         slots,
       });
     }
