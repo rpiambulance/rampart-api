@@ -206,6 +206,8 @@ const ALL = [
   'vehicles:manage',
   'tokens:manage',
   'dispatches:ingest',
+  'run-numbers:manage',
+  'chores:manage',
   'dispatches:read',
   'audit:read',
   'integrations:manage',
