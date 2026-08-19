@@ -5,8 +5,13 @@ import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
+import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { SLACK_CHANNELS, SLACK_SETTING_KEY, type SlackConfig } from './slack-settings';
+import {
+  SLACK_CHANNELS,
+  SLACK_SETTING_KEY,
+  type SlackConfig,
+} from './slack-settings';
 import { SlackService } from './slack.service';
 
 class SlackSettingsDto {
@@ -53,7 +58,9 @@ export class SlackSettingsController {
   @Put()
   async save(@CurrentAuth() auth: AuthContext, @Body() body: SlackSettingsDto) {
     const existing = (
-      await this.prisma.appSetting.findUnique({ where: { key: SLACK_SETTING_KEY } })
+      await this.prisma.appSetting.findUnique({
+        where: { key: SLACK_SETTING_KEY },
+      })
     )?.value as unknown as SlackConfig | undefined;
 
     const channels: Record<string, string | null> = {};
@@ -64,7 +71,9 @@ export class SlackSettingsController {
       // Undefined means unchanged, so editing a channel does not require
       // retyping a token the form never showed.
       botToken:
-        body.botToken === undefined ? (existing?.botToken ?? null) : body.botToken || null,
+        body.botToken === undefined
+          ? (existing?.botToken ?? null)
+          : body.botToken || null,
       signingSecret:
         body.signingSecret === undefined
           ? (existing?.signingSecret ?? null)
@@ -72,10 +81,13 @@ export class SlackSettingsController {
       channels,
     };
 
+    // Through `unknown`: a plain `as object` is stripped by the lint rule for
+    // unnecessary assertions, which leaves it failing to compile.
+    const stored = value as unknown as Prisma.InputJsonObject;
     await this.prisma.appSetting.upsert({
       where: { key: SLACK_SETTING_KEY },
-      create: { key: SLACK_SETTING_KEY, value: value as object },
-      update: { value: value as object },
+      create: { key: SLACK_SETTING_KEY, value: stored },
+      update: { value: stored },
     });
     this.slack.invalidate();
     await this.audit.log(auth, 'settings.slack.save', 'AppSetting', undefined, {

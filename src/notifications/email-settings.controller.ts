@@ -91,7 +91,8 @@ export class EmailSettingsController {
       user: body.user?.trim() || null,
       // Undefined means "unchanged", so an administrator editing the host does
       // not have to retype a password the form never showed them.
-      pass: body.pass === undefined ? (existing?.pass ?? null) : body.pass || null,
+      pass:
+        body.pass === undefined ? (existing?.pass ?? null) : body.pass || null,
       from: body.from.trim(),
       ehloName: body.ehloName?.trim() || null,
     };

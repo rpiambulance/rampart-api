@@ -12,6 +12,26 @@ import {
 } from './message-types';
 
 /** A message bound for a member's inbox, and possibly other channels. */
+/**
+ * A portal path as something somebody can click from outside the portal.
+ *
+ * Task URLs are stored relative because that is what the inbox needs, so the
+ * base is only attached at the point a message leaves for email or Slack.
+ * Anything already absolute is left alone.
+ */
+export function portalUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = (
+    process.env.WEB_BASE_URL ??
+    process.env.WEB_ORIGIN?.split(',')[0] ??
+    ''
+  )
+    .trim()
+    .replace(/\/$/, '');
+  if (!base) return path;
+  return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
 export interface Notice {
   /** Message type key; decides email/Slack delivery. See message-types.ts. */
   type: string;
@@ -96,7 +116,11 @@ export class NotificationsService {
   private readonly envMailer?: nodemailer.Transporter;
   private readonly envEmailFrom?: string;
   /** Rebuilt when the console saves new settings. */
-  private stored?: { at: number; transport?: nodemailer.Transporter; from?: string };
+  private stored?: {
+    at: number;
+    transport?: nodemailer.Transporter;
+    from?: string;
+  };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -198,8 +222,11 @@ export class NotificationsService {
     });
     if (!member) return;
 
+    // Absolute for anything leaving the building. The inbox keeps the
+    // relative path — it is an in-app link — but a bare "/availability" in an
+    // email or a Slack message is not a link at all, just text.
     const body = notice.task
-      ? `${notice.body}\n\n${notice.task.actionLabel}: ${notice.task.actionUrl}`
+      ? `${notice.body}\n\n${notice.task.actionLabel}: ${portalUrl(notice.task.actionUrl)}`
       : notice.body;
 
     if (wanted.email && member.email) {
@@ -210,7 +237,6 @@ export class NotificationsService {
       await this.slack.postTo(member.slackId, `*${notice.subject}*\n${body}`);
     }
   }
-
 
   /** Raw email to an outside address (e.g. coverage requesters). */
   async sendEmail(to: string, subject: string, body: string): Promise<boolean> {
@@ -342,15 +368,19 @@ export class NotificationsService {
     for (const assignment of assignments) {
       await this.notify(assignment.memberId, notice);
     }
-    // The officers channel still gets one post, rather than one per officer.
-    await this.postSlack('officers', `*${notice.subject}*\n${notice.body}`);
+    // The officers channel still gets one post, rather than one per officer —
+    // carrying the link, since a channel post nobody can act on from is just
+    // an announcement that something needs doing somewhere else.
+    const body = notice.task
+      ? `${notice.body}\n\n${notice.task.actionLabel}: ${portalUrl(notice.task.actionUrl)}`
+      : notice.body;
+    await this.postSlack('officers', `*${notice.subject}*\n${body}`);
     if (!assignments.length) {
       this.logger.warn(
         `notice for officers had nobody to reach :: ${notice.subject}`,
       );
     }
   }
-
 
   /** Slack is a courtesy copy; where it posts is configured in the console. */
   private async postSlack(channelKey: string, text: string): Promise<boolean> {
