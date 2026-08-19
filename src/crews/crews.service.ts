@@ -421,8 +421,20 @@ export class CrewsService {
   ) {
     const slot = await this.prisma.crewSlot.findUnique({
       where: { crewId_position: { crewId, position } },
+      include: { crew: { select: { outOfService: true } } },
     });
     if (!slot) throw new NotFoundException('Slot not found');
+    // Filling a seat on a night nobody is running contradicts the night. The
+    // duty supervisor is the exception, as everywhere else.
+    if (
+      slot.crew.outOfService &&
+      position !== 'DUTY_SUP' &&
+      (target.memberId || target.placeholder)
+    ) {
+      throw new ForbiddenException(
+        'That night is out of service. Put it back in service before filling seats.',
+      );
+    }
     const before = { memberId: slot.memberId, placeholder: slot.placeholder };
     await this.prisma.crewSlot.update({
       where: { id: slot.id },
@@ -740,7 +752,12 @@ export class CrewsService {
     const onDefault = await this.prisma.defaultCrewTemplate.findFirst({
       where: { memberId, weekday: weekdayOf(dateStr) },
     });
-    if (heldSlots.length || onDefault) {
+    const night = await this.prisma.crew.findUnique({
+      where: { date: toDbDate(dateStr) },
+      select: { outOfService: true },
+    });
+    // Nothing to fill on a night nobody is running, so nobody is asked to.
+    if ((heldSlots.length || onDefault) && !night?.outOfService) {
       await this.notifications.notifyOfficerInboxes({
         type: 'crew.unfilled',
         subject: `Crew absence: ${member.firstName} ${member.lastName} — ${weekday} ${dateStr}`,
