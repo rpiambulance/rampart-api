@@ -4,8 +4,14 @@ import { AccessLogService } from '../audit/access-log.service';
 import type { AuthContext } from '../auth/auth-context';
 import { clientIp, requestContext } from './request-context';
 
-/** Health checks are the load balancer talking to itself; nothing to record. */
-const IGNORED = [/^\/health/, /^\/docs/, /^\/favicon\.ico$/];
+/**
+ * Health checks are the load balancer talking to itself; nothing to record.
+ *
+ * The version prefix is optional in these patterns because routes are served
+ * under /v1 while the path a probe uses may not be — matching only the bare
+ * form let every health check through into the log.
+ */
+const IGNORED = [/^(\/v\d+)?\/health/, /^(\/v\d+)?\/docs/, /^\/favicon\.ico$/];
 
 /**
  * Puts the request where the rest of the process can find it, and records

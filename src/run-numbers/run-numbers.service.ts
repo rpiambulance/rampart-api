@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { nyNow } from '../common/dates';
+import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   DEFAULT_DIVISIONS,
@@ -185,10 +186,13 @@ export class RunNumbersService {
   }
 
   async saveDivisions(auth: AuthContext, config: DivisionConfig) {
+    // Through `unknown`: a plain `as object` is stripped by the lint rule for
+    // unnecessary assertions, which then leaves it failing to compile.
+    const value = config as unknown as Prisma.InputJsonObject;
     await this.prisma.appSetting.upsert({
       where: { key: DIVISION_SETTING_KEY },
-      create: { key: DIVISION_SETTING_KEY, value: config as object },
-      update: { value: config as object },
+      create: { key: DIVISION_SETTING_KEY, value },
+      update: { value },
     });
     await this.audit.log(
       auth,

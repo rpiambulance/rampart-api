@@ -381,15 +381,22 @@ export async function ensureReferenceData(
   const created: string[] = [];
   const record: Array<{ kind: string; key: string }> = [];
 
-  /** Runs `create` only if this key has never been provisioned. */
+  /**
+   * Runs `create` only if this key has never been provisioned, and records it
+   * only if the work actually happened.
+   *
+   * `create` returning false means it could not proceed — an edge whose
+   * endpoints are not there yet, say. Recording the key regardless would mark
+   * undone work as done and it would never be attempted again.
+   */
   const once = async (
     kind: string,
     key: string,
     label: string,
-    create: () => Promise<void>,
+    create: () => Promise<boolean | void>,
   ) => {
     if (ledger.has(ledgerKey(kind, key))) return;
-    await create();
+    if ((await create()) === false) return;
     record.push({ kind, key });
     created.push(label);
   };
@@ -439,7 +446,7 @@ export async function ensureReferenceData(
           const required = await prisma.credentialType.findUnique({
             where: { key: requiredKey },
           });
-          if (!required) return;
+          if (!required) return false;
           await prisma.credentialPrerequisite.upsert({
             where: {
               credentialTypeId_requiresTypeId: {
@@ -513,7 +520,9 @@ export async function ensureReferenceData(
           const lower = await prisma.certificationType.findUnique({
             where: { name: lowerName },
           });
-          if (!higher || !lower) return;
+          // One end is missing — perhaps deleted deliberately. Leave the edge
+          // unrecorded so it is reconsidered if the type comes back.
+          if (!higher || !lower) return false;
           await prisma.certificationSupersession.upsert({
             where: {
               higherTypeId_lowerTypeId: {
@@ -534,6 +543,8 @@ export async function ensureReferenceData(
       const existingRole = await prisma.role.findUnique({
         where: { name: role.name },
       });
+      // Already there: record it so it is never reconsidered, but leave its
+      // permissions alone — one removed in the console stays removed.
       if (existingRole) return;
       await prisma.role.create({
         data: {
