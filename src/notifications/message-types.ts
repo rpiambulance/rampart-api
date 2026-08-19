@@ -105,6 +105,13 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'checklist.started',
+    label: 'Checklist to work through',
+    description: 'A trainer has started a member on a checklist.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'checklist.complete',
     label: 'Checklist finished',
     description: 'Every line of a training checklist has been signed off.',

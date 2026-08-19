@@ -14,6 +14,13 @@ import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { ChecklistsService } from './checklists.service';
 
+class StartDto {
+  /** Omitted means the caller themselves. */
+  @IsOptional()
+  @IsInt()
+  memberId?: number;
+}
+
 class SignDto {
   @IsInt()
   memberId!: number;
@@ -61,6 +68,50 @@ export class ChecklistsController {
     return this.checklists.mine(requireMember(auth));
   }
 
+  /** What this member could start but has not. */
+  @Get('available')
+  available(@CurrentAuth() auth: AuthContext) {
+    return this.checklists.availableTo(requireMember(auth));
+  }
+
+  /**
+   * Start a checklist. Omit memberId to start your own; naming somebody else
+   * needs the credential that signs its lines.
+   */
+  @Post(':templateId/start')
+  start(
+    @CurrentAuth() auth: AuthContext,
+    @Param('templateId', ParseIntPipe) templateId: number,
+    @Body() body: StartDto,
+  ) {
+    return this.checklists.start(
+      auth,
+      templateId,
+      body.memberId ?? requireMember(auth),
+    );
+  }
+
+  @Post(':templateId/unstart')
+  @RequirePermissions(PERMISSIONS.MEMBERS_READ)
+  unstart(
+    @CurrentAuth() auth: AuthContext,
+    @Param('templateId', ParseIntPipe) templateId: number,
+    @Body() body: StartDto,
+  ) {
+    return this.checklists.unstart(
+      auth,
+      templateId,
+      body.memberId ?? requireMember(auth),
+    );
+  }
+
+  /** Who a trainer could start this for. */
+  @Get(':templateId/not-started')
+  @RequirePermissions(PERMISSIONS.MEMBERS_READ)
+  notStarted(@Param('templateId', ParseIntPipe) templateId: number) {
+    return this.checklists.notStarted(templateId);
+  }
+
   @Get(':templateId/members')
   @RequirePermissions(PERMISSIONS.MEMBERS_READ)
   subjects(@Param('templateId', ParseIntPipe) templateId: number) {
@@ -75,7 +126,10 @@ export class ChecklistsController {
   ) {
     const viewer = requireMember(auth);
     // Anyone may read their own; reading someone else's is a roster matter.
-    if (viewer !== memberId && !auth.permissions.has(PERMISSIONS.MEMBERS_READ)) {
+    if (
+      viewer !== memberId &&
+      !auth.permissions.has(PERMISSIONS.MEMBERS_READ)
+    ) {
       throw new ForbiddenException('Not your checklist');
     }
     return this.checklists.progress(templateId, memberId);

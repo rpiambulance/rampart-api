@@ -72,7 +72,9 @@ export class ChecklistsService {
         kind: 'CHECKLIST',
         evalTemplateId: { in: templates.map((t) => t.id) },
       },
-      include: { credentialType: { select: { id: true, key: true, name: true } } },
+      include: {
+        credentialType: { select: { id: true, key: true, name: true } },
+      },
     });
     return templates.map((template) => ({
       ...template,
@@ -117,29 +119,28 @@ export class ChecklistsService {
   }
 
   /**
-   * Who this checklist is currently for: active members who do not yet hold
-   * the credential it leads to. A checklist attached to no credential applies
-   * to everyone, since nothing says who has finished with it.
+   * Who is working through this checklist: the members started on it, and
+   * nobody else. Somebody who has not been started on one has not been asked
+   * to do it, and a trainer's list should say who is actually waiting.
    */
   async subjects(templateId: number) {
     const template = await this.templateOrThrow(templateId);
-    const credential = await this.leadsTo(templateId);
     const lineIds = this.lines(template);
 
-    const members = await this.prisma.member.findMany({
-      where: {
-        active: true,
-        ...(credential
-          ? {
-              credentials: {
-                none: { typeId: credential.id, status: 'ACTIVE' },
-              },
-            }
-          : {}),
+    const enrollments = await this.prisma.checklistEnrollment.findMany({
+      where: { templateId, member: { active: true } },
+      include: {
+        member: { select: { id: true, firstName: true, lastName: true } },
+        startedBy: { select: { firstName: true, lastName: true } },
       },
-      select: { id: true, firstName: true, lastName: true },
-      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
+    const members = enrollments
+      .map((enrollment) => enrollment.member)
+      .sort(
+        (a, b) =>
+          a.lastName.localeCompare(b.lastName) ||
+          a.firstName.localeCompare(b.firstName),
+      );
 
     const signoffs = await this.prisma.checklistSignoff.findMany({
       where: {
@@ -156,14 +157,48 @@ export class ChecklistsService {
         (latest, s) => (!latest || s.signedAt > latest ? s.signedAt : latest),
         null,
       );
+      const enrollment = enrollments.find((e) => e.memberId === member.id);
       return {
         member,
         signed: mine.length,
         total: lineIds.length,
         complete: lineIds.length > 0 && mine.length === lineIds.length,
         lastSignedAt: lastAt,
+        startedAt: enrollment?.startedAt ?? null,
+        startedBy: enrollment?.startedBy
+          ? `${enrollment.startedBy.firstName} ${enrollment.startedBy.lastName}`
+          : null,
       };
     });
+  }
+
+  /** Active members not yet started on this checklist, for a trainer to add. */
+  async notStarted(templateId: number) {
+    const credential = await this.leadsTo(templateId);
+    const started = new Set(
+      (
+        await this.prisma.checklistEnrollment.findMany({
+          where: { templateId },
+          select: { memberId: true },
+        })
+      ).map((row) => row.memberId),
+    );
+    const members = await this.prisma.member.findMany({
+      where: {
+        active: true,
+        // Somebody already holding what it leads to has nothing to gain.
+        ...(credential
+          ? {
+              credentials: {
+                none: { typeId: credential.id, status: 'ACTIVE' },
+              },
+            }
+          : {}),
+      },
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+    return members.filter((member) => !started.has(member.id));
   }
 
   /**
@@ -229,22 +264,155 @@ export class ChecklistsService {
     };
   }
 
-  /** Checklists that apply to this member, with their own progress. */
+  /** Checklists this member has started, with their progress. */
   async mine(memberId: number) {
-    const templates = await this.listTemplates();
-    const held = await this.graph.heldKeys(memberId);
+    const enrollments = await this.prisma.checklistEnrollment.findMany({
+      where: { memberId, template: { kind: 'CHECKLIST', active: true } },
+      orderBy: { startedAt: 'asc' },
+    });
     const out: Array<Awaited<ReturnType<ChecklistsService['progress']>>> = [];
+    for (const enrollment of enrollments) {
+      out.push(await this.progress(enrollment.templateId, memberId));
+    }
+    return out;
+  }
+
+  /**
+   * Checklists this member could start but has not.
+   *
+   * Filtered to what is still ahead of them: a checklist leading to a
+   * credential they already hold has nothing left to offer, and listing it
+   * would be inviting somebody to redo qualifying work.
+   */
+  async availableTo(memberId: number) {
+    const templates = await this.listTemplates();
+    const started = new Set(
+      (
+        await this.prisma.checklistEnrollment.findMany({
+          where: { memberId },
+          select: { templateId: true },
+        })
+      ).map((row) => row.templateId),
+    );
+    const held = await this.graph.heldKeys(memberId);
+
+    const out: typeof templates = [];
     for (const template of templates) {
-      // Finished with it once they hold what it leads to.
+      if (started.has(template.id)) continue;
       const done = await Promise.all(
         template.leadsTo.map((credential) =>
           this.graph.satisfies(held, credential.key),
         ),
       );
       if (template.leadsTo.length && done.every(Boolean)) continue;
-      out.push(await this.progress(template.id, memberId));
+      out.push(template);
     }
     return out;
+  }
+
+  /**
+   * Starts a checklist for somebody.
+   *
+   * Your own is always yours to start. Starting one for another member is a
+   * trainer's job, so it asks for the same credential signing a line does —
+   * the person who would be signing it is the person who should be putting
+   * them on it.
+   */
+  async start(auth: AuthContext, templateId: number, memberId: number) {
+    const actorId = auth.kind === 'member' ? auth.memberId : null;
+    const template = await this.templateOrThrow(templateId);
+
+    if (actorId !== memberId) {
+      const required = template.signoffCredentialTypes;
+      const held = actorId
+        ? await this.graph.heldKeys(actorId)
+        : new Set<string>();
+      const qualifies = await Promise.all(
+        required.map((credential) =>
+          this.graph.satisfies(held, credential.key),
+        ),
+      );
+      if (!qualifies.some(Boolean)) {
+        throw new ForbiddenException(
+          `Starting this for somebody else needs ${required
+            .map((credential) => credential.name)
+            .join(' or ')}, or above.`,
+        );
+      }
+    }
+
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: { active: true, firstName: true, lastName: true },
+    });
+    if (!member?.active) throw new NotFoundException('Member not found');
+
+    // Idempotent: starting one that is already going is not an error, it is
+    // the same state somebody expected to arrive at.
+    const enrollment = await this.prisma.checklistEnrollment.upsert({
+      where: { templateId_memberId: { templateId, memberId } },
+      create: { templateId, memberId, startedById: actorId },
+      update: {},
+    });
+
+    await this.audit.log(
+      auth,
+      'checklist.start',
+      'ChecklistEnrollment',
+      enrollment.id,
+      {
+        templateId,
+        memberId,
+        checklist: template.name,
+      },
+    );
+
+    // Told only when somebody else put them on it; starting your own needs no
+    // announcement.
+    if (actorId !== memberId) {
+      await this.notifications.notify(memberId, {
+        type: 'checklist.started',
+        subject: `Checklist to work through: ${template.name}`,
+        body: `You have been started on ${template.name}. Trainers sign each line as they see it done.`,
+        task: {
+          actionLabel: 'See what it asks for',
+          actionUrl: `/checklists/${templateId}/${memberId}`,
+        },
+      });
+    }
+    return enrollment;
+  }
+
+  /**
+   * Takes somebody off a checklist they should not have been started on.
+   *
+   * Refused once anything has been signed: that is a record of work somebody
+   * witnessed, and dropping the enrolment would orphan it.
+   */
+  async unstart(auth: AuthContext, templateId: number, memberId: number) {
+    const template = await this.templateOrThrow(templateId);
+    const signed = await this.prisma.checklistSignoff.count({
+      where: { ...LIVE, memberId, itemId: { in: this.lines(template) } },
+    });
+    if (signed) {
+      throw new BadRequestException(
+        'Lines have already been signed off; withdraw those first.',
+      );
+    }
+    await this.prisma.checklistEnrollment.deleteMany({
+      where: { templateId, memberId },
+    });
+    await this.audit.log(
+      auth,
+      'checklist.unstart',
+      'ChecklistEnrollment',
+      undefined,
+      {
+        templateId,
+        memberId,
+      },
+    );
+    return { ok: true };
   }
 
   /** Who may sign one line: the item's own set, or the checklist's. */
@@ -311,13 +479,24 @@ export class ChecklistsService {
     }
 
     const signoff = await this.prisma.checklistSignoff.create({
-      data: { itemId, memberId, signedById: signerId, note: note?.trim() || null },
+      data: {
+        itemId,
+        memberId,
+        signedById: signerId,
+        note: note?.trim() || null,
+      },
     });
-    await this.audit.log(auth, 'checklist.sign', 'ChecklistSignoff', signoff.id, {
-      itemId,
-      memberId,
-      prompt: item.prompt,
-    });
+    await this.audit.log(
+      auth,
+      'checklist.sign',
+      'ChecklistSignoff',
+      signoff.id,
+      {
+        itemId,
+        memberId,
+        prompt: item.prompt,
+      },
+    );
 
     await this.announceIfComplete(item.templateId, memberId);
     return signoff;
@@ -357,11 +536,17 @@ export class ChecklistsService {
         revokeReason: reason?.trim() || null,
       },
     });
-    await this.audit.log(auth, 'checklist.revoke', 'ChecklistSignoff', signoffId, {
-      itemId: signoff.itemId,
-      memberId: signoff.memberId,
-      reason: reason ?? null,
-    });
+    await this.audit.log(
+      auth,
+      'checklist.revoke',
+      'ChecklistSignoff',
+      signoffId,
+      {
+        itemId: signoff.itemId,
+        memberId: signoff.memberId,
+        reason: reason ?? null,
+      },
+    );
     await this.notifications.notify(signoff.memberId, {
       type: 'checklist.revoked',
       subject: `A checklist sign-off was withdrawn: ${signoff.item.prompt}`,
@@ -404,7 +589,9 @@ export class ChecklistsService {
         subject: `${who} finished ${template.name}`,
         body:
           `${who} has every line of ${template.name} signed off` +
-          (credential ? `, which is a requirement for ${credential.name}.` : '.'),
+          (credential
+            ? `, which is a requirement for ${credential.name}.`
+            : '.'),
         task: {
           actionLabel: 'Review the checklist',
           actionUrl: `/checklists/${templateId}/${memberId}`,
@@ -422,7 +609,9 @@ export class ChecklistsService {
           where: { groupId: null },
           select: { id: true, scoreType: true },
         },
-        groups: { include: { items: { select: { id: true, scoreType: true } } } },
+        groups: {
+          include: { items: { select: { id: true, scoreType: true } } },
+        },
       },
     });
     if (!template) return false;
