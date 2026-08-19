@@ -6,6 +6,7 @@ import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SettingsService } from '../settings/settings.service';
+import { SlackService } from '../notifications/slack.service';
 import { StorageService } from '../storage/storage.service';
 
 @Global()
@@ -18,6 +19,7 @@ import { StorageService } from '../storage/storage.service';
     KeycloakAdminService,
     NotificationsService,
     SettingsService,
+    SlackService,
     StorageService,
   ],
   exports: [
@@ -28,6 +30,7 @@ import { StorageService } from '../storage/storage.service';
     KeycloakAdminService,
     NotificationsService,
     SettingsService,
+    SlackService,
     StorageService,
   ],
 })

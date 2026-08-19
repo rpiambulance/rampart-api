@@ -13,6 +13,7 @@ import { isDateOnly, nyDayEnd, nyDayStart } from '../common/dates';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 
 /**
  * Ingestion + log of text-message dispatches from Herald (techinems/herald).
@@ -31,7 +32,10 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 @Controller({ version: '1' })
 export class DispatchesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly webhooks: WebhooksService,
+  ) {}
 
   private async validateIngestToken(raw?: string): Promise<void> {
     if (!raw?.startsWith('rpa_')) {
@@ -87,6 +91,14 @@ export class DispatchesController {
         geocodedPlace: str(body['geocoded_place']),
         raw: body as object,
       },
+    });
+    this.webhooks.emit('dispatch.received', {
+      id: dispatch.id,
+      determinant: dispatch.determinant,
+      complaint: dispatch.complaint,
+      location: dispatch.location,
+      units: dispatch.units,
+      receivedAt: dispatch.receivedAt.toISOString(),
     });
     return { ok: true, id: dispatch.id };
   }

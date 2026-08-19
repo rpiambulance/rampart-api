@@ -20,12 +20,10 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { SettingsService } from '../settings/settings.service';
 import { CrewPosition } from '../generated/prisma/enums';
-import {
-  CrewEligibilityService,
-  DayContext,
-} from './crew-eligibility.service';
+import { CrewEligibilityService, DayContext } from './crew-eligibility.service';
 
 export const CREW_POSITIONS: CrewPosition[] = [
   'CC',
@@ -71,6 +69,7 @@ export class CrewsService {
     private readonly eligibility: CrewEligibilityService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly webhooks: WebhooksService,
   ) {}
 
   // ---------------------------------------------------------------- queries
@@ -111,7 +110,8 @@ export class CrewsService {
       select: { dob: true },
     });
     const heldKeys = await this.graph.heldKeys(memberId);
-    const outstandingTraining = await this.outstandingBlockingTraining(memberId);
+    const outstandingTraining =
+      await this.outstandingBlockingTraining(memberId);
 
     const weeks: Array<Array<Record<string, unknown>>> = [[], []];
     for (let i = 0; i < 14; i++) {
@@ -263,7 +263,9 @@ export class CrewsService {
    * directly or from a role conferred by a credential they hold — the same
    * two sources the auth guard unions.
    */
-  private async membersWithPermission(permission: string): Promise<Set<number>> {
+  private async membersWithPermission(
+    permission: string,
+  ): Promise<Set<number>> {
     const today = nyToday();
     const [byRole, byCredential] = await Promise.all([
       this.prisma.memberRole.findMany({
@@ -280,7 +282,9 @@ export class CrewsService {
           status: 'ACTIVE',
           member: { active: true },
           type: {
-            linkedRoles: { some: { role: { permissions: { some: { permission } } } } },
+            linkedRoles: {
+              some: { role: { permissions: { some: { permission } } } },
+            },
           },
         },
         select: { memberId: true },
@@ -321,6 +325,14 @@ export class CrewsService {
       },
     });
     if (!crew) throw new NotFoundException('Crew not found');
+    // A night out of service still has a duty supervisor — somebody carries
+    // the phone whether or not a crew is running — so that seat stays open
+    // and the rest are closed.
+    if (crew.outOfService && position !== 'DUTY_SUP') {
+      throw new ForbiddenException(
+        'That night is out of service; only the duty supervisor seat is filled.',
+      );
+    }
 
     const dateStr = fromDbDate(crew.date);
     const now = nyNow();
@@ -433,7 +445,10 @@ export class CrewsService {
   async ensureCrewsExist(fromDate: string, days: number) {
     const existing = await this.prisma.crew.findMany({
       where: {
-        date: { gte: toDbDate(fromDate), lt: toDbDate(addDays(fromDate, days)) },
+        date: {
+          gte: toDbDate(fromDate),
+          lt: toDbDate(addDays(fromDate, days)),
+        },
       },
       select: { date: true },
     });
@@ -441,7 +456,10 @@ export class CrewsService {
     const template = await this.prisma.defaultCrewTemplate.findMany();
     const absences = await this.prisma.crewAbsence.findMany({
       where: {
-        date: { gte: toDbDate(fromDate), lt: toDbDate(addDays(fromDate, days)) },
+        date: {
+          gte: toDbDate(fromDate),
+          lt: toDbDate(addDays(fromDate, days)),
+        },
       },
     });
     const absentOn = new Set(
@@ -478,6 +496,65 @@ export class CrewsService {
   }
 
   /** Scheduler assignment to any future date — creates the week on demand. */
+  /**
+   * Takes a night out of service, or puts it back.
+   *
+   * The duty supervisor seat is deliberately left alone: an out-of-service
+   * night still needs somebody reachable, and clearing it here would quietly
+   * undo an assignment that has to be changed on purpose. Every other seat is
+   * emptied, since nobody is riding.
+   */
+  async setOutOfService(
+    auth: AuthContext,
+    dateStr: string,
+    outOfService: boolean,
+    reason?: string,
+  ) {
+    const actingMemberId = auth.kind === 'member' ? auth.memberId : null;
+    const crew = await this.prisma.crew.upsert({
+      where: { date: toDbDate(dateStr) },
+      create: { date: toDbDate(dateStr) },
+      update: {},
+      include: { slots: true },
+    });
+
+    const updated = await this.prisma.crew.update({
+      where: { id: crew.id },
+      data: {
+        outOfService,
+        outOfServiceReason: outOfService ? reason?.trim() || null : null,
+        outOfServiceAt: outOfService ? new Date() : null,
+        outOfServiceById: outOfService ? actingMemberId : null,
+      },
+    });
+
+    let cleared = 0;
+    if (outOfService) {
+      const { count } = await this.prisma.crewSlot.updateMany({
+        where: {
+          crewId: crew.id,
+          position: { not: 'DUTY_SUP' },
+          OR: [{ memberId: { not: null } }, { placeholder: { not: null } }],
+        },
+        data: { memberId: null, placeholder: null },
+      });
+      cleared = count;
+    }
+
+    await this.audit.log(auth, 'crews.out-of-service', 'Crew', crew.id, {
+      date: dateStr,
+      outOfService,
+      reason: reason ?? null,
+      slotsCleared: cleared,
+    });
+    this.webhooks.emit('crew.out-of-service', {
+      date: dateStr,
+      outOfService,
+      reason: reason ?? null,
+    });
+    return { date: dateStr, outOfService: updated.outOfService, cleared };
+  }
+
   async assignByDate(
     auth: AuthContext,
     dateStr: string,
@@ -509,9 +586,9 @@ export class CrewsService {
     action: 'clear' | 'apply-defaults',
   ) {
     const now = nyNow();
-    const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter(
-      (d) => d >= now.dateStr,
-    );
+    const dates = Array.from({ length: 7 }, (_, i) =>
+      addDays(weekStart, i),
+    ).filter((d) => d >= now.dateStr);
     if (!dates.length) {
       throw new ConflictException('That week has already passed');
     }
@@ -519,7 +596,10 @@ export class CrewsService {
     const template = await this.prisma.defaultCrewTemplate.findMany();
     const absences = await this.prisma.crewAbsence.findMany({
       where: {
-        date: { gte: toDbDate(dates[0]), lte: toDbDate(dates[dates.length - 1]) },
+        date: {
+          gte: toDbDate(dates[0]),
+          lte: toDbDate(dates[dates.length - 1]),
+        },
       },
     });
     const absentOn = new Set(
@@ -546,7 +626,8 @@ export class CrewsService {
         // apply-defaults only fills what is empty; it never displaces anyone.
         if (slot.memberId !== null || slot.placeholder !== null) continue;
         const dflt = template.find(
-          (t) => t.weekday === weekdayOf(dateStr) && t.position === slot.position,
+          (t) =>
+            t.weekday === weekdayOf(dateStr) && t.position === slot.position,
         );
         if (!dflt) continue;
         const memberId =
@@ -580,7 +661,10 @@ export class CrewsService {
       orderBy: { crew: { date: 'asc' } },
     });
     const knobs = await this.settings.scheduling();
-    const publicEnd = addDays(startOfWeek(nyNow().dateStr), 7 * knobs.publicWeeks);
+    const publicEnd = addDays(
+      startOfWeek(nyNow().dateStr),
+      7 * knobs.publicWeeks,
+    );
     return slots.map((slot) => ({
       crewId: slot.crewId,
       date: fromDbDate(slot.crew.date),

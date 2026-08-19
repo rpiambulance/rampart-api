@@ -124,7 +124,9 @@ export class CrewEligibilityService {
     }
   }
 
-  private async riderEligibility(input: EligibilityInput): Promise<Eligibility> {
+  private async riderEligibility(
+    input: EligibilityInput,
+  ): Promise<Eligibility> {
     const { member, position, dateStr, now, knobs, day } = input;
     const held = member.heldKeys;
 
@@ -154,7 +156,8 @@ export class CrewEligibilityService {
         (d) => d !== dateStr,
       ).length;
       const dayOfUnlocked =
-        now.dateStr === dateStr && now.minutes >= parseHm(knobs.dayOfUnlockTime);
+        now.dateStr === dateStr &&
+        now.minutes >= parseHm(knobs.dayOfUnlockTime);
       if (timesOn > 0 && !dayOfUnlocked) {
         return {
           eligible: false,

@@ -77,7 +77,10 @@ export class CredentialGraphService {
   }
 
   /** Does this set of ACTIVE credential keys satisfy `requiredKey` ("or above")? */
-  async satisfies(heldKeys: Set<string>, requiredKey: string): Promise<boolean> {
+  async satisfies(
+    heldKeys: Set<string>,
+    requiredKey: string,
+  ): Promise<boolean> {
     const { satisfiedBy } = await this.graph();
     const satisfying = satisfiedBy.get(requiredKey);
     if (!satisfying) return false;

@@ -83,6 +83,14 @@ class RequirementDto {
   @IsInt()
   evalTemplateId?: number;
 
+  /**
+   * Requirements sharing a label are alternatives: meeting any one of them
+   * meets the group.
+   */
+  @IsOptional()
+  @IsString()
+  alternativeGroup?: string;
+
   @IsOptional()
   @IsInt()
   count?: number;
@@ -150,7 +158,9 @@ export class CredentialsController {
 
   @Delete('requirements/:requirementId')
   @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
-  removeRequirement(@Param('requirementId', ParseIntPipe) requirementId: number) {
+  removeRequirement(
+    @Param('requirementId', ParseIntPipe) requirementId: number,
+  ) {
     return this.credentials.removeRequirement(requirementId);
   }
 
@@ -200,7 +210,11 @@ export class CredentialsController {
     @CurrentAuth() auth: AuthContext,
     @Body() body: TrainerGrantDto,
   ) {
-    return this.credentials.trainerGrant(auth, body.memberId, body.credentialKey);
+    return this.credentials.trainerGrant(
+      auth,
+      body.memberId,
+      body.credentialKey,
+    );
   }
 
   @Post('grant')

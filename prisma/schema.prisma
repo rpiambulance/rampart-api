@@ -50,6 +50,10 @@ model Member {
   evaluationsWritten Evaluation[]          @relation("Evaluator")
   evaluationsAbout   Evaluation[]          @relation("EvalSubject")
   checklistSignoffs  ChecklistSignoff[]    @relation("ChecklistSubject")
+  crewsTakenOutOfService Crew[]            @relation("CrewOutOfServiceBy")
+  webhooksCreated    Webhook[]             @relation("WebhookCreator")
+  choresAssigned     Chore[]               @relation("ChoreAssignee")
+  choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
   checklistSigned    ChecklistSignoff[]    @relation("ChecklistSigner")
   checklistRevoked   ChecklistSignoff[]    @relation("ChecklistRevoker")
   promotionRequests  PromotionRequest[]
@@ -264,6 +268,11 @@ model CredentialRequirement {
   evalTemplateId      Int?
   count               Int?
   classId             Int?
+  /// Requirements sharing a group are alternatives: satisfying any one of
+  /// them satisfies the group. Null means the requirement stands alone and
+  /// must be met. A label rather than a number so the checklist can say
+  /// "Driving qualification: any of…" instead of "group 2".
+  alternativeGroup    String?
 
   credentialType    CredentialType     @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
   certificationType CertificationType? @relation(fields: [certificationTypeId], references: [id])
@@ -602,7 +611,16 @@ enum CrewPosition {
 model Crew {
   id    Int      @id @default(autoincrement())
   date  DateTime @unique @db.Date
-  slots CrewSlot[]
+  /// The agency is not running a crew that night. The duty supervisor seat
+  /// is kept regardless — somebody still carries the phone — so this marks
+  /// the night rather than emptying it.
+  outOfService       Boolean   @default(false)
+  outOfServiceReason String?
+  outOfServiceAt     DateTime?
+  outOfServiceById   Int?
+
+  outOfServiceBy Member?    @relation("CrewOutOfServiceBy", fields: [outOfServiceById], references: [id])
+  slots          CrewSlot[]
 }
 
 model CrewSlot {
@@ -1101,4 +1119,100 @@ model AccessLog {
   @@index([at])
   @@index([memberId, at])
   @@index([path])
+}
+
+/// An outside system asking to be told when something happens here.
+///
+/// Deliveries are attempted in the background and retried a few times: a
+/// webhook that is down must never fail the action that triggered it, and an
+/// event worth sending is usually still worth sending a minute later.
+model Webhook {
+  id          Int      @id @default(autoincrement())
+  name        String
+  url         String
+  /// Event keys this endpoint wants. Empty means every event.
+  events      String[]
+  /// Signs each delivery so the receiver can tell it really came from here.
+  secret      String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  createdById Int?
+  /// Set on the last attempt, successful or not, so a dead endpoint is
+  /// visible in the console without reading delivery rows.
+  lastStatus  Int?
+  lastAt      DateTime?
+  lastError   String?
+
+  createdBy  Member?             @relation("WebhookCreator", fields: [createdById], references: [id])
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id         BigInt   @id @default(autoincrement())
+  webhookId  Int
+  event      String
+  payload    Json
+  attempts   Int      @default(0)
+  status     Int?
+  error      String?
+  deliveredAt DateTime?
+  createdAt  DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+}
+
+enum ChoreCadence {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+/// A recurring job somebody has to do — restocking, checking the rig, taking
+/// out the rubbish.
+///
+/// Chores live here rather than in a spreadsheet so completion is part of the
+/// record; Slack is where they are announced and claimed, not where they are
+/// defined.
+model Chore {
+  id          Int          @id @default(autoincrement())
+  name        String
+  description String?
+  cadence     ChoreCadence @default(WEEKLY)
+  /// WEEKLY: 0 = Sunday. MONTHLY: day of the month. Ignored otherwise.
+  dayOfWeek   Int?
+  dayOfMonth  Int?
+  /// Posted to Slack this many days before it is due.
+  noticeDays  Int          @default(0)
+  active      Boolean      @default(true)
+  /// Who it falls to, when it is somebody's job in particular.
+  assigneeId  Int?
+  createdAt   DateTime     @default(now())
+
+  assignee    Member?          @relation("ChoreAssignee", fields: [assigneeId], references: [id])
+  occurrences ChoreOccurrence[]
+}
+
+/// One instance of a chore on one day.
+model ChoreOccurrence {
+  id          Int       @id @default(autoincrement())
+  choreId     Int
+  dueOn       DateTime  @db.Date
+  completedAt DateTime?
+  completedById Int?
+  /// Whatever the member typed back, from Slack or the portal.
+  note        String?
+  /// Slack message this was announced in, so the post can be updated in place
+  /// when somebody claims it rather than adding another line to the channel.
+  slackChannel String?
+  slackTs      String?
+  postedAt     DateTime?
+
+  chore       Chore   @relation(fields: [choreId], references: [id], onDelete: Cascade)
+  completedBy Member? @relation("ChoreCompleter", fields: [completedById], references: [id])
+
+  @@unique([choreId, dueOn])
+  @@index([dueOn])
 }

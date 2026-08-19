@@ -1,11 +1,18 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    // Slack signs the bytes it sent, so the bytes have to survive parsing:
+    // a re-serialized object does not produce the same signature.
+    rawBody: true,
+  });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
+  // Slash commands and interactions arrive form-encoded.
+  app.useBodyParser('urlencoded', { extended: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableCors({
     origin: process.env.WEB_ORIGIN?.split(',') ?? true,

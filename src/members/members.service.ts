@@ -6,6 +6,7 @@ import { fromDbDate, nyDayStart, nyNow, toDbDate } from '../common/dates';
 import { normalizePhone } from '../common/phone';
 import { grantObserver } from '../credentials/observer';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 
 @Injectable()
 export class MembersService {
@@ -13,6 +14,7 @@ export class MembersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly keycloak: KeycloakAdminService,
+    private readonly webhooks: WebhooksService,
   ) {}
 
   list(includeInactive = false) {
@@ -189,6 +191,11 @@ export class MembersService {
       await this.audit.log(auth, 'members.deactivate', 'Member', target.id, {
         reason,
         via: 'inactivity-review',
+      });
+      this.webhooks.emit('member.deactivated', {
+        memberId: target.id,
+        name: `${target.firstName} ${target.lastName}`,
+        reason,
       });
     }
     return {

@@ -2,6 +2,8 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { AccessLogController } from './audit/access-log.controller';
+import { SlackController } from './slack/slack.controller';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { RequestContextMiddleware } from './common/request-context.middleware';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -50,6 +52,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     EventsModule,
     CredentialsModule,
     CertificationsModule,
+    WebhooksModule,
     ChecklistsModule,
     EvalsModule,
     PromotionsModule,
@@ -68,6 +71,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     InboxController,
     NotificationSettingsController,
     AccessLogController,
+    SlackController,
   ],
   providers: [
     // Registered useExisting (not useClass) so tests can override AuthGuard.

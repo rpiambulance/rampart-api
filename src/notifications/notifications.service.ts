@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
+import { SlackService } from './slack.service';
 import { nyToday } from '../common/dates';
 import { renderEmail } from './email-template';
 import {
@@ -94,13 +95,12 @@ export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private readonly envMailer?: nodemailer.Transporter;
   private readonly envEmailFrom?: string;
-  private readonly slackToken?: string;
-  private readonly officersChannel?: string;
   /** Rebuilt when the console saves new settings. */
   private stored?: { at: number; transport?: nodemailer.Transporter; from?: string };
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly slack: SlackService,
     config: ConfigService,
   ) {
     const smtpUrl = config.get<string>('SMTP_URL');
@@ -108,8 +108,6 @@ export class NotificationsService {
     if (smtpUrl && this.envEmailFrom) {
       this.envMailer = nodemailer.createTransport(smtpUrl);
     }
-    this.slackToken = config.get<string>('SLACK_BOT_TOKEN');
-    this.officersChannel = config.get<string>('SLACK_OFFICERS_CHANNEL');
   }
 
   /** Drop the cached transport so the next send picks up saved settings. */
@@ -207,8 +205,9 @@ export class NotificationsService {
     if (wanted.email && member.email) {
       await this.sendEmail(member.email, notice.subject, body);
     }
-    if (wanted.slack && this.slackToken && member.slackId) {
-      await this.postSlack(member.slackId, `*${notice.subject}*\n${body}`);
+    // A direct message: the "channel" is the member's own Slack id.
+    if (wanted.slack && member.slackId) {
+      await this.slack.postTo(member.slackId, `*${notice.subject}*\n${body}`);
     }
   }
 
@@ -344,12 +343,7 @@ export class NotificationsService {
       await this.notify(assignment.memberId, notice);
     }
     // The officers channel still gets one post, rather than one per officer.
-    if (this.slackToken && this.officersChannel) {
-      await this.postSlack(
-        this.officersChannel,
-        `*${notice.subject}*\n${notice.body}`,
-      );
-    }
+    await this.postSlack('officers', `*${notice.subject}*\n${notice.body}`);
     if (!assignments.length) {
       this.logger.warn(
         `notice for officers had nobody to reach :: ${notice.subject}`,
@@ -358,24 +352,8 @@ export class NotificationsService {
   }
 
 
-  private async postSlack(channel: string, text: string): Promise<boolean> {
-    try {
-      const res = await fetch('https://slack.com/api/chat.postMessage', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.slackToken}`,
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-        body: JSON.stringify({ channel, text }),
-      });
-      const data = (await res.json()) as { ok: boolean; error?: string };
-      if (!data.ok) {
-        this.logger.error(`slack post to ${channel} failed: ${data.error}`);
-      }
-      return data.ok;
-    } catch (error) {
-      this.logger.error(`slack post to ${channel} failed: ${error}`);
-      return false;
-    }
+  /** Slack is a courtesy copy; where it posts is configured in the console. */
+  private async postSlack(channelKey: string, text: string): Promise<boolean> {
+    return this.slack.post(channelKey, text);
   }
 }

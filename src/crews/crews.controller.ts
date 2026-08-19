@@ -10,7 +10,17 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -28,6 +38,18 @@ class AssignDto {
   @IsOptional()
   @IsString()
   placeholder?: string | null;
+}
+
+class OutOfServiceDto {
+  @IsDateString()
+  date!: string;
+
+  @IsBoolean()
+  outOfService!: boolean;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 class AbsenceDto {
@@ -130,6 +152,26 @@ export class CrewsController {
     return this.crews.removeAbsence(requireMember(auth), id);
   }
 
+  /**
+   * Take a night out of service, or put it back.
+   *
+   * Scheduling permission rather than a new one: it is the same authority as
+   * placing and removing people on that night, exercised over all of it.
+   */
+  @Post('out-of-service')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_ASSIGN)
+  setOutOfService(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: OutOfServiceDto,
+  ) {
+    return this.crews.setOutOfService(
+      auth,
+      body.date,
+      body.outOfService,
+      body.reason,
+    );
+  }
+
   /** Scheduler assignment for any future date, public or not. */
   /** Empty a week, or fill its vacancies from the weekly template. */
   @Post('bulk')
@@ -204,7 +246,10 @@ export class CrewsController {
         weekday_position: { weekday: body.weekday, position: body.position },
       },
       create: body,
-      update: { memberId: body.memberId ?? null, placeholder: body.placeholder ?? null },
+      update: {
+        memberId: body.memberId ?? null,
+        placeholder: body.placeholder ?? null,
+      },
     });
   }
 

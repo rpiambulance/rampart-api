@@ -13,6 +13,7 @@ import { CertificationGraphService } from '../certifications/certification-graph
 import { ChecklistsService } from '../checklists/checklists.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { CredentialGraphService } from './credential-graph.service';
 
 export const SDS_TITLE = 'Senior Duty Supervisor';
@@ -50,6 +51,65 @@ export interface ChecklistItem {
   waived?: boolean;
   adjustmentId?: number; // present for waived/additional items
   requirementId?: number; // present for base requirements (waive target)
+  /** Set on a collapsed group of alternatives; see `alternatives`. */
+  alternativeGroup?: string;
+  /** The options within a group, each with whether it is met on its own. */
+  alternatives?: Array<{
+    label: string;
+    satisfied: boolean;
+    requirementId?: number;
+  }>;
+}
+
+/**
+ * Folds requirements that share an alternative group into one item.
+ *
+ * The group is satisfied when any one of its options is, which is the whole
+ * point of grouping them — "EVOC or a clean three-year abstract" is one
+ * requirement with two ways to meet it, not two requirements. The options are
+ * kept on the item so a checklist can show which routes are open rather than
+ * only the verdict.
+ */
+function collapseAlternatives(items: ChecklistItem[]): ChecklistItem[] {
+  const out: ChecklistItem[] = [];
+  const groups = new Map<string, number>();
+
+  for (const item of items) {
+    const group = item.alternativeGroup;
+    if (!group) {
+      out.push(item);
+      continue;
+    }
+    const at = groups.get(group);
+    const option = {
+      label: item.label,
+      satisfied: item.satisfied,
+      requirementId: item.requirementId,
+    };
+    if (at === undefined) {
+      groups.set(group, out.length);
+      out.push({
+        kind: item.kind,
+        label: group,
+        satisfied: item.satisfied,
+        alternativeGroup: group,
+        alternatives: [option],
+      });
+      continue;
+    }
+    const existing = out[at];
+    existing.alternatives!.push(option);
+    existing.satisfied ||= item.satisfied;
+  }
+
+  for (const index of groups.values()) {
+    const item = out[index];
+    const met = item.alternatives!.filter((a) => a.satisfied).length;
+    item.detail = item.satisfied
+      ? `${met} of ${item.alternatives!.length} met`
+      : `any one of ${item.alternatives!.length}`;
+  }
+  return out;
 }
 
 @Injectable()
@@ -61,6 +121,7 @@ export class CredentialsService {
     private readonly graph: CredentialGraphService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly webhooks: WebhooksService,
   ) {}
 
   listTypes() {
@@ -68,7 +129,9 @@ export class CredentialsService {
       where: { active: true },
       include: {
         prerequisites: { include: { requiresType: { select: { key: true } } } },
-        linkedRoles: { include: { role: { select: { id: true, name: true } } } },
+        linkedRoles: {
+          include: { role: { select: { id: true, name: true } } },
+        },
         requirements: {
           include: {
             certificationType: true,
@@ -87,7 +150,10 @@ export class CredentialsService {
     });
     if (roleIds.length) {
       await this.prisma.credentialTypeRole.createMany({
-        data: [...new Set(roleIds)].map((roleId) => ({ credentialTypeId, roleId })),
+        data: [...new Set(roleIds)].map((roleId) => ({
+          credentialTypeId,
+          roleId,
+        })),
       });
     }
     return this.prisma.credentialType.findUnique({
@@ -100,6 +166,7 @@ export class CredentialsService {
     credentialTypeId: number,
     data: {
       kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
+      alternativeGroup?: string;
       certificationTypeId?: number;
       evalTemplateId?: number;
       count?: number;
@@ -109,7 +176,10 @@ export class CredentialsService {
     if (data.kind === 'CERTIFICATION' && !data.certificationTypeId) {
       throw new BadRequestException('certificationTypeId required');
     }
-    if (data.kind === 'EVALUATION_COUNT' && (!data.evalTemplateId || !data.count)) {
+    if (
+      data.kind === 'EVALUATION_COUNT' &&
+      (!data.evalTemplateId || !data.count)
+    ) {
       throw new BadRequestException('evalTemplateId and count required');
     }
     if (data.kind === 'CHECKLIST' && !data.evalTemplateId) {
@@ -119,7 +189,11 @@ export class CredentialsService {
       throw new BadRequestException('classId required');
     }
     return this.prisma.credentialRequirement.create({
-      data: { credentialTypeId, ...data },
+      data: {
+        credentialTypeId,
+        ...data,
+        alternativeGroup: data.alternativeGroup?.trim() || null,
+      },
     });
   }
 
@@ -131,7 +205,10 @@ export class CredentialsService {
   }
 
   /** Requirement checklist for member × credential type (for My Training + promotion review). */
-  async checklist(memberId: number, credentialTypeId: number): Promise<ChecklistItem[]> {
+  async checklist(
+    memberId: number,
+    credentialTypeId: number,
+  ): Promise<ChecklistItem[]> {
     const type = await this.prisma.credentialType.findUnique({
       where: { id: credentialTypeId },
       include: {
@@ -148,14 +225,15 @@ export class CredentialsService {
     if (!type) throw new NotFoundException('Credential type not found');
 
     const held = await this.graph.heldKeys(memberId);
-    const adjustments = await this.prisma.promotionRequirementAdjustment.findMany({
-      where: { memberId, credentialTypeId },
-      include: {
-        certificationType: true,
-        evalTemplate: true,
-        class: true,
-      },
-    });
+    const adjustments =
+      await this.prisma.promotionRequirementAdjustment.findMany({
+        where: { memberId, credentialTypeId },
+        include: {
+          certificationType: true,
+          evalTemplate: true,
+          class: true,
+        },
+      });
     const waivers = new Map(
       adjustments
         .filter((a) => a.kind === 'WAIVER' && a.requirementId != null)
@@ -174,10 +252,19 @@ export class CredentialsService {
 
     const today = nyToday();
     for (const req of type.requirements) {
+      // Anything this requirement adds is tagged afterwards, so each branch
+      // stays about the requirement rather than about grouping.
+      const before = items.length;
+      const tag = () => {
+        if (!req.alternativeGroup) return;
+        for (let i = before; i < items.length; i++) {
+          items[i].alternativeGroup = req.alternativeGroup;
+        }
+      };
       const waiver = waivers.get(req.id);
       if (waiver) {
         items.push({
-          kind: req.kind as ChecklistItem['kind'],
+          kind: req.kind,
           label: `${requirementLabelFor(req)} — waived`,
           satisfied: true,
           waived: true,
@@ -185,6 +272,7 @@ export class CredentialsService {
           adjustmentId: waiver.id,
           requirementId: req.id,
         });
+        tag();
         continue;
       }
       if (req.kind === 'CERTIFICATION' && req.certificationType) {
@@ -224,7 +312,10 @@ export class CredentialsService {
         });
       } else if (req.kind === 'CHECKLIST' && req.evalTemplate) {
         // Every line signed off, by whoever each line calls for.
-        const done = await this.checklists.isComplete(req.evalTemplateId!, memberId);
+        const done = await this.checklists.isComplete(
+          req.evalTemplateId!,
+          memberId,
+        );
         items.push({
           kind: 'CHECKLIST',
           label: `Complete the “${req.evalTemplate.name}” checklist`,
@@ -242,11 +333,17 @@ export class CredentialsService {
           requirementId: req.id,
         });
       }
+      tag();
     }
 
     // Member-specific additional requirements
-    for (const adjustment of adjustments.filter((a) => a.kind === 'ADDITIONAL')) {
-      if (adjustment.reqKind === 'CERTIFICATION' && adjustment.certificationType) {
+    for (const adjustment of adjustments.filter(
+      (a) => a.kind === 'ADDITIONAL',
+    )) {
+      if (
+        adjustment.reqKind === 'CERTIFICATION' &&
+        adjustment.certificationType
+      ) {
         const cert = await this.prisma.memberCertification.findFirst({
           where: {
             memberId,
@@ -261,7 +358,10 @@ export class CredentialsService {
           satisfied: !!cert,
           adjustmentId: adjustment.id,
         });
-      } else if (adjustment.reqKind === 'EVALUATION_COUNT' && adjustment.evalTemplate) {
+      } else if (
+        adjustment.reqKind === 'EVALUATION_COUNT' &&
+        adjustment.evalTemplate
+      ) {
         const count = await this.prisma.evaluation.count({
           where: {
             subjectId: memberId,
@@ -298,7 +398,7 @@ export class CredentialsService {
         });
       }
     }
-    return items;
+    return collapseAlternatives(items);
   }
 
   /** Direct grant (corrections/migration) — permission credentials:grant. */
@@ -340,10 +440,26 @@ export class CredentialsService {
             grantedViaId: opts.grantedViaId ?? null,
           },
         });
-    await this.audit.log(auth, 'credentials.grant', 'MemberCredential', credential.id, {
+    await this.audit.log(
+      auth,
+      'credentials.grant',
+      'MemberCredential',
+      credential.id,
+      {
+        memberId,
+        credentialTypeId,
+        ...opts,
+      },
+    );
+    const granted = await this.prisma.credentialType.findUnique({
+      where: { id: credentialTypeId },
+      select: { key: true, name: true },
+    });
+    this.webhooks.emit('credential.granted', {
       memberId,
       credentialTypeId,
-      ...opts,
+      credentialKey: granted?.key ?? null,
+      credentialName: granted?.name ?? null,
     });
     return credential;
   }
@@ -451,7 +567,11 @@ export class CredentialsService {
    * authority is the trainer's credential, not credentials:grant, and because
    * it raises the 900 number that has to follow.
    */
-  async trainerGrant(auth: AuthContext, memberId: number, credentialKey: string) {
+  async trainerGrant(
+    auth: AuthContext,
+    memberId: number,
+    credentialKey: string,
+  ) {
     if (auth.kind !== 'member') {
       throw new ForbiddenException('This requires a member session');
     }
@@ -472,7 +592,12 @@ export class CredentialsService {
 
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
-      select: { id: true, firstName: true, lastName: true, nineHundredNumber: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        nineHundredNumber: true,
+      },
     });
     if (!member) throw new NotFoundException('Member not found');
 
@@ -572,11 +697,17 @@ export class CredentialsService {
     const credential = await this.grant(auth, memberId, typeId, {
       title: opts.senior ? SDS_TITLE : undefined,
     });
-    await this.audit.log(auth, 'credentials.appoint', 'MemberCredential', credential.id, {
-      memberId,
-      credentialKey,
-      senior: !!opts.senior,
-    });
+    await this.audit.log(
+      auth,
+      'credentials.appoint',
+      'MemberCredential',
+      credential.id,
+      {
+        memberId,
+        credentialKey,
+        senior: !!opts.senior,
+      },
+    );
     await this.notifications.notify(memberId, {
       type: 'promotion.decided',
       subject: `Appointed ${opts.senior ? SDS_TITLE : type.name}`,
@@ -594,7 +725,12 @@ export class CredentialsService {
       where: { id: credential.id },
       data: { status: 'REVOKED', revokedAt: new Date() },
     });
-    await this.audit.log(auth, 'credentials.revoke', 'MemberCredential', credential.id);
+    await this.audit.log(
+      auth,
+      'credentials.revoke',
+      'MemberCredential',
+      credential.id,
+    );
     return { ok: true };
   }
 }
