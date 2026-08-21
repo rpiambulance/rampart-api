@@ -105,6 +105,14 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'credential.mass-suspension',
+    label: 'Mass credential suspension stopped',
+    description:
+      'More credentials failed an ongoing requirement in one night than looks like ordinary lapses, so nothing was changed.',
+    audience: 'officers',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'checklist.started',
     label: 'Checklist to work through',
     description: 'A trainer has started a member on a checklist.',

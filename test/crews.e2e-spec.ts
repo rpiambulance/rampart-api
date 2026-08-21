@@ -626,7 +626,7 @@ describe('Night crews engine (e2e)', () => {
         },
       });
       await prisma.memberRole.create({
-        data: { memberId: officer, roleId: role.id, startDate: new Date() },
+        data: { memberId: officer, roleId: role.id, startDate: toDbDate(nyNow().dateStr) },
       });
       try {
         const res = await request(app.getHttpServer())
@@ -1822,7 +1822,7 @@ describe('Night crews engine (e2e)', () => {
         where: { name: 'Captain' },
       });
       await prisma.memberRole.create({
-        data: { memberId: alice, roleId: captain.id, startDate: new Date() },
+        data: { memberId: alice, roleId: captain.id, startDate: toDbDate(nyNow().dateStr) },
       });
     });
 

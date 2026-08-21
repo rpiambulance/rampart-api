@@ -13,6 +13,7 @@ import {
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsIn,
   IsInt,
   IsOptional,
@@ -91,6 +92,16 @@ class RequirementDto {
   @IsString()
   alternativeGroup?: string;
 
+  /** Checked at promotion, continuously, or both. Defaults to promotion. */
+  @IsOptional()
+  @IsIn(['PROMOTION', 'ONGOING', 'BOTH'])
+  scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
+
+  /** An ongoing requirement does not suspend anybody until this date. */
+  @IsOptional()
+  @IsDateString()
+  effectiveFrom?: string;
+
   @IsOptional()
   @IsInt()
   count?: number;
@@ -98,6 +109,17 @@ class RequirementDto {
   @IsOptional()
   @IsInt()
   classId?: number;
+}
+
+class RequirementScopeDto {
+  @IsOptional()
+  @IsIn(['PROMOTION', 'ONGOING', 'BOTH'])
+  scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
+
+  /** Null clears it, so the rule applies to every lapse regardless of date. */
+  @IsOptional()
+  @IsDateString()
+  effectiveFrom?: string | null;
 }
 
 class AppointDto {
@@ -154,6 +176,35 @@ export class CredentialsController {
     @Body() body: RequirementDto,
   ) {
     return this.credentials.addRequirement(credentialTypeId, body);
+  }
+
+  /** Who this requirement would suspend if it were ongoing as of today. */
+  @Get('requirements/:requirementId/impact')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  requirementImpact(
+    @Param('requirementId', ParseIntPipe) requirementId: number,
+  ) {
+    return this.credentials.requirementImpact(requirementId);
+  }
+
+  /** Excuse everybody it would currently catch, so it only bites going forward. */
+  @Post('requirements/:requirementId/grandfather')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  grandfather(
+    @CurrentAuth() auth: AuthContext,
+    @Param('requirementId', ParseIntPipe) requirementId: number,
+  ) {
+    return this.credentials.grandfatherRequirement(auth, requirementId);
+  }
+
+  @Patch('requirements/:requirementId')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  updateRequirement(
+    @CurrentAuth() auth: AuthContext,
+    @Param('requirementId', ParseIntPipe) requirementId: number,
+    @Body() body: RequirementScopeDto,
+  ) {
+    return this.credentials.updateRequirement(auth, requirementId, body);
   }
 
   @Delete('requirements/:requirementId')

@@ -167,6 +167,8 @@ export class CredentialsService {
     data: {
       kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
       alternativeGroup?: string;
+      scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
+      effectiveFrom?: string;
       certificationTypeId?: number;
       evalTemplateId?: number;
       count?: number;
@@ -188,11 +190,24 @@ export class CredentialsService {
     if (data.kind === 'CLASS' && !data.classId) {
       throw new BadRequestException('classId required');
     }
+    // Only a certification lapses on its own. An "ongoing" evaluation or class
+    // requirement would never be re-checked, so it would quietly mean nothing.
+    if (
+      data.scope &&
+      data.scope !== 'PROMOTION' &&
+      data.kind !== 'CERTIFICATION'
+    ) {
+      throw new BadRequestException(
+        'Only certification requirements can be checked on an ongoing basis',
+      );
+    }
     return this.prisma.credentialRequirement.create({
       data: {
         credentialTypeId,
         ...data,
         alternativeGroup: data.alternativeGroup?.trim() || null,
+        scope: data.scope ?? 'PROMOTION',
+        effectiveFrom: data.effectiveFrom ? new Date(data.effectiveFrom) : null,
       },
     });
   }
@@ -204,6 +219,187 @@ export class CredentialsService {
     return { ok: true };
   }
 
+  /**
+   * Who an ongoing requirement would suspend if it were switched on right now.
+   *
+   * Turning a requirement ongoing is the one edit here that can reach back and
+   * take a credential off somebody — usually somebody migrated in, or promoted
+   * before the rule existed, who never had to meet it. So it is previewable
+   * before it is real.
+   */
+  async requirementImpact(requirementId: number) {
+    const req = await this.prisma.credentialRequirement.findUnique({
+      where: { id: requirementId },
+      include: { certificationType: { select: { name: true } } },
+    });
+    if (!req) throw new NotFoundException('No such requirement');
+    if (req.kind !== 'CERTIFICATION') {
+      // Only certifications expire on their own, so only they can put a
+      // credential out from under somebody without anyone doing anything.
+      return {
+        requirementId,
+        kind: req.kind,
+        enforceable: false,
+        certificationType: null,
+        members: [] as Array<{ id: number; name: string; reason: string }>,
+      };
+    }
+
+    const now = nyToday();
+    const holders = await this.prisma.memberCredential.findMany({
+      where: {
+        typeId: req.credentialTypeId,
+        status: { in: ['ACTIVE', 'SUSPENDED'] },
+      },
+      include: {
+        member: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+    const waived = new Set(
+      (
+        await this.prisma.promotionRequirementAdjustment.findMany({
+          where: {
+            credentialTypeId: req.credentialTypeId,
+            kind: 'WAIVER',
+            requirementId,
+          },
+          select: { memberId: true },
+        })
+      ).map((row) => row.memberId),
+    );
+
+    const members: Array<{ id: number; name: string; reason: string }> = [];
+    for (const holder of holders) {
+      if (waived.has(holder.memberId)) continue;
+      const held = await this.prisma.memberCertification.findFirst({
+        where: {
+          memberId: holder.memberId,
+          typeId: req.certificationTypeId!,
+          status: 'VERIFIED',
+          OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+        },
+        select: { id: true },
+      });
+      if (held) continue;
+      const lapsed = await this.prisma.memberCertification.findFirst({
+        where: { memberId: holder.memberId, typeId: req.certificationTypeId! },
+        orderBy: { expiresAt: 'desc' },
+        select: { status: true, expiresAt: true },
+      });
+      members.push({
+        id: holder.memberId,
+        name: `${holder.member.firstName} ${holder.member.lastName}`,
+        reason: !lapsed
+          ? 'never held it'
+          : lapsed.status !== 'VERIFIED'
+            ? `on file but ${lapsed.status.toLowerCase()}`
+            : `expired ${lapsed.expiresAt?.toISOString().slice(0, 10) ?? 'unknown'}`,
+      });
+    }
+    return {
+      requirementId,
+      kind: req.kind,
+      enforceable: true,
+      certificationType: req.certificationType?.name ?? null,
+      members,
+    };
+  }
+
+  /**
+   * Excuse everybody the requirement would currently catch.
+   *
+   * The point is to be able to say "from here on" without punishing the people
+   * who got here under the old rules. Each waiver is an ordinary per-member
+   * adjustment, so it shows up in their promotion record and can be lifted one
+   * at a time.
+   */
+  async grandfatherRequirement(auth: AuthContext, requirementId: number) {
+    const impact = await this.requirementImpact(requirementId);
+    if (!impact.enforceable) {
+      throw new BadRequestException(
+        'Only certification requirements can suspend, so there is nobody to excuse',
+      );
+    }
+    const req = await this.prisma.credentialRequirement.findUniqueOrThrow({
+      where: { id: requirementId },
+      select: { credentialTypeId: true },
+    });
+    const by = auth.kind === 'member' ? auth.memberId : null;
+    if (!by)
+      throw new BadRequestException('This action requires a member session');
+
+    for (const member of impact.members) {
+      await this.prisma.promotionRequirementAdjustment.create({
+        data: {
+          memberId: member.id,
+          credentialTypeId: req.credentialTypeId,
+          kind: 'WAIVER',
+          requirementId,
+          note: `Grandfathered when this requirement was made ongoing (${member.reason})`,
+          createdById: by,
+        },
+      });
+    }
+    await this.audit.log(
+      auth,
+      'credentials.requirement.grandfather',
+      'CredentialRequirement',
+      requirementId,
+      { waived: impact.members.map((m) => m.id) },
+    );
+    return { waived: impact.members.length };
+  }
+
+  /**
+   * Change when a requirement applies, without losing the requirement itself
+   * — the alternative being delete-and-re-add, which drops any waivers hung
+   * off it.
+   */
+  async updateRequirement(
+    auth: AuthContext,
+    requirementId: number,
+    data: {
+      scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
+      effectiveFrom?: string | null;
+    },
+  ) {
+    const req = await this.prisma.credentialRequirement.findUnique({
+      where: { id: requirementId },
+      select: { kind: true },
+    });
+    if (!req) throw new NotFoundException('No such requirement');
+    if (
+      data.scope &&
+      data.scope !== 'PROMOTION' &&
+      req.kind !== 'CERTIFICATION'
+    ) {
+      throw new BadRequestException(
+        'Only certification requirements can be checked on an ongoing basis',
+      );
+    }
+    const updated = await this.prisma.credentialRequirement.update({
+      where: { id: requirementId },
+      data: {
+        ...(data.scope ? { scope: data.scope } : {}),
+        ...(data.effectiveFrom === undefined
+          ? {}
+          : {
+              effectiveFrom: data.effectiveFrom
+                ? new Date(data.effectiveFrom)
+                : null,
+            }),
+      },
+    });
+    await this.audit.log(
+      auth,
+      'credentials.requirement.update',
+      'CredentialRequirement',
+      requirementId,
+      data,
+    );
+    return updated;
+  }
+
   /** Requirement checklist for member × credential type (for My Training + promotion review). */
   async checklist(
     memberId: number,
@@ -213,7 +409,12 @@ export class CredentialsService {
       where: { id: credentialTypeId },
       include: {
         prerequisites: { include: { requiresType: true } },
+        // What earns the credential. An ongoing-only requirement is a
+        // condition of keeping it, not of getting it, so listing it here
+        // would ask somebody to prove something that is not yet theirs to
+        // maintain.
         requirements: {
+          where: { scope: { in: ['PROMOTION', 'BOTH'] } },
           include: {
             certificationType: true,
             evalTemplate: true,

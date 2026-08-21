@@ -269,6 +269,18 @@ model CredentialPrerequisite {
   @@id([credentialTypeId, requiresTypeId])
 }
 
+/// When a requirement is checked, which decides what failing it costs.
+enum RequirementScope {
+  /// Met before the credential is granted, then never revisited. Adding one
+  /// cannot affect anybody who already holds the credential.
+  PROMOTION
+  /// Held continuously. Losing it suspends the credential, so adding one is a
+  /// decision about everybody who holds it, not only about future holders.
+  ONGOING
+  /// Needed to earn it and to keep it.
+  BOTH
+}
+
 enum RequirementKind {
   CERTIFICATION // a verified, unexpired cert of certificationTypeId
   EVALUATION_COUNT // `count` signed evals on evalTemplateId
@@ -289,6 +301,13 @@ model CredentialRequirement {
   /// must be met. A label rather than a number so the checklist can say
   /// "Driving qualification: any of…" instead of "group 2".
   alternativeGroup    String?
+  /// Whether this is checked at promotion, continuously, or both. Defaults to
+  /// promotion: a requirement added today should not suspend somebody who
+  /// earned the credential years ago without being asked to.
+  scope               RequirementScope @default(PROMOTION)
+  /// An ongoing requirement does not bite until this date, so people can be
+  /// told and given time. Null means immediately.
+  effectiveFrom       DateTime?        @db.Date
 
   credentialType    CredentialType     @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
   certificationType CertificationType? @relation(fields: [certificationTypeId], references: [id])

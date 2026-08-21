@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
@@ -15,6 +16,8 @@ import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class CertificationsService {
+  private readonly logger = new Logger(CertificationsService.name);
+
   constructor(
     private readonly graph: CertificationGraphService,
     private readonly prisma: PrismaService,
@@ -682,6 +685,16 @@ export class CertificationsService {
    * requirements aren't all satisfied by verified, unexpired certs flips to
    * SUSPENDED; it reactivates automatically once renewed and verified.
    */
+  /**
+   * Suspends credentials whose *ongoing* requirements are no longer met, and
+   * reinstates them when they are again.
+   *
+   * Only ongoing requirements are consulted. A promotion requirement is a
+   * condition of being granted the credential and is never revisited: adding
+   * one today must not reach back and suspend somebody who earned theirs
+   * years ago under different rules, which is precisely what happens if the
+   * two kinds are kept in one undifferentiated list.
+   */
   async recomputeSuspensions(memberId?: number) {
     // A certification is good through the whole of its expiry date, so this
     // compares against today's calendar day, not the current instant.
@@ -694,7 +707,15 @@ export class CertificationsService {
       include: {
         type: {
           include: {
-            requirements: { where: { kind: 'CERTIFICATION' } },
+            requirements: {
+              where: {
+                kind: 'CERTIFICATION',
+                scope: { in: ['ONGOING', 'BOTH'] },
+                // Announced before it bites: a requirement dated ahead is a
+                // warning, not yet a rule.
+                OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }],
+              },
+            },
           },
         },
       },
@@ -703,9 +724,35 @@ export class CertificationsService {
     const changes: Array<{ id: number; to: 'ACTIVE' | 'SUSPENDED' }> = [];
     for (const cred of credentials) {
       const certReqs = cred.type.requirements;
-      if (!certReqs.length) continue;
+      if (!certReqs.length) {
+        // Nothing ongoing to fail. A credential suspended under an older rule
+        // that has since been relaxed comes back rather than staying stuck.
+        if (cred.status === 'SUSPENDED')
+          changes.push({ id: cred.id, to: 'ACTIVE' });
+        continue;
+      }
+
+      // A waiver says this member was excused this requirement. It excused
+      // them at promotion and it excuses them now — otherwise the waiver
+      // quietly expires the moment it has served its purpose.
+      const waived = new Set(
+        (
+          await this.prisma.promotionRequirementAdjustment.findMany({
+            where: {
+              memberId: cred.memberId,
+              credentialTypeId: cred.typeId,
+              kind: 'WAIVER',
+            },
+            select: { requirementId: true },
+          })
+        )
+          .map((row) => row.requirementId)
+          .filter((id): id is number => id !== null),
+      );
+
       let allSatisfied = true;
       for (const req of certReqs) {
+        if (waived.has(req.id)) continue;
         const ok = await this.prisma.memberCertification.findFirst({
           where: {
             memberId: cred.memberId,
@@ -724,6 +771,47 @@ export class CertificationsService {
       if (cred.status !== target) changes.push({ id: cred.id, to: target });
     }
 
+    // Suspending removes the permissions a credential confers, so a sweep
+    // that would take out a crowd is almost certainly a misconfigured
+    // requirement rather than a crowd who all lapsed overnight. It stops and
+    // asks instead — for one member's recompute there is nothing to weigh up.
+    const suspensions = changes.filter((change) => change.to === 'SUSPENDED');
+    const limit = Number(process.env.MAX_AUTO_SUSPENSIONS ?? 10);
+    if (!memberId && suspensions.length > limit) {
+      this.logger.error(
+        `Refusing to suspend ${suspensions.length} credentials in one run ` +
+          `(limit ${limit}). Check for an ongoing requirement that was just added.`,
+      );
+      await this.notifications.notifyPermissionHolders(
+        PERMISSIONS.CREDENTIALS_GRANT,
+        {
+          type: 'credential.mass-suspension',
+          subject: `${suspensions.length} credentials would have been suspended`,
+          body:
+            `Tonight's check found ${suspensions.length} credentials failing an ongoing ` +
+            'requirement, which is more than one night of lapses looks like. Nothing was ' +
+            'changed. An ongoing requirement added recently is the usual cause — check ' +
+            'that it was meant to apply to people who already hold the credential.',
+          task: {
+            actionLabel: 'Review credential requirements',
+            actionUrl: '/admin/settings/credentials',
+          },
+        },
+      );
+      // Reinstatements are safe and still applied: nobody is harmed by
+      // getting a credential back.
+      const reinstated = changes.filter((change) => change.to === 'ACTIVE');
+      await this.applyStatusChanges(reinstated);
+      return { changed: reinstated.length, blocked: suspensions.length };
+    }
+
+    await this.applyStatusChanges(changes);
+    return { changed: changes.length, blocked: 0 };
+  }
+
+  private async applyStatusChanges(
+    changes: Array<{ id: number; to: 'ACTIVE' | 'SUSPENDED' }>,
+  ) {
     for (const change of changes) {
       await this.prisma.memberCredential.update({
         where: { id: change.id },
@@ -738,6 +826,5 @@ export class CertificationsService {
         change.id,
       );
     }
-    return { changed: changes.length };
   }
 }

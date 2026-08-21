@@ -62,6 +62,18 @@ describe('New York day boundaries', () => {
     expect(previousEvening >= start).toBe(false);
   });
 
+  it('is the day to stamp a date-only column with', () => {
+    // Writing `new Date()` into a date-only column stores the UTC date, which
+    // for the last four hours of every New York evening is tomorrow. A role
+    // starting "today" then confers nothing until tomorrow, and a
+    // certification issued "today" is dated a day late.
+    const lateEvening = new Date('2026-08-21T01:07:00.000Z'); // 21:07 on the 20th
+    expect(nyToday(lateEvening)).toEqual(toDbDate('2026-08-20'));
+    expect(nyToday(lateEvening).toISOString().slice(0, 10)).not.toBe(
+      lateEvening.toISOString().slice(0, 10),
+    );
+  });
+
   it('tells a plain date from an instant', () => {
     expect(isDateOnly('2026-08-17')).toBe(true);
     expect(isDateOnly('2026-08-17T18:00:00.000Z')).toBe(false);
