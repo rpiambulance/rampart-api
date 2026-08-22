@@ -11,6 +11,7 @@ import { SettingsService } from '../settings/settings.service';
 import { SlackLinkService } from '../notifications/slack-link.service';
 import { SlackService } from '../notifications/slack.service';
 import { StorageService } from '../storage/storage.service';
+import { TurnstileService } from './turnstile.service';
 
 @Global()
 @Module({
@@ -27,6 +28,7 @@ import { StorageService } from '../storage/storage.service';
     SlackLinkService,
     SlackService,
     StorageService,
+    TurnstileService,
   ],
   exports: [
     AccessLogService,
@@ -41,6 +43,7 @@ import { StorageService } from '../storage/storage.service';
     SlackLinkService,
     SlackService,
     StorageService,
+    TurnstileService,
   ],
 })
 export class CommonModule {}

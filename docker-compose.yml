@@ -56,6 +56,8 @@ services:
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /data/storage
       WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+      # Bot check on the public coverage form; skipped when unset.
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
     volumes:
       - apistorage:/data/storage
     depends_on:

@@ -31,6 +31,8 @@ import { Public } from '../auth/public.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { currentRequest } from '../common/request-context';
+import { TurnstileService } from '../common/turnstile.service';
 import { EventsService } from '../events/events.service';
 import type { EventInput } from '../events/events.service';
 
@@ -48,7 +50,6 @@ class RequestedEventDto {
   @IsString()
   @MaxLength(300)
   location?: string;
-
 }
 
 class DeclineDto {
@@ -97,6 +98,15 @@ class IntakeDto {
    * while the requester fills the form once. When absent, the single set of
    * fields above is used instead.
    */
+  /**
+   * The Turnstile widget's token. Named as Cloudflare names it in the form,
+   * so the web app can forward the field without translating it.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  'cf-turnstile-response'?: string;
+
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(25)
@@ -124,6 +134,7 @@ export class CoverageController {
     private readonly events: EventsService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
+    private readonly turnstile: TurnstileService,
   ) {}
 
   private statusUrl(token: string): string {
@@ -148,6 +159,13 @@ export class CoverageController {
   @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
   @Post()
   async intake(@Body() body: IntakeDto) {
+    // Before anything is written or emailed: a rejected submission should
+    // cost a round trip to Cloudflare and nothing else.
+    await this.turnstile.verify(
+      body['cf-turnstile-response'],
+      currentRequest()?.ip ?? null,
+    );
+
     const wanted = body.events?.length
       ? body.events
       : body.description
@@ -175,7 +193,9 @@ export class CoverageController {
             requesterEmail: body.requesterEmail,
             requesterPhone: body.requesterPhone,
             description: item.description,
-            requestedDate: item.requestedDate ? new Date(item.requestedDate) : null,
+            requestedDate: item.requestedDate
+              ? new Date(item.requestedDate)
+              : null,
             location: item.location,
           },
         }),
@@ -207,7 +227,10 @@ export class CoverageController {
           : 'New coverage request',
       body:
         `${body.requesterName}${body.requesterOrg ? ` (${body.requesterOrg})` : ''}: ` +
-        created.map((r) => r.description.slice(0, 120)).join(' | ').slice(0, 500),
+        created
+          .map((r) => r.description.slice(0, 120))
+          .join(' | ')
+          .slice(0, 500),
       task: {
         actionLabel: 'Review the request',
         actionUrl: `/admin/coverage/${created[0].id}`,
@@ -229,7 +252,13 @@ export class CoverageController {
       where: { token },
       include: {
         event: {
-          select: { workflowStatus: true, title: true, startsAt: true, endsAt: true, location: true },
+          select: {
+            workflowStatus: true,
+            title: true,
+            startsAt: true,
+            endsAt: true,
+            location: true,
+          },
         },
         messages: { orderBy: { createdAt: 'asc' } },
       },
@@ -254,13 +283,20 @@ export class CoverageController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
   @Post('status/:token/messages')
-  async requesterMessage(@Param('token') token: string, @Body() body: MessageDto) {
+  async requesterMessage(
+    @Param('token') token: string,
+    @Body() body: MessageDto,
+  ) {
     const request = await this.prisma.coverageRequest.findUnique({
       where: { token },
     });
     if (!request) throw new NotFoundException();
     await this.prisma.coverageMessage.create({
-      data: { requestId: request.id, direction: 'FROM_REQUESTER', body: body.body },
+      data: {
+        requestId: request.id,
+        direction: 'FROM_REQUESTER',
+        body: body.body,
+      },
     });
     await this.notifications.notifyOfficerInboxes({
       type: 'coverage.received',
@@ -281,7 +317,14 @@ export class CoverageController {
   async list() {
     const requests = await this.prisma.coverageRequest.findMany({
       include: {
-        event: { select: { id: true, workflowStatus: true, title: true, startsAt: true } },
+        event: {
+          select: {
+            id: true,
+            workflowStatus: true,
+            title: true,
+            startsAt: true,
+          },
+        },
         _count: { select: { messages: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -392,7 +435,9 @@ export class CoverageController {
     if (auth.kind !== 'member') {
       throw new ForbiddenException('Requires a member session');
     }
-    const request = await this.prisma.coverageRequest.findUnique({ where: { id } });
+    const request = await this.prisma.coverageRequest.findUnique({
+      where: { id },
+    });
     if (!request) throw new NotFoundException();
     await this.prisma.coverageMessage.create({
       data: {
@@ -418,7 +463,9 @@ export class CoverageController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: EventInput,
   ) {
-    const request = await this.prisma.coverageRequest.findUnique({ where: { id } });
+    const request = await this.prisma.coverageRequest.findUnique({
+      where: { id },
+    });
     if (!request) throw new NotFoundException();
     if (request.declinedAt) {
       throw new BadRequestException(
