@@ -27,7 +27,14 @@ export class TurnstileService {
 
   constructor(config: ConfigService) {
     this.secret = config.get<string>('TURNSTILE_SECRET_KEY') || undefined;
-    if (!this.secret) {
+    // Said out loud either way. Whether the check is running is not otherwise
+    // visible from outside — a form with the widget on it looks the same
+    // whether or not anything verifies the token it produces — and silence on
+    // success would leave "no warning in the log" meaning both "enabled" and
+    // "you were looking in the wrong log".
+    if (this.secret) {
+      this.logger.log('Turnstile enabled — public forms verify their tokens.');
+    } else {
       this.logger.warn(
         'TURNSTILE_SECRET_KEY is not set — public forms accept submissions ' +
           'without a bot check.',

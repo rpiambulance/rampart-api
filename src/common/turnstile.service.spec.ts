@@ -27,11 +27,18 @@ function serviceWith(
 }
 
 describe('Turnstile', () => {
-  it('is off, and silent, when no key is configured', async () => {
+  it('is off when no key is configured, and lets submissions through', async () => {
     const { service, calls } = serviceWith(undefined);
     expect(service.enabled).toBe(false);
     await expect(service.verify(undefined, null)).resolves.toBeUndefined();
     expect(calls).toEqual([]);
+  });
+
+  it('reports which state it booted in', () => {
+    // The symptom of a half-configured install — widget on the page, nothing
+    // verifying its tokens — is invisible from outside, so the log says.
+    expect(serviceWith('secret').service.enabled).toBe(true);
+    expect(serviceWith(undefined).service.enabled).toBe(false);
   });
 
   it('turns away a submission with no token', async () => {
