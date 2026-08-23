@@ -58,6 +58,8 @@ services:
       WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
       # Bot check on the public coverage form; skipped when unset.
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      # Shared secret for the DiALERT duty-supervisor lookup; unset denies all.
+      DIALERT_TOKEN: ${DIALERT_TOKEN:-}
     volumes:
       - apistorage:/data/storage
     depends_on:

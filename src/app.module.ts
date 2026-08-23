@@ -20,6 +20,7 @@ import {
   InboxController,
   NotificationSettingsController,
 } from './notifications/inbox.controller';
+import { DialertController } from './integrations/dialert.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
 import {
   LegacyMigrationController,
@@ -68,6 +69,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     HealthController,
     AvailabilityController,
     CoverageController,
+    DialertController,
     DispatchesController,
     LegacyMigrationController,
     CalendarController,

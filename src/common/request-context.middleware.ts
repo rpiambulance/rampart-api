@@ -14,6 +14,21 @@ import { clientIp, requestContext } from './request-context';
 const IGNORED = [/^(\/v\d+)?\/health/, /^(\/v\d+)?\/docs/, /^\/favicon\.ico$/];
 
 /**
+ * Secrets that arrive in the query string, because the caller could not send
+ * a header — the DiALERT integration's token, today.
+ *
+ * The logged path is the full URL, so without this the shared secret is
+ * written in the clear on every call, into a table the console will happily
+ * show. Redacted rather than dropped: which endpoint was called, and whether
+ * it was authorised, is exactly what the log is for.
+ */
+const SECRET_QUERY_PARAMS = /([?&](?:token|access_token|api_key)=)[^&]*/gi;
+
+export function redactSecrets(path: string): string {
+  return path.replace(SECRET_QUERY_PARAMS, '$1REDACTED');
+}
+
+/**
  * Puts the request where the rest of the process can find it, and records
  * that it happened.
  *
@@ -41,7 +56,7 @@ export class RequestContextMiddleware implements NestMiddleware {
           memberId: auth?.kind === 'member' ? auth.memberId : null,
           apiTokenId: auth?.kind === 'api-token' ? auth.apiTokenId : null,
           method: req.method,
-          path,
+          path: redactSecrets(path),
           status: res.statusCode,
           durationMs: Date.now() - started,
           ip,
@@ -50,8 +65,9 @@ export class RequestContextMiddleware implements NestMiddleware {
       });
     }
 
-    requestContext.run({ ip, userAgent, method: req.method, path }, () =>
-      next(),
+    requestContext.run(
+      { ip, userAgent, method: req.method, path: redactSecrets(path) },
+      () => next(),
     );
   }
 }
