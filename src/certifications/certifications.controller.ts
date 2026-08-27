@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { MAX_UPLOAD_BYTES } from '../storage/upload-limits';
 import type { Response } from 'express';
 import { Type } from 'class-transformer';
 import {
@@ -274,8 +275,11 @@ export class CertificationsController {
   }
 
   @Post(':id/documents')
+  // Kept in step with the web app's server-action body limit, which is the
+  // first ceiling an upload meets and silently the lower one if the two
+  // drift apart.
   @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
   )
   upload(
     @CurrentAuth() auth: AuthContext,
