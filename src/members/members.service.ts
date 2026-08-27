@@ -3,6 +3,7 @@ import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { fromDbDate, nyDayStart, nyNow, toDbDate } from '../common/dates';
+import { normalizeEmail } from '../common/email';
 import { normalizePhone } from '../common/phone';
 import { grantObserver } from '../credentials/observer';
 import { PrismaService } from '../prisma/prisma.service';
@@ -68,10 +69,14 @@ export class MembersService {
       keycloakSubject?: string;
     },
   ) {
+    // Stored lower case, because that is how a login will arrive looking for
+    // it: an address typed with capitals here is a member who cannot be
+    // matched to their own account later.
+    const email = normalizeEmail(data.email);
     let keycloakSubject = data.keycloakSubject ?? null;
     if (!keycloakSubject) {
       keycloakSubject = await this.keycloak.provisionUser({
-        email: data.email,
+        email,
         firstName: data.firstName,
         lastName: data.lastName,
       });
@@ -79,6 +84,7 @@ export class MembersService {
     const member = await this.prisma.member.create({
       data: {
         ...data,
+        email,
         cellPhone: normalizePhone(data.cellPhone),
         keycloakSubject,
         dob: data.dob ? new Date(data.dob) : null,
@@ -125,7 +131,10 @@ export class MembersService {
       where: {
         active: true,
         id: {
-          notIn: [...participated, ...(excludeMemberId ? [excludeMemberId] : [])],
+          notIn: [
+            ...participated,
+            ...(excludeMemberId ? [excludeMemberId] : []),
+          ],
         },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -159,7 +168,8 @@ export class MembersService {
       const current = lastSeen.get(memberId);
       if (!current || day > current) lastSeen.set(memberId, day);
     };
-    for (const row of crewHistory) note(row.memberId!, fromDbDate(row.crew.date));
+    for (const row of crewHistory)
+      note(row.memberId!, fromDbDate(row.crew.date));
     for (const row of eventHistory) {
       note(row.memberId, nyNow(row.event.startsAt).dateStr);
     }
@@ -233,7 +243,8 @@ export class MembersService {
       where: { id },
       data: {
         ...data,
-        // Undefined means "leave alone"; normalizePhone preserves that.
+        // Undefined means "leave alone"; both helpers preserve that.
+        email: normalizeEmail(data.email),
         cellPhone: normalizePhone(data.cellPhone),
         homePhone: normalizePhone(data.homePhone),
         dob: data.dob ? new Date(data.dob) : undefined,

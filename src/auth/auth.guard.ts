@@ -24,7 +24,11 @@ const MEMBER_AUTH_INCLUDE = {
     where: { status: 'ACTIVE' as const },
     include: {
       type: {
-        include: { linkedRoles: { include: { role: { include: { permissions: true } } } } },
+        include: {
+          linkedRoles: {
+            include: { role: { include: { permissions: true } } },
+          },
+        },
       },
     },
   },
@@ -116,7 +120,23 @@ export class AuthGuard implements CanActivate {
     // Keycloak-verified email. Never re-points a member already linked to a
     // different Keycloak account.
     if (!member && email && emailVerified) {
-      const byEmail = await this.prisma.member.findUnique({ where: { email } });
+      // Case-insensitively: addresses are stored lower case now, but records
+      // predating that — anything an officer typed with capitals — would
+      // otherwise never match the login that belongs to them, and the member
+      // would be told there is no account here with no way to fix it
+      // themselves. Only an unambiguous match counts; two records differing
+      // only in case is not a person to guess at.
+      const candidates = await this.prisma.member.findMany({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        take: 2,
+      });
+      const byEmail = candidates.length === 1 ? candidates[0] : null;
+      if (candidates.length > 1) {
+        this.logger.warn(
+          `Not linking ${subject}: ${candidates.length} member records share ` +
+            `the email ${email} apart from case.`,
+        );
+      }
       if (byEmail && byEmail.keycloakSubject === null) {
         member = await this.prisma.member.update({
           where: { id: byEmail.id },
