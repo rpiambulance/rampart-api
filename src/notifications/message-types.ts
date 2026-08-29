@@ -61,6 +61,14 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'profile.review-requested',
+    label: 'Check your profile details',
+    description:
+      'An officer has asked members to confirm their contact details are current.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'cert.submitted',
     label: 'Certification awaiting verification',
     description:

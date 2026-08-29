@@ -53,6 +53,8 @@ export const PERMISSIONS = {
   DISPATCHES_READ: 'dispatches:read',
   AUDIT_READ: 'audit:read',
   INTEGRATIONS_MANAGE: 'integrations:manage',
+  /** Edit the shared list of links on the Resources page. */
+  RESOURCES_MANAGE: 'resources:manage',
   SYSTEM_MIGRATE_LEGACY: 'system:migrate-legacy',
 } as const;
 

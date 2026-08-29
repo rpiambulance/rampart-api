@@ -401,6 +401,40 @@ export class CredentialsService {
   }
 
   /** Requirement checklist for member × credential type (for My Training + promotion review). */
+  /**
+   * Certification requirements written against the rungs below this one.
+   *
+   * Anything already required by this credential directly is left out, so a
+   * requirement repeated on two rungs is still one line on the checklist.
+   */
+  private async inheritedCertRequirements(
+    credentialTypeId: number,
+    scopes: Array<'PROMOTION' | 'ONGOING' | 'BOTH'>,
+    alreadyRequired: Array<number | null> = [],
+  ) {
+    const belowIds = await this.graph.idsBelow(credentialTypeId);
+    if (!belowIds.length) return [];
+    const rows = await this.prisma.credentialRequirement.findMany({
+      where: {
+        credentialTypeId: { in: belowIds },
+        kind: 'CERTIFICATION',
+        scope: { in: scopes },
+      },
+      include: { certificationType: true, evalTemplate: true, class: true },
+    });
+    // One line per certification, however many rungs below ask for it — and
+    // none at all for one this credential already asks for itself.
+    const seen = new Set<number>(
+      alreadyRequired.filter((id): id is number => id !== null),
+    );
+    return rows.filter((row) => {
+      const key = row.certificationTypeId;
+      if (key === null || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   async checklist(
     memberId: number,
     credentialTypeId: number,
@@ -424,6 +458,21 @@ export class CredentialsService {
       },
     });
     if (!type) throw new NotFoundException('Credential type not found');
+
+    // Certifications demanded by the rungs below are demanded here too: a
+    // Crew Chief still needs the card an Attendant needed, and writing it out
+    // again on every rung means the day somebody adds one to Attendant is the
+    // day every credential above it quietly stops requiring it.
+    //
+    // Only certifications inherit. An evaluation or a class is a thing you
+    // did to earn a particular rung, not a state you have to stay in, and
+    // inheriting those would ask people to sit the same class twice.
+    const inherited = await this.inheritedCertRequirements(
+      credentialTypeId,
+      ['PROMOTION', 'BOTH'],
+      type.requirements.map((req) => req.certificationTypeId),
+    );
+    type.requirements = [...type.requirements, ...inherited];
 
     const held = await this.graph.heldKeys(memberId);
     const adjustments =

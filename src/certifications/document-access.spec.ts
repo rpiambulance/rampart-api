@@ -21,6 +21,7 @@ function serviceFor(doc: unknown) {
   };
   return new CertificationsService(
     {} as never,
+    { idsBelow: () => Promise.resolve([]) } as never,
     prisma as never,
     storage as never,
     {} as never,

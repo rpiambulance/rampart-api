@@ -17,6 +17,8 @@ export class CredentialGraphService {
     at: number;
     // typeKey -> set of type keys that satisfy it (itself + all descendants)
     satisfiedBy: Map<string, Set<string>>;
+    /** key -> the credentials beneath it on the ladder, transitively. */
+    below: Map<string, Set<string>>;
     /** Keys flagged outranksAll. */
     outranking: Set<string>;
     idToKey: Map<number, string>;
@@ -72,8 +74,42 @@ export class CredentialGraphService {
       for (const satisfying of satisfiedBy.values()) satisfying.add(t.key);
     }
 
-    this.cache = { at: Date.now(), satisfiedBy, outranking, idToKey, keyToId };
+    // The rungs below each credential: what it directly requires, and what
+    // those require, all the way down.
+    const below = new Map<string, Set<string>>();
+    for (const t of types) below.set(t.key, new Set(resolve(t.key)));
+
+    this.cache = {
+      at: Date.now(),
+      satisfiedBy,
+      outranking,
+      idToKey,
+      keyToId,
+      below,
+    };
     return this.cache;
+  }
+
+  /**
+   * The credential type ids beneath this one on the ladder.
+   *
+   * Used to inherit certification requirements downward: holding a rung means
+   * still holding what every rung under it demanded. Written on each rung
+   * separately, the day somebody adds a certification to Attendant is the day
+   * every credential above it quietly stops requiring it.
+   */
+  async idsBelow(credentialTypeId: number): Promise<number[]> {
+    const { idToKey, keyToId, below } = await this.graph();
+    const key = idToKey.get(credentialTypeId);
+    if (!key) return [];
+    return [...(below.get(key) ?? [])]
+      .map((k) => keyToId.get(k))
+      .filter((id): id is number => id !== undefined);
+  }
+
+  /** This credential and everything beneath it, for requirement lookups. */
+  async idsAtOrBelow(credentialTypeId: number): Promise<number[]> {
+    return [credentialTypeId, ...(await this.idsBelow(credentialTypeId))];
   }
 
   /** Does this set of ACTIVE credential keys satisfy `requiredKey` ("or above")? */

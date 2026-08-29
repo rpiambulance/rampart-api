@@ -21,6 +21,7 @@ import {
   NotificationSettingsController,
 } from './notifications/inbox.controller';
 import { DialertController } from './integrations/dialert.controller';
+import { ResourcesController } from './resources/resources.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
 import {
   LegacyMigrationController,
@@ -70,6 +71,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     AvailabilityController,
     CoverageController,
     DialertController,
+    ResourcesController,
     DispatchesController,
     LegacyMigrationController,
     CalendarController,

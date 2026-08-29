@@ -42,6 +42,15 @@ model Member {
   timeFormat      String    @default("24h") // UI preference: 24h | 12h
   /// UI preference: how the inbox is ordered. See INBOX_SORTS.
   inboxSort       String    @default("unreadFirst")
+
+  /// The last time this member said their own details are right, and the
+  /// last time somebody asked them to. A request outstanding is simply a
+  /// request newer than the confirmation — no third state to keep in step,
+  /// and asking twice cannot lose an answer given in between.
+  profileConfirmedAt        DateTime?
+  profileReviewRequestedAt  DateTime?
+  profileReviewRequestedById Int?
+  profileReviewNote          String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -57,6 +66,9 @@ model Member {
   checklistsBegunFor ChecklistEnrollment[] @relation("ChecklistStarter")
   crewsTakenOutOfService Crew[]            @relation("CrewOutOfServiceBy")
   inboxTasksCompleted    InboxMessage[]    @relation("InboxCompletedBy")
+  profileReviewsRequested Member[]         @relation("ProfileReviewRequestedBy")
+  profileReviewRequestedBy Member?         @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
+  resourcesCreated       Resource[]        @relation("ResourceCreator")
   webhooksCreated    Webhook[]             @relation("WebhookCreator")
   choresAssigned     Chore[]               @relation("ChoreAssignee")
   choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
@@ -1370,4 +1382,25 @@ model RunNumber {
 
   @@index([issuedAt])
   @@index([locationId, sequence])
+}
+
+/**
+ * A link worth keeping where everyone can find it — protocols, the county
+ * radio plan, the shift-swap spreadsheet. Deliberately just a title and an
+ * address: a page that tries to be a document store ends up neither.
+ */
+model Resource {
+  id          Int      @id @default(autoincrement())
+  title       String
+  url         String
+  description String?
+  /// Lower sorts first; ties fall back to title.
+  position    Int      @default(0)
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy Member? @relation("ResourceCreator", fields: [createdById], references: [id])
+
+  @@index([position])
 }

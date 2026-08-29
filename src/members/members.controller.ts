@@ -20,12 +20,22 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
 } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
+import { ProfileReviewService } from './profile-review.service';
 import { MembersService } from './members.service';
+
+class ProfileReviewRequestDto {
+  /** Shown to the member, for "we are updating the call list" and the like. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
 
 class SelfEditDto {
   @IsOptional()
@@ -167,7 +177,10 @@ class DeactivateManyDto {
 
 @Controller({ path: 'members', version: '1' })
 export class MembersController {
-  constructor(private readonly members: MembersService) {}
+  constructor(
+    private readonly members: MembersService,
+    private readonly profileReview: ProfileReviewService,
+  ) {}
 
   @Get()
   @RequirePermissions(PERMISSIONS.MEMBERS_READ)
@@ -224,8 +237,50 @@ export class MembersController {
   }
 
   @Patch('me')
-  editSelf(@CurrentAuth() auth: AuthContext, @Body() body: SelfEditDto) {
-    return this.members.update(requireMember(auth), body);
+  async editSelf(@CurrentAuth() auth: AuthContext, @Body() body: SelfEditDto) {
+    const memberId = requireMember(auth);
+    const updated = await this.members.update(memberId, body);
+    // Editing your own details is reviewing them, so it answers an
+    // outstanding request rather than leaving one open behind a change that
+    // was made because of it.
+    await this.profileReview.confirm(memberId);
+    return updated;
+  }
+
+  /** Whether this member has been asked to check their details. */
+  @Get('me/profile-review')
+  profileReviewState(@CurrentAuth() auth: AuthContext) {
+    return this.profileReview.stateFor(requireMember(auth));
+  }
+
+  /** "Yes, these are right." Clears the request without changing anything. */
+  @Post('me/profile-review/confirm')
+  confirmProfile(@CurrentAuth() auth: AuthContext) {
+    return this.profileReview.confirm(requireMember(auth));
+  }
+
+  /**
+   * Ask everybody active to check their details.
+   *
+   * Before the :id route below, or "everyone" would be read as a member id.
+   */
+  @Post('profile-review/request-all')
+  @RequirePermissions(PERMISSIONS.MEMBERS_WRITE)
+  requestProfileReviewAll(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: ProfileReviewRequestDto,
+  ) {
+    return this.profileReview.requestFromEveryone(auth, body.note);
+  }
+
+  @Post(':id/profile-review/request')
+  @RequirePermissions(PERMISSIONS.MEMBERS_WRITE)
+  requestProfileReview(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: ProfileReviewRequestDto,
+  ) {
+    return this.profileReview.requestFrom(auth, id, body.note);
   }
 
   @Get(':id')
@@ -247,7 +302,10 @@ export class MembersController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateMemberDto,
   ) {
-    if (body.active === false && !auth.permissions.has(PERMISSIONS.MEMBERS_DEACTIVATE)) {
+    if (
+      body.active === false &&
+      !auth.permissions.has(PERMISSIONS.MEMBERS_DEACTIVATE)
+    ) {
       throw new ForbiddenException('Missing permission: members:deactivate');
     }
     return this.members.update(id, body, auth);

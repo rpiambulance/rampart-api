@@ -91,6 +91,9 @@ function serviceWith(options: {
   };
   const service = new CertificationsService(
     {} as never,
+    // The credential graph: no ladder in these tests, so nothing is
+    // inherited and each credential is judged on its own requirements.
+    { idsBelow: () => Promise.resolve([]) } as never,
     prisma as never,
     {} as never,
     audit as never,

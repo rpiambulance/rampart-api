@@ -15,6 +15,7 @@
  * to a role at the moment that role is created, so removing one in the console
  * does not come back on the next restart.
  */
+import { ALL_PERMISSIONS } from '../permissions/catalog';
 import type { PrismaClient } from '../generated/prisma/client';
 import { GrantMethod } from '../generated/prisma/enums';
 
@@ -212,6 +213,7 @@ const ALL = [
   'dispatches:read',
   'audit:read',
   'integrations:manage',
+  'resources:manage',
   'system:migrate-legacy',
 ];
 
@@ -570,6 +572,45 @@ export async function ensureReferenceData(
   if (created.length) {
     log(`Reference data created: ${created.join(', ')}`);
   }
+
+  await reportUnheldPermissions(prisma, log);
+}
+
+/**
+ * Permissions in the catalog that no role holds.
+ *
+ * Roles are seeded once and then left alone, deliberately: a permission an
+ * administrator removed in the console must stay removed. The cost is that a
+ * permission added to the catalog after a role was created never reaches it,
+ * and the feature behind it is quietly inert for everyone — including the
+ * administrator wondering why the page will not let them edit anything.
+ *
+ * Granting it automatically would undo removals, which is the one thing the
+ * ledger exists to prevent. So this says so instead, and somebody grants it
+ * in the console.
+ */
+async function reportUnheldPermissions(
+  prisma: PrismaClient,
+  log: (m: string) => void,
+) {
+  // Never at the cost of booting: this is a note to whoever reads the log,
+  // and a diagnostic that can take the application down is worse than none.
+  let rows: Array<{ permission: string }>;
+  try {
+    rows = await prisma.rolePermission.findMany({
+      select: { permission: true },
+      distinct: ['permission'],
+    });
+  } catch {
+    return;
+  }
+  const held = new Set(rows.map((row) => row.permission));
+  const unheld = ALL_PERMISSIONS.filter((permission) => !held.has(permission));
+  if (!unheld.length) return;
+  log(
+    `No role holds ${unheld.join(', ')} — the features behind ` +
+      'these are inert until somebody grants them in Roles.',
+  );
 }
 
 /** True once the Observer backfill has been run; it must never run twice. */

@@ -10,6 +10,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { addDays, nyNow, nyToday, toDbDate } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from './certification-graph.service';
+import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -38,6 +39,7 @@ export class CertificationsService {
 
   constructor(
     private readonly graph: CertificationGraphService,
+    private readonly credentialGraph: CredentialGraphService,
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
@@ -825,9 +827,44 @@ export class CertificationsService {
       },
     });
 
+    // Ongoing requirements inherit downward as well: a Crew Chief whose
+    // Attendant-level card has lapsed no longer meets what a Crew Chief must
+    // keep meeting, even though the requirement is written a rung below.
+    const inheritedByType = new Map<
+      number,
+      (typeof credentials)[number]['type']['requirements']
+    >();
+    for (const typeId of new Set(credentials.map((cred) => cred.typeId))) {
+      const belowIds = await this.credentialGraph.idsBelow(typeId);
+      inheritedByType.set(
+        typeId,
+        belowIds.length
+          ? await this.prisma.credentialRequirement.findMany({
+              where: {
+                credentialTypeId: { in: belowIds },
+                kind: 'CERTIFICATION',
+                scope: { in: ['ONGOING', 'BOTH'] },
+                OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }],
+              },
+            })
+          : [],
+      );
+    }
+
     const changes: Array<{ id: number; to: 'ACTIVE' | 'SUSPENDED' }> = [];
     for (const cred of credentials) {
-      const certReqs = cred.type.requirements;
+      // Deduplicated on the certification, so a card demanded by two rungs is
+      // checked once and waived once.
+      const seen = new Set<number>();
+      const certReqs = [
+        ...cred.type.requirements,
+        ...(inheritedByType.get(cred.typeId) ?? []),
+      ].filter((req) => {
+        if (req.certificationTypeId === null) return false;
+        if (seen.has(req.certificationTypeId)) return false;
+        seen.add(req.certificationTypeId);
+        return true;
+      });
       if (!certReqs.length) {
         // Nothing ongoing to fail. A credential suspended under an older rule
         // that has since been relaxed comes back rather than staying stuck.

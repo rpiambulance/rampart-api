@@ -60,6 +60,8 @@ function fakePrisma(opts: { credentialTypes?: number } = {}) {
     certificationType: model('certificationType'),
     certificationSupersession: model('certificationSupersession'),
     role: model('role'),
+    // Read by the boot-time report of permissions no role holds.
+    rolePermission: model('rolePermission'),
   };
 
   return { prisma: prisma as unknown as PrismaClient, ledger, createdBy };
