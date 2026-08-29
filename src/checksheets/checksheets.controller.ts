@@ -157,6 +157,34 @@ class ItemDto {
   order?: number;
 }
 
+class OrderItemDto {
+  @IsInt()
+  id!: number;
+
+  /** Null moves it to the top level, out of any section. */
+  @IsOptional()
+  @IsInt()
+  sectionId?: number | null;
+
+  @IsInt()
+  @Min(0)
+  order!: number;
+}
+
+class ReorderDto {
+  /** Section ids, in the order they should appear. */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  sectionIds?: number[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items?: OrderItemDto[];
+}
+
 class ResolveDto {
   @IsOptional()
   @IsString()
@@ -381,6 +409,22 @@ export class ChecksheetsController {
       body,
     );
     return template;
+  }
+
+  /**
+   * The whole layout at once: which section each item is in, and the order of
+   * both. Sent as one piece because a drag moves several rows at a time, and
+   * applying those one by one leaves the sheet briefly in an order nobody
+   * chose — visible to anyone else looking at it.
+   */
+  @Put(':id/order')
+  @RequirePermissions(PERMISSIONS.CHECKSHEETS_MANAGE)
+  reorder(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: ReorderDto,
+  ) {
+    return this.checksheets.reorder(auth, id, body);
   }
 
   @Post(':id/sections')

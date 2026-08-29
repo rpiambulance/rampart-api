@@ -54,6 +54,90 @@ export class ChecksheetsService {
     return template;
   }
 
+  /**
+   * Applies a new layout: section order, item order, and which section each
+   * item belongs to.
+   *
+   * In one transaction, and only over rows that belong to this sheet — an id
+   * from somewhere else would otherwise let a reorder move another sheet's
+   * item into this one.
+   */
+  async reorder(
+    auth: AuthContext,
+    templateId: number,
+    layout: {
+      sectionIds?: number[];
+      items?: Array<{ id: number; sectionId?: number | null; order: number }>;
+    },
+  ) {
+    const template = await this.prisma.checksheetTemplate.findUnique({
+      where: { id: templateId },
+      include: {
+        sections: { select: { id: true } },
+        items: { select: { id: true } },
+      },
+    });
+    if (!template) throw new NotFoundException('No such checksheet');
+
+    const ownSections = new Set(template.sections.map((section) => section.id));
+    const ownItems = new Set(template.items.map((item) => item.id));
+
+    for (const sectionId of layout.sectionIds ?? []) {
+      if (!ownSections.has(sectionId)) {
+        throw new BadRequestException(
+          `Section ${sectionId} is not on this checksheet`,
+        );
+      }
+    }
+    for (const item of layout.items ?? []) {
+      if (!ownItems.has(item.id)) {
+        throw new BadRequestException(
+          `Item ${item.id} is not on this checksheet`,
+        );
+      }
+      if (
+        item.sectionId !== undefined &&
+        item.sectionId !== null &&
+        !ownSections.has(item.sectionId)
+      ) {
+        throw new BadRequestException(
+          `Section ${item.sectionId} is not on this checksheet`,
+        );
+      }
+    }
+
+    await this.prisma.$transaction([
+      ...(layout.sectionIds ?? []).map((sectionId, order) =>
+        this.prisma.checksheetSection.update({
+          where: { id: sectionId },
+          data: { order },
+        }),
+      ),
+      ...(layout.items ?? []).map((item) =>
+        this.prisma.checksheetItem.update({
+          where: { id: item.id },
+          data: {
+            order: item.order,
+            ...(item.sectionId === undefined
+              ? {}
+              : { sectionId: item.sectionId }),
+          },
+        }),
+      ),
+    ]);
+    await this.audit.log(
+      auth,
+      'checksheets.template.reorder',
+      'ChecksheetTemplate',
+      templateId,
+      {
+        sections: layout.sectionIds?.length ?? 0,
+        items: layout.items?.length ?? 0,
+      },
+    );
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------ completing
 
   /**
