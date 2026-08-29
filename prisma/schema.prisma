@@ -1497,11 +1497,43 @@ model ChecksheetSection {
   order       Int
   heading     String
   description String?
+  /// Whether this section is kept sealed — a drug box, a sealed bag — so the
+  /// person checking reads the seal number rather than opening it.
+  hasSeal     Boolean @default(false)
 
-  template ChecksheetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template ChecksheetTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
   items    ChecksheetItem[]
+  entries  ChecksheetSectionEntry[]
 
   @@index([templateId])
+}
+
+/// What was found of one sealed section on one check.
+///
+/// A seal is how a section is checked without opening it: read the number,
+/// confirm it matches, move on. The number is recorded rather than merely
+/// confirmed so a seal changing between checks is visible afterwards.
+model ChecksheetSectionEntry {
+  id        Int     @id @default(autoincrement())
+  runId     Int
+  sectionId Int
+  /// Whether there was a seal on it at all. A section can be configured to
+  /// carry a seal and be found without one, which is worth recording rather
+  /// than refusing to accept.
+  sealPresent Boolean @default(false)
+  /// As read off the seal. Optional even when one is present: an unreadable
+  /// seal is still a seal, and refusing the sheet over it helps nobody.
+  sealNumber  String?
+  /// Set when the seal was broken during this check — because something
+  /// inside had expired and had to be reached.
+  sealBroken  Boolean @default(false)
+  note        String?
+
+  run     ChecksheetRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  section ChecksheetSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, sectionId])
+  @@index([sectionId])
 }
 
 model ChecksheetItem {
@@ -1539,8 +1571,9 @@ model ChecksheetRun {
   template    ChecksheetTemplate     @relation(fields: [templateId], references: [id])
   asset       Asset?                 @relation(fields: [assetId], references: [id])
   completedBy Member?                @relation("ChecksheetCompletedBy", fields: [completedById], references: [id])
-  entries     ChecksheetEntry[]
-  opened      ChecksheetDeficiency[] @relation("DeficiencyOpenedBy")
+  entries       ChecksheetEntry[]
+  sectionEntries ChecksheetSectionEntry[]
+  opened        ChecksheetDeficiency[] @relation("DeficiencyOpenedBy")
   closed      ChecksheetDeficiency[] @relation("DeficiencyClosedBy")
 
   @@index([templateId, completedAt])

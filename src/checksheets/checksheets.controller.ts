@@ -58,6 +58,29 @@ class EntryDto {
   expiries?: string[];
 }
 
+class SectionEntryDto {
+  @IsInt()
+  sectionId!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  sealPresent?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  sealNumber?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  sealBroken?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
 class CompleteDto {
   @IsInt()
   templateId!: number;
@@ -75,6 +98,12 @@ class CompleteDto {
   @ValidateNested({ each: true })
   @Type(() => EntryDto)
   entries!: EntryDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SectionEntryDto)
+  sections?: SectionEntryDto[];
 }
 
 class TemplateDto {
@@ -114,6 +143,10 @@ class SectionDto {
   @IsString()
   @MaxLength(150)
   heading!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  hasSeal?: boolean;
 
   @IsOptional()
   @IsString()
@@ -442,6 +475,7 @@ export class ChecksheetsController {
         templateId,
         heading: body.heading.trim(),
         description: body.description?.trim() || null,
+        hasSeal: body.hasSeal ?? false,
         order: body.order ?? (last ? last.order + 1 : 0),
       },
     });
@@ -457,6 +491,7 @@ export class ChecksheetsController {
       where: { id },
       data: {
         ...(body.heading === undefined ? {} : { heading: body.heading.trim() }),
+        ...(body.hasSeal === undefined ? {} : { hasSeal: body.hasSeal }),
         ...(body.description === undefined
           ? {}
           : { description: body.description.trim() || null }),

@@ -12,9 +12,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   dueState,
   expirySlots,
+  sealsNeedingBreak,
   shortfalls,
   type EntryInput,
   type ItemShape,
+  type SectionEntryInput,
 } from './checksheet-logic';
 
 /** Warn this far ahead of an expiry unless the template says otherwise. */
@@ -152,15 +154,46 @@ export class ChecksheetsService {
     const previous = await this.prisma.checksheetRun.findFirst({
       where: { templateId, ...(assetId ? { assetId } : {}) },
       orderBy: { completedAt: 'desc' },
-      include: { entries: { include: { expiries: true } } },
+      include: {
+        entries: { include: { expiries: true } },
+        sectionEntries: true,
+      },
     });
 
     const lastByItem = new Map(
       (previous?.entries ?? []).map((entry) => [entry.itemId, entry]),
     );
+    // The last time each seal was actually looked at, which is not
+    // necessarily the last run: a check that skipped the seal has nothing to
+    // say about it, and showing null there would lose the number somebody
+    // recorded the week before.
+    const sealed = template.sections.filter((section) => section.hasSeal);
+    const lastSeal = new Map(
+      await Promise.all(
+        sealed.map(async (section) => {
+          const entry = await this.prisma.checksheetSectionEntry.findFirst({
+            where: {
+              sectionId: section.id,
+              ...(assetId ? { run: { assetId } } : {}),
+            },
+            orderBy: { run: { completedAt: 'desc' } },
+          });
+          return [section.id, entry] as const;
+        }),
+      ),
+    );
     return {
       template,
       previousRunAt: previous?.completedAt ?? null,
+      // What the seal said last time, so the person checking is confirming a
+      // number rather than transcribing one into a void. A seal that has
+      // changed since is the thing worth noticing.
+      sections: sealed.map((section) => ({
+        sectionId: section.id,
+        heading: section.heading,
+        lastSealNumber: lastSeal.get(section.id)?.sealNumber ?? null,
+        lastSealPresent: lastSeal.get(section.id)?.sealPresent ?? null,
+      })),
       items: template.items.map((item) => {
         const last = lastByItem.get(item.id);
         return {
@@ -187,6 +220,7 @@ export class ChecksheetsService {
       assetId?: number;
       comment?: string;
       entries: EntryInput[];
+      sections?: SectionEntryInput[];
     },
   ) {
     const template = await this.template(input.templateId);
@@ -232,6 +266,25 @@ export class ChecksheetsService {
       }
     }
 
+    // A sealed section is a claim that what is inside is good. Something in
+    // there having expired makes that claim false, so the seal has to come
+    // off before the sheet can be filed — the sheet is not the place to
+    // record a problem and leave it sealed in.
+    const unbroken = sealsNeedingBreak(
+      template.sections,
+      items,
+      input.entries,
+      input.sections ?? [],
+      nyToday().toISOString().slice(0, 10),
+    );
+    if (unbroken.length) {
+      throw new BadRequestException(
+        `${unbroken.map((section) => section.heading).join(' and ')}: something in ` +
+          `${unbroken.length > 1 ? 'these sections has' : 'this section has'} expired, so the ` +
+          'seal has to be broken and the item dealt with before this can be filed.',
+      );
+    }
+
     const memberId = auth.kind === 'member' ? auth.memberId : null;
     const run = await this.prisma.checksheetRun.create({
       data: {
@@ -239,6 +292,23 @@ export class ChecksheetsService {
         assetId: input.assetId ?? null,
         completedById: memberId,
         comment: input.comment?.trim() || null,
+        sectionEntries: {
+          // Only the sections that actually carry a seal; anything else sent
+          // is ignored rather than stored as a row meaning nothing.
+          create: (input.sections ?? [])
+            .filter((entry) =>
+              template.sections.some(
+                (section) => section.id === entry.sectionId && section.hasSeal,
+              ),
+            )
+            .map((entry) => ({
+              sectionId: entry.sectionId,
+              sealPresent: entry.sealPresent ?? false,
+              sealNumber: entry.sealNumber?.trim() || null,
+              sealBroken: entry.sealBroken ?? false,
+              note: entry.note?.trim() || null,
+            })),
+        },
         entries: {
           create: input.entries.map((entry) => {
             const item = known.get(entry.itemId)!;

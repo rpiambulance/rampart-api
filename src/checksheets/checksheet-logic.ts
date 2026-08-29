@@ -3,10 +3,28 @@ import { addDays, nyToday } from '../common/dates';
 /** The shape of an item, as much of it as the rules below care about. */
 export interface ItemShape {
   id: number;
+  /** Null for an item loose at the top of the sheet. */
+  sectionId?: number | null;
   label: string;
   kind: 'PRESENCE' | 'PAR';
   parLevel: number | null;
   expiryTracking: 'NONE' | 'SINGLE' | 'PER_UNIT';
+}
+
+/** The seal a section carries, as configured. */
+export interface SectionShape {
+  id: number;
+  heading: string;
+  hasSeal: boolean;
+}
+
+/** What somebody reported about one sealed section. */
+export interface SectionEntryInput {
+  sectionId: number;
+  sealPresent?: boolean;
+  sealNumber?: string;
+  sealBroken?: boolean;
+  note?: string;
 }
 
 /** What somebody filled in for one item. */
@@ -140,4 +158,45 @@ export function dueState(
   const nextDue = addDays(last, period);
   const dueInDays = daysBetween(today, nextDue);
   return { dueInDays, overdue: dueInDays <= 0, neverCompleted: false };
+}
+
+/**
+ * Sections whose seal has to be broken before the sheet can be filed.
+ *
+ * A sealed section is checked by reading the number rather than opening it —
+ * which is only honest while everything inside is in date. The moment
+ * something in there has expired, the seal is a claim that the contents are
+ * good, and it is not: somebody has to open it, deal with the item, and seal
+ * it again.
+ *
+ * Only when there is a seal to break. A section found unsealed is already
+ * open, and one configured without seals was never making the claim.
+ */
+export function sealsNeedingBreak(
+  sections: SectionShape[],
+  items: ItemShape[],
+  entries: EntryInput[],
+  sectionEntries: SectionEntryInput[],
+  today: string,
+): SectionShape[] {
+  const byId = new Map(entries.map((entry) => [entry.itemId, entry]));
+  const reported = new Map(
+    sectionEntries.map((entry) => [entry.sectionId, entry]),
+  );
+
+  return sections.filter((section) => {
+    if (!section.hasSeal) return false;
+    const seal = reported.get(section.id);
+    if (!seal?.sealPresent) return false;
+    if (seal.sealBroken) return false;
+
+    return items.some((item) => {
+      if (item.sectionId !== section.id) return false;
+      const entry = byId.get(item.id);
+      if (!entry?.expiries?.length) return false;
+      // Expired means the date has passed. A card is good through the whole
+      // of its expiry day, so equality is not yet expiry.
+      return entry.expiries.some((date) => date && date < today);
+    });
+  });
 }

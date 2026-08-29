@@ -1,6 +1,7 @@
 import {
   dueState,
   expirySlots,
+  sealsNeedingBreak,
   shortfalls,
   type ItemShape,
 } from './checksheet-logic';
@@ -128,5 +129,121 @@ describe('whether a check is due', () => {
 
   it('leaves a never-checked sheet with no cadence alone', () => {
     expect(dueState('NONE', null, noon(28)).overdue).toBe(false);
+  });
+});
+
+describe('seals that have to be broken', () => {
+  const TODAY = '2026-08-30';
+  const drugBox = { id: 1, heading: 'Drug box', hasSeal: true };
+  const openShelf = { id: 2, heading: 'Shelf', hasSeal: false };
+  const inBox = item({
+    id: 10,
+    sectionId: 1,
+    label: 'Epi',
+    expiryTracking: 'SINGLE',
+  });
+  const onShelf = item({
+    id: 20,
+    sectionId: 2,
+    label: 'Gloves',
+    expiryTracking: 'SINGLE',
+  });
+
+  const check = (
+    entries: Parameters<typeof sealsNeedingBreak>[2],
+    sections: Parameters<typeof sealsNeedingBreak>[3],
+  ) =>
+    sealsNeedingBreak(
+      [drugBox, openShelf],
+      [inBox, onShelf],
+      entries,
+      sections,
+      TODAY,
+    ).map((section) => section.heading);
+
+  it('leaves an intact seal alone when nothing inside has expired', () => {
+    expect(
+      check(
+        [{ itemId: 10, present: true, expiries: ['2027-01-01'] }],
+        [{ sectionId: 1, sealPresent: true, sealNumber: '12345' }],
+      ),
+    ).toEqual([]);
+  });
+
+  it('demands the seal be broken when something inside has expired', () => {
+    expect(
+      check(
+        [{ itemId: 10, present: true, expiries: ['2026-08-01'] }],
+        [{ sectionId: 1, sealPresent: true, sealNumber: '12345' }],
+      ),
+    ).toEqual(['Drug box']);
+  });
+
+  it('is satisfied once the breaking is recorded', () => {
+    expect(
+      check(
+        [{ itemId: 10, present: true, expiries: ['2026-08-01'] }],
+        [
+          {
+            sectionId: 1,
+            sealPresent: true,
+            sealBroken: true,
+            sealNumber: '67890',
+          },
+        ],
+      ),
+    ).toEqual([]);
+  });
+
+  it('asks nothing of a section found without a seal', () => {
+    // Nothing to break. It is already open, which is the state the rule
+    // exists to reach.
+    expect(
+      check(
+        [{ itemId: 10, present: true, expiries: ['2026-08-01'] }],
+        [{ sectionId: 1, sealPresent: false }],
+      ),
+    ).toEqual([]);
+  });
+
+  it('asks nothing of a section that carries no seal at all', () => {
+    expect(
+      check([{ itemId: 20, present: true, expiries: ['2026-08-01'] }], []),
+    ).toEqual([]);
+  });
+
+  it('counts today as still in date', () => {
+    // A card is good through the whole of its expiry day, so a seal is not
+    // broken over something expiring this evening.
+    expect(
+      check(
+        [{ itemId: 10, present: true, expiries: [TODAY] }],
+        [{ sectionId: 1, sealPresent: true }],
+      ),
+    ).toEqual([]);
+  });
+
+  it('ignores an expiry in a different section', () => {
+    expect(
+      check(
+        [{ itemId: 20, present: true, expiries: ['2026-08-01'] }],
+        [{ sectionId: 1, sealPresent: true }],
+      ),
+    ).toEqual([]);
+  });
+
+  it('catches one expired date among several in the same item', () => {
+    expect(
+      check(
+        [
+          {
+            itemId: 10,
+            present: true,
+            expiries: ['2027-01-01', '2026-08-01', '2027-05-01'],
+          },
+        ],
+        [{ sectionId: 1, sealPresent: true }],
+      ),
+    ).toEqual(['Drug box']);
   });
 });
