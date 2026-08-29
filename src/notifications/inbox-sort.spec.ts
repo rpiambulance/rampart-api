@@ -8,37 +8,32 @@ import {
 /**
  * The inbox order a member has saved.
  *
- * The part worth pinning is the nulls. Postgres puts them last on an
- * ascending column, and both columns that decide this order use null to mean
- * "still needs you" — an unread message has no readAt, an outstanding task no
- * completedAt — so the default would sink exactly the rows meant to float.
+ * Two things worth pinning. A date order must be only a date order, with
+ * nothing sorted ahead of it. And Postgres puts nulls last on an ascending
+ * column, which is backwards for readAt — an unread message has none, and
+ * those are the rows meant to float.
  */
 describe('inbox ordering', () => {
-  it('puts outstanding tasks above completed ones, whatever the sort', () => {
-    for (const sort of INBOX_SORT_KEYS) {
-      expect(orderByFor(sort)[0]).toEqual({
-        completedAt: { sort: 'asc', nulls: 'first' },
-      });
-    }
+  it('orders purely by arrival when asked for a date order', () => {
+    // Nothing ahead of the date. An earlier version sorted completed tasks
+    // to the bottom first, which made "newest first" return today, then last
+    // week, then yesterday.
+    expect(orderByFor('newest')).toEqual([{ createdAt: 'desc' }]);
+    expect(orderByFor('oldest')).toEqual([{ createdAt: 'asc' }]);
   });
 
   it('floats unread to the top under "unread first"', () => {
     expect(orderByFor('unreadFirst')).toEqual([
-      { completedAt: { sort: 'asc', nulls: 'first' } },
       { readAt: { sort: 'asc', nulls: 'first' } },
       { createdAt: 'desc' },
     ]);
   });
 
-  it('orders purely by arrival when asked to', () => {
-    expect(orderByFor('newest')).toEqual([
-      { completedAt: { sort: 'asc', nulls: 'first' } },
-      { createdAt: 'desc' },
-    ]);
-    expect(orderByFor('oldest')).toEqual([
-      { completedAt: { sort: 'asc', nulls: 'first' } },
-      { createdAt: 'asc' },
-    ]);
+  it('asks for nulls first, which Postgres does not do by default', () => {
+    // An unread message has no readAt, and ascending order would otherwise
+    // sink exactly the rows meant to float.
+    const [first] = orderByFor('unreadFirst');
+    expect(first).toEqual({ readAt: { sort: 'asc', nulls: 'first' } });
   });
 
   it('falls back rather than failing on a value it does not know', () => {
@@ -53,5 +48,11 @@ describe('inbox ordering', () => {
     expect(isInboxSort('unreadFirst')).toBe(true);
     expect(isInboxSort('nonsense')).toBe(false);
     expect(isInboxSort(undefined)).toBe(false);
+  });
+
+  it('offers every sort it advertises', () => {
+    for (const key of INBOX_SORT_KEYS) {
+      expect(orderByFor(key).length).toBeGreaterThan(0);
+    }
   });
 });

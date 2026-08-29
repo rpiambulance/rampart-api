@@ -25,27 +25,23 @@ export function isInboxSort(value: unknown): value is InboxSort {
 
 /**
  * Postgres sorts nulls last on an ascending column, which is backwards for
- * both of the columns that matter here: an unread message has a null readAt
- * and an outstanding task a null completedAt, and those are the ones that
- * belong at the top. Prisma spells that out per field.
+ * the column that matters here: an unread message has a null readAt, and
+ * those are the ones that belong at the top. Prisma spells that out per
+ * field.
+ *
+ * A date order is only a date order. An earlier version put completed tasks
+ * below everything else in every sort, on the theory that a finished task is
+ * a receipt — which made "date received, newest first" return today, then
+ * last week, then yesterday, and read as simply broken. Someone who wants
+ * outstanding work grouped has "unread first" and the To do filter; someone
+ * who asks for date order means date order.
  */
 export function orderByFor(
   sort: string | null | undefined,
 ): Prisma.InboxMessageOrderByWithRelationInput[] {
   const chosen = isInboxSort(sort) ? sort : DEFAULT_INBOX_SORT;
-  const outstandingFirst = {
-    completedAt: { sort: 'asc', nulls: 'first' },
-  } as Prisma.InboxMessageOrderByWithRelationInput;
-
   if (chosen === 'unreadFirst') {
-    return [
-      outstandingFirst,
-      { readAt: { sort: 'asc', nulls: 'first' } },
-      { createdAt: 'desc' },
-    ];
+    return [{ readAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'desc' }];
   }
-  return [
-    outstandingFirst,
-    { createdAt: chosen === 'oldest' ? 'asc' : 'desc' },
-  ];
+  return [{ createdAt: chosen === 'oldest' ? 'asc' : 'desc' }];
 }
