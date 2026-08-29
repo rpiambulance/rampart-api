@@ -293,6 +293,36 @@ export class CertificationsController {
     return this.certs.pendingCount();
   }
 
+  /**
+   * What the nightly check would change, and why — the list behind the
+   * warning that a sweep was held back.
+   */
+  @Get('suspensions/preview')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  suspensionPreview() {
+    return this.certs.previewSuspensions();
+  }
+
+  /**
+   * Runs the nightly check now.
+   *
+   * So that fixing a requirement can be confirmed straight away rather than
+   * waited on until morning — and so a held-back sweep can be released by
+   * correcting the rule rather than only by overriding the guard.
+   */
+  @Post('suspensions/run')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  runSuspensionCheck() {
+    return this.certs.recomputeSuspensions();
+  }
+
+  /** Apply it anyway, past the crowd guard, because somebody has looked. */
+  @Post('suspensions/apply')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  applySuspensions(@CurrentAuth() auth: AuthContext) {
+    return this.certs.applySuspensions(auth);
+  }
+
   @Get('expiring')
   @RequirePermissions(PERMISSIONS.CERTS_READ_ALL)
   expiring(@Query('withinDays') withinDays?: string) {

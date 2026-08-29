@@ -40,6 +40,15 @@ function serviceWith(options: {
     (req.effectiveFrom === null || req.effectiveFrom <= now);
 
   const prisma = {
+    // Names for the reasons shown on a proposed suspension.
+    certificationType: {
+      findMany: () => Promise.resolve([{ id: 5, name: 'CPR — BLS Provider' }]),
+    },
+    appSetting: {
+      findUnique: () => Promise.resolve(null),
+      upsert: () => Promise.resolve({}),
+      delete: () => Promise.resolve({}),
+    },
     memberCredential: {
       findMany: () => {
         // Stands in for the nested `where` Prisma would apply to requirements.
@@ -48,7 +57,9 @@ function serviceWith(options: {
           options.holders.map((holder) => ({
             ...holder,
             typeId: 1,
+            member: { firstName: 'Test', lastName: 'Member' },
             type: {
+              name: 'Crew Chief',
               requirements: options.requirements.filter((r) => matches(r, now)),
             },
           })),

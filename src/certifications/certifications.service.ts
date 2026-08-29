@@ -15,12 +15,38 @@ import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { FieldRequirement } from '../generated/prisma/enums';
+import type { Prisma } from '../generated/prisma/client';
 
 /**
  * What a verification task is about, so that one officer's decision closes
  * the copy sitting in every other officer's inbox.
  */
 const CERT_TASK_SUBJECT = 'MemberCertification';
+
+/**
+ * One credential the nightly check would change, and why.
+ *
+ * Carries names as well as ids because this is read by a person deciding
+ * whether the rule is right, not only by the code that applies it.
+ */
+export interface SuspensionChange {
+  id: number;
+  to: 'ACTIVE' | 'SUSPENDED';
+  memberId: number;
+  memberName: string;
+  credential: string;
+  /** Certifications not held, current and unwaived. Empty on a reinstatement. */
+  missing: string[];
+}
+
+/**
+ * Remembers which blocked sweep has already been reported.
+ *
+ * Without it the same warning goes out every morning for as long as the
+ * misconfiguration lasts, which teaches everybody to filter the one message
+ * that most needs reading.
+ */
+const MASS_SUSPENSION_KEY = 'credentials.massSuspensionReported';
 
 /** The fields a certification type can ask for, and what each is called. */
 const CERT_FIELDS = [
@@ -801,7 +827,47 @@ export class CertificationsService {
    * years ago under different rules, which is precisely what happens if the
    * two kinds are kept in one undifferentiated list.
    */
-  async recomputeSuspensions(memberId?: number) {
+  /**
+   * What tonight's check would change, without changing anything.
+   *
+   * The same computation the sweep runs, so a review shows exactly what the
+   * sweep would do rather than an approximation of it.
+   */
+  async previewSuspensions(): Promise<SuspensionChange[]> {
+    return this.planSuspensions();
+  }
+
+  /**
+   * Applies the plan in full, past the crowd guard, because somebody with
+   * credentials:grant has looked at it and said so.
+   *
+   * Audited as one deliberate act: an automatic sweep and an officer
+   * overruling a safety limit should not read the same afterwards.
+   */
+  async applySuspensions(auth: AuthContext) {
+    const changes = await this.planSuspensions();
+    await this.applyStatusChanges(changes);
+    await this.clearMassSuspensionReport();
+    await this.audit.log(
+      auth,
+      'credentials.suspensions.apply',
+      'MemberCredential',
+      undefined,
+      {
+        suspended: changes.filter((c) => c.to === 'SUSPENDED').length,
+        reinstated: changes.filter((c) => c.to === 'ACTIVE').length,
+        credentialIds: changes.map((c) => c.id),
+      },
+    );
+    return {
+      suspended: changes.filter((c) => c.to === 'SUSPENDED').length,
+      reinstated: changes.filter((c) => c.to === 'ACTIVE').length,
+    };
+  }
+
+  private async planSuspensions(
+    memberId?: number,
+  ): Promise<SuspensionChange[]> {
     // A certification is good through the whole of its expiry date, so this
     // compares against today's calendar day, not the current instant.
     const now = nyToday();
@@ -824,6 +890,7 @@ export class CertificationsService {
             },
           },
         },
+        member: { select: { firstName: true, lastName: true } },
       },
     });
 
@@ -851,7 +918,15 @@ export class CertificationsService {
       );
     }
 
-    const changes: Array<{ id: number; to: 'ACTIVE' | 'SUSPENDED' }> = [];
+    const certNames = new Map(
+      (
+        await this.prisma.certificationType.findMany({
+          select: { id: true, name: true },
+        })
+      ).map((type) => [type.id, type.name]),
+    );
+
+    const changes: SuspensionChange[] = [];
     for (const cred of credentials) {
       // Deduplicated on the certification, so a card demanded by two rungs is
       // checked once and waived once.
@@ -868,8 +943,16 @@ export class CertificationsService {
       if (!certReqs.length) {
         // Nothing ongoing to fail. A credential suspended under an older rule
         // that has since been relaxed comes back rather than staying stuck.
-        if (cred.status === 'SUSPENDED')
-          changes.push({ id: cred.id, to: 'ACTIVE' });
+        if (cred.status === 'SUSPENDED') {
+          changes.push({
+            id: cred.id,
+            to: 'ACTIVE',
+            memberId: cred.memberId,
+            memberName: `${cred.member.firstName} ${cred.member.lastName}`,
+            credential: cred.type.name,
+            missing: [],
+          });
+        }
         continue;
       }
 
@@ -891,7 +974,10 @@ export class CertificationsService {
           .filter((id): id is number => id !== null),
       );
 
-      let allSatisfied = true;
+      // Every unmet requirement, not merely the first: somebody reviewing a
+      // proposed suspension needs to know what it would take to lift it, and
+      // "renew this one card" is a different answer from "renew four".
+      const missing: string[] = [];
       for (const req of certReqs) {
         if (waived.has(req.id)) continue;
         const ok = await this.prisma.memberCertification.findFirst({
@@ -904,13 +990,34 @@ export class CertificationsService {
           select: { id: true },
         });
         if (!ok) {
-          allSatisfied = false;
-          break;
+          missing.push(
+            certNames.get(req.certificationTypeId!) ??
+              `certification ${req.certificationTypeId!}`,
+          );
         }
       }
-      const target = allSatisfied ? 'ACTIVE' : 'SUSPENDED';
-      if (cred.status !== target) changes.push({ id: cred.id, to: target });
+      const target = missing.length ? 'SUSPENDED' : 'ACTIVE';
+      if (cred.status !== target) {
+        changes.push({
+          id: cred.id,
+          to: target,
+          memberId: cred.memberId,
+          memberName: `${cred.member.firstName} ${cred.member.lastName}`,
+          credential: cred.type.name,
+          missing,
+        });
+      }
     }
+
+    return changes;
+  }
+
+  /**
+   * The nightly sweep: plan, then apply unless the plan looks like a rule
+   * having gone wrong rather than a night's worth of lapses.
+   */
+  async recomputeSuspensions(memberId?: number) {
+    const changes = await this.planSuspensions(memberId);
 
     // Suspending removes the permissions a credential confers, so a sweep
     // that would take out a crowd is almost certainly a misconfigured
@@ -923,31 +1030,79 @@ export class CertificationsService {
         `Refusing to suspend ${suspensions.length} credentials in one run ` +
           `(limit ${limit}). Check for an ongoing requirement that was just added.`,
       );
-      await this.notifications.notifyPermissionHolders(
-        PERMISSIONS.CREDENTIALS_GRANT,
-        {
-          type: 'credential.mass-suspension',
-          subject: `${suspensions.length} credentials would have been suspended`,
-          body:
-            `Tonight's check found ${suspensions.length} credentials failing an ongoing ` +
-            'requirement, which is more than one night of lapses looks like. Nothing was ' +
-            'changed. An ongoing requirement added recently is the usual cause — check ' +
-            'that it was meant to apply to people who already hold the credential.',
-          task: {
-            actionLabel: 'Review credential requirements',
-            actionUrl: '/admin/settings/credentials',
-          },
-        },
-      );
       // Reinstatements are safe and still applied: nobody is harmed by
       // getting a credential back.
       const reinstated = changes.filter((change) => change.to === 'ACTIVE');
       await this.applyStatusChanges(reinstated);
+      // Once per situation, not once per night. The same warning every
+      // morning for a fortnight teaches everybody to filter the one message
+      // that most needs reading; a different set of people means a genuinely
+      // different situation and is worth saying again.
+      if (await this.massSuspensionIsNews(suspensions)) {
+        await this.notifications.notifyPermissionHolders(
+          PERMISSIONS.CREDENTIALS_GRANT,
+          {
+            type: 'credential.mass-suspension',
+            subject: `${suspensions.length} credentials would have been suspended`,
+            body:
+              `Tonight's check found ${suspensions.length} credentials failing an ongoing ` +
+              'requirement, which is more than one night of lapses looks like. Nothing was ' +
+              'changed, and this will not be repeated nightly unless the list changes. ' +
+              'An ongoing requirement added recently is the usual cause — the review page ' +
+              'lists who would be affected and what each of them is missing, and can ' +
+              'apply the lot if the rule is right.',
+            task: {
+              actionLabel: 'Review who would be suspended',
+              actionUrl: '/admin/credentials/suspensions',
+            },
+          },
+        );
+      }
       return { changed: reinstated.length, blocked: suspensions.length };
     }
 
     await this.applyStatusChanges(changes);
+    if (!memberId) await this.clearMassSuspensionReport();
     return { changed: changes.length, blocked: 0 };
+  }
+
+  /**
+   * True when this blocked sweep is not the one already reported.
+   *
+   * Keyed on which credentials are involved rather than on how many, so a
+   * second person lapsing into the same misconfiguration is news and a
+   * quiet fortnight is not.
+   */
+  private async massSuspensionIsNews(
+    suspensions: SuspensionChange[],
+  ): Promise<boolean> {
+    const fingerprint = suspensions
+      .map((change) => change.id)
+      .sort((a, b) => a - b)
+      .join(',');
+    const stored = await this.prisma.appSetting.findUnique({
+      where: { key: MASS_SUSPENSION_KEY },
+    });
+    const previous =
+      (stored?.value as unknown as { fingerprint?: string } | undefined)
+        ?.fingerprint ?? '';
+    if (previous === fingerprint) return false;
+    // Through `unknown`: a plain `as object` is stripped by the lint rule for
+    // unnecessary assertions, which leaves it failing to compile.
+    const value = { fingerprint } as unknown as Prisma.InputJsonObject;
+    await this.prisma.appSetting.upsert({
+      where: { key: MASS_SUSPENSION_KEY },
+      create: { key: MASS_SUSPENSION_KEY, value },
+      update: { value },
+    });
+    return true;
+  }
+
+  /** Forgets the reported sweep, so the next problem is announced afresh. */
+  private async clearMassSuspensionReport() {
+    await this.prisma.appSetting
+      .delete({ where: { key: MASS_SUSPENSION_KEY } })
+      .catch(() => undefined);
   }
 
   private async applyStatusChanges(
