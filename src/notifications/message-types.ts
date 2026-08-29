@@ -61,6 +61,15 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'credential.suspension-warning',
+    label: 'Your credential is at risk',
+    description:
+      'An officer has warned a member that a certification they hold is out ' +
+      'of date and a credential depends on it.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'checksheet.completed',
     label: 'Checksheet completed',
     description: 'Somebody finished a truck, bag or equipment check.',

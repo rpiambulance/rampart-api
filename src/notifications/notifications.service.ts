@@ -198,7 +198,18 @@ export class NotificationsService {
    * always written; email and Slack follow the configured channels for the
    * message type, so a delivery problem never loses the message itself.
    */
-  async notify(memberId: number, notice: Notice) {
+  async notify(
+    memberId: number,
+    notice: Notice,
+    /**
+     * Forces the channels rather than reading them from the member's
+     * settings. For a message somebody is deliberately sending, now, having
+     * chosen how — an officer telling five people their credential is about
+     * to lapse should not have it silently dropped because the type is
+     * configured inbox-only.
+     */
+    channels?: { email: boolean; slack: boolean },
+  ) {
     const message = await this.prisma.inboxMessage.create({
       data: {
         memberId,
@@ -213,7 +224,7 @@ export class NotificationsService {
       },
     });
 
-    const wanted = channelsFor(await this.channels(), notice.type);
+    const wanted = channels ?? channelsFor(await this.channels(), notice.type);
     if (wanted.email || wanted.slack) {
       await this.deliver(memberId, notice, wanted);
     }

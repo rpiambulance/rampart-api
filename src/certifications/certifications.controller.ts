@@ -91,6 +91,22 @@ class VerifyDto {
   typeConfig?: TypeConfigDto;
 }
 
+class WarnDto {
+  /** Omitted or empty means everybody currently at risk. */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  memberIds?: number[];
+
+  @IsOptional()
+  @IsBoolean()
+  email?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  slack?: boolean;
+}
+
 class CertTypeDto {
   @IsString()
   name!: string;
@@ -314,6 +330,24 @@ export class CertificationsController {
   @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
   runSuspensionCheck() {
     return this.certs.recomputeSuspensions();
+  }
+
+  /** The same list, one entry per person rather than per credential. */
+  @Get('suspensions/by-member')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  suspensionsByMember() {
+    return this.certs.previewSuspensionsByMember();
+  }
+
+  /** Warn one person, or everybody on the list, that they are at risk. */
+  @Post('suspensions/warn')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  warnPending(@CurrentAuth() auth: AuthContext, @Body() body: WarnDto) {
+    return this.certs.warnPending(auth, {
+      memberIds: body.memberIds,
+      email: body.email ?? false,
+      slack: body.slack ?? false,
+    });
   }
 
   /** Cheap enough for the navigation badge; see heldSuspensions. */

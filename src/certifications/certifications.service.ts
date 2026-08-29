@@ -838,6 +838,107 @@ export class CertificationsService {
   }
 
   /**
+   * The same plan, one entry per person.
+   *
+   * A single lapsed card can put four credentials at risk, and listing that
+   * member four times reads as four problems. What they actually have to do
+   * is renew one card, so that is what is listed once, with the credentials
+   * riding on it underneath.
+   */
+  async previewSuspensionsByMember() {
+    const changes = await this.planSuspensions();
+    const byMember = new Map<
+      number,
+      {
+        memberId: number;
+        memberName: string;
+        credentialIds: number[];
+        credentials: string[];
+        missing: string[];
+      }
+    >();
+    for (const change of changes) {
+      if (change.to !== 'SUSPENDED') continue;
+      const held = byMember.get(change.memberId) ?? {
+        memberId: change.memberId,
+        memberName: change.memberName,
+        credentialIds: [],
+        credentials: [],
+        missing: [],
+      };
+      held.credentialIds.push(change.id);
+      held.credentials.push(change.credential);
+      for (const name of change.missing) {
+        if (!held.missing.includes(name)) held.missing.push(name);
+      }
+      byMember.set(change.memberId, held);
+    }
+    return [...byMember.values()].sort((a, b) =>
+      a.memberName.localeCompare(b.memberName),
+    );
+  }
+
+  /**
+   * Tells the people on the list that their credentials are at risk, with a
+   * link to put it right.
+   *
+   * The channels are chosen by whoever is sending rather than read from each
+   * member's notification settings: this is somebody deciding to warn people
+   * about something with a deadline, and it should not be quietly reduced to
+   * an inbox entry nobody opens.
+   */
+  async warnPending(
+    auth: AuthContext,
+    opts: { memberIds?: number[]; email: boolean; slack: boolean },
+  ) {
+    if (!opts.email && !opts.slack) {
+      throw new BadRequestException('Pick email, Slack, or both.');
+    }
+    const everybody = await this.previewSuspensionsByMember();
+    const wanted = opts.memberIds?.length
+      ? everybody.filter((row) => opts.memberIds!.includes(row.memberId))
+      : everybody;
+    if (!wanted.length) return { notified: 0 };
+
+    for (const row of wanted) {
+      const cards =
+        row.missing.length === 1
+          ? row.missing[0]
+          : `${row.missing.slice(0, -1).join(', ')} and ${row.missing.at(-1)}`;
+      await this.notifications.notify(
+        row.memberId,
+        {
+          type: 'credential.suspension-warning',
+          subject: `Your ${row.credentials.length > 1 ? 'credentials are' : 'credential is'} at risk`,
+          body:
+            `We do not have a current ${cards} on file for you. ` +
+            `Until we do, ${row.credentials.join(', ')} ` +
+            `${row.credentials.length > 1 ? 'are' : 'is'} at risk of being suspended. ` +
+            'Upload a photo of the card and an officer will verify it.',
+          task: {
+            actionLabel: 'Upload your certification',
+            actionUrl: '/training',
+          },
+          about: { type: 'CredentialSuspensionWarning', id: row.memberId },
+        },
+        { email: opts.email, slack: opts.slack },
+      );
+    }
+    await this.audit.log(
+      auth,
+      'credentials.suspensions.warn',
+      'Member',
+      undefined,
+      {
+        members: wanted.map((row) => row.memberId),
+        email: opts.email,
+        slack: opts.slack,
+      },
+    );
+    return { notified: wanted.length };
+  }
+
+  /**
    * Applies the plan in full, past the crowd guard, because somebody with
    * credentials:grant has looked at it and said so.
    *
