@@ -21,6 +21,9 @@ import {
   NotificationSettingsController,
 } from './notifications/inbox.controller';
 import { DialertController } from './integrations/dialert.controller';
+import { ChecksheetsController } from './checksheets/checksheets.controller';
+import { ChecksheetsJobs } from './checksheets/checksheets.jobs';
+import { ChecksheetsService } from './checksheets/checksheets.service';
 import { ResourcesController } from './resources/resources.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
 import {
@@ -72,6 +75,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     CoverageController,
     DialertController,
     ResourcesController,
+    ChecksheetsController,
     DispatchesController,
     LegacyMigrationController,
     CalendarController,
@@ -90,6 +94,8 @@ import { TrainingsModule } from './trainings/trainings.module';
     AuthGuard,
     PermissionsGuard,
     BootstrapService,
+    ChecksheetsService,
+    ChecksheetsJobs,
     LegacyMigrationRunner,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useExisting: AuthGuard },

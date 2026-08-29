@@ -214,6 +214,8 @@ const ALL = [
   'audit:read',
   'integrations:manage',
   'resources:manage',
+  'checksheets:manage',
+  'checksheets:read-all',
   'system:migrate-legacy',
 ];
 

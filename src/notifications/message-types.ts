@@ -61,6 +61,21 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'checksheet.completed',
+    label: 'Checksheet completed',
+    description: 'Somebody finished a truck, bag or equipment check.',
+    audience: 'officers',
+    defaults: { email: false, slack: true },
+  },
+  {
+    key: 'checksheet.expiring',
+    label: 'Something on a checksheet is expiring',
+    description:
+      'An item logged with an expiry date is close to its date, or past it.',
+    audience: 'officers',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'profile.review-requested',
     label: 'Check your profile details',
     description:

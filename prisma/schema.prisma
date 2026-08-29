@@ -69,6 +69,8 @@ model Member {
   profileReviewsRequested Member[]         @relation("ProfileReviewRequestedBy")
   profileReviewRequestedBy Member?         @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
   resourcesCreated       Resource[]        @relation("ResourceCreator")
+  checksheetRuns         ChecksheetRun[]        @relation("ChecksheetCompletedBy")
+  deficienciesResolved   ChecksheetDeficiency[] @relation("DeficiencyResolvedBy")
   webhooksCreated    Webhook[]             @relation("WebhookCreator")
   choresAssigned     Chore[]               @relation("ChoreAssignee")
   choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
@@ -115,6 +117,7 @@ model Role {
   credentialLinks CredentialTypeRole[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+  checksheetTemplates ChecksheetTemplate[] @relation("ChecksheetNotifyRoles")
 }
 
 model RolePermission {
@@ -1096,6 +1099,7 @@ model Vehicle {
   active Boolean @default(true)
 
   fuelEntries FuelLogEntry[]
+  asset       Asset?
 }
 
 model FuelLogEntry {
@@ -1403,4 +1407,209 @@ model Resource {
   createdBy Member? @relation("ResourceCreator", fields: [createdById], references: [id])
 
   @@index([position])
+}
+
+// ------------------------------------------------------------- checksheets
+
+/// How an item is counted.
+enum ChecksheetItemKind {
+  /// There or not there: one button, pressed or not.
+  PRESENCE
+  /// A par level with a count of how many are actually there.
+  PAR
+}
+
+/// Whether an item's expiry dates are logged, and how many of them.
+enum ExpiryTracking {
+  NONE
+  /// One date for the item, whatever its count.
+  SINGLE
+  /// One date per unit the par level calls for, so a box of four gives four.
+  PER_UNIT
+}
+
+enum ChecksheetCadence {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+/// A category of thing that gets checked: ambulance, first aid bag, AED.
+model AssetKind {
+  id        Int                  @id @default(autoincrement())
+  name      String               @unique
+  active    Boolean              @default(true)
+  assets    Asset[]
+  templates ChecksheetTemplate[]
+}
+
+/// A particular thing that gets checked.
+///
+/// Separate from Vehicle because most of what gets checked is not a vehicle —
+/// bags, AEDs, the event trailer — while the ones that are should not be
+/// entered twice, hence the optional link.
+model Asset {
+  id         Int     @id @default(autoincrement())
+  name       String
+  kindId     Int
+  vehicleId  Int?    @unique
+  identifier String?
+  notes      String?
+  active     Boolean @default(true)
+
+  kind         AssetKind              @relation(fields: [kindId], references: [id])
+  vehicle      Vehicle?               @relation(fields: [vehicleId], references: [id])
+  runs         ChecksheetRun[]
+  deficiencies ChecksheetDeficiency[]
+
+  @@unique([kindId, name])
+  @@index([active])
+}
+
+model ChecksheetTemplate {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  description String?
+  active      Boolean @default(true)
+  /// Which kind of thing this is a check for. Null means it stands alone and
+  /// runs name no asset — a station sweep rather than a truck.
+  assetKindId Int?
+  cadence     ChecksheetCadence @default(NONE)
+  /// Days ahead of an expiry to start warning. Null uses the agency default.
+  expiryWarningDays Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assetKind AssetKind? @relation(fields: [assetKindId], references: [id])
+  /// Told when a sheet is completed, and when something on it is expiring.
+  notifyRoles Role[]  @relation("ChecksheetNotifyRoles")
+
+  sections     ChecksheetSection[]
+  items        ChecksheetItem[]
+  runs         ChecksheetRun[]
+  deficiencies ChecksheetDeficiency[]
+}
+
+model ChecksheetSection {
+  id          Int     @id @default(autoincrement())
+  templateId  Int
+  order       Int
+  heading     String
+  description String?
+
+  template ChecksheetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items    ChecksheetItem[]
+
+  @@index([templateId])
+}
+
+model ChecksheetItem {
+  id         Int    @id @default(autoincrement())
+  templateId Int
+  /// Null = loose at the top of the sheet; otherwise the section it sits in.
+  sectionId  Int?
+  order      Int
+  label      String
+  notes      String?
+  kind       ChecksheetItemKind @default(PRESENCE)
+  /// PAR only: how many there should be.
+  parLevel   Int?
+  expiryTracking ExpiryTracking @default(NONE)
+
+  template     ChecksheetTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  section      ChecksheetSection?     @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  entries      ChecksheetEntry[]
+  deficiencies ChecksheetDeficiency[]
+
+  @@index([templateId])
+  @@index([sectionId])
+}
+
+/// One completed sheet.
+model ChecksheetRun {
+  id            Int      @id @default(autoincrement())
+  templateId    Int
+  assetId       Int?
+  completedById Int?
+  completedAt   DateTime @default(now())
+  /// Free text about the check as a whole.
+  comment       String?
+
+  template    ChecksheetTemplate     @relation(fields: [templateId], references: [id])
+  asset       Asset?                 @relation(fields: [assetId], references: [id])
+  completedBy Member?                @relation("ChecksheetCompletedBy", fields: [completedById], references: [id])
+  entries     ChecksheetEntry[]
+  opened      ChecksheetDeficiency[] @relation("DeficiencyOpenedBy")
+  closed      ChecksheetDeficiency[] @relation("DeficiencyClosedBy")
+
+  @@index([templateId, completedAt])
+  @@index([assetId, completedAt])
+}
+
+model ChecksheetEntry {
+  id     Int  @id @default(autoincrement())
+  runId  Int
+  itemId Int
+  /// PRESENCE items.
+  present Boolean?
+  /// PAR items: how many were actually found.
+  countPresent Int?
+  note   String?
+
+  run      ChecksheetRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  item     ChecksheetItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  expiries ChecksheetExpiry[]
+
+  @@unique([runId, itemId])
+  @@index([itemId])
+}
+
+model ChecksheetExpiry {
+  id       Int      @id @default(autoincrement())
+  entryId  Int
+  /// Which of the par units this date belongs to; 0 for a single date.
+  position Int      @default(0)
+  expiresAt DateTime @db.Date
+
+  entry ChecksheetEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@index([expiresAt])
+}
+
+/// Something missing or short, from the run that found it until it is fixed.
+///
+/// Kept out of the run so a shortage survives being found again: the same
+/// missing item reported on four nights running is one deficiency with four
+/// sightings, not four problems.
+model ChecksheetDeficiency {
+  id         Int      @id @default(autoincrement())
+  templateId Int
+  itemId     Int
+  assetId    Int?
+  openedRunId Int
+  openedAt   DateTime @default(now())
+  /// What was wrong, in words, at the time — so the record still reads
+  /// correctly after somebody edits the item's label or par level.
+  detail     String
+  expected   Int?
+  found      Int?
+  /// The most recent run that saw it still outstanding.
+  lastSeenAt DateTime @default(now())
+
+  resolvedAt     DateTime?
+  resolvedById   Int?
+  resolvedRunId  Int?
+  resolutionNote String?
+
+  template   ChecksheetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  item       ChecksheetItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  asset      Asset?             @relation(fields: [assetId], references: [id])
+  openedRun  ChecksheetRun      @relation("DeficiencyOpenedBy", fields: [openedRunId], references: [id], onDelete: Cascade)
+  resolvedRun ChecksheetRun?    @relation("DeficiencyClosedBy", fields: [resolvedRunId], references: [id])
+  resolvedBy Member?            @relation("DeficiencyResolvedBy", fields: [resolvedById], references: [id])
+
+  @@index([resolvedAt])
+  @@index([assetId, resolvedAt])
 }

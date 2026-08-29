@@ -55,6 +55,12 @@ export const PERMISSIONS = {
   INTEGRATIONS_MANAGE: 'integrations:manage',
   /** Edit the shared list of links on the Resources page. */
   RESOURCES_MANAGE: 'resources:manage',
+  /** Build checksheets, and keep the list of assets they are filled in
+   *  against. Completing one needs nothing: a check is worth more done. */
+  CHECKSHEETS_MANAGE: 'checksheets:manage',
+  /** Read completed checksheets, the open deficiencies and the expiry
+   *  report. Everyone can always read back their own. */
+  CHECKSHEETS_READ_ALL: 'checksheets:read-all',
   SYSTEM_MIGRATE_LEGACY: 'system:migrate-legacy',
 } as const;
 
