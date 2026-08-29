@@ -22,6 +22,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -104,6 +105,22 @@ class CertTypeDto {
   @IsOptional()
   @IsInt()
   defaultValidityMonths?: number | null;
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  identifierField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  issuedAtField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  expiresAtField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  documentField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
 }
 
 class PatchCertTypeDto {
@@ -126,6 +143,22 @@ class PatchCertTypeDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  identifierField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  issuedAtField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  expiresAtField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
+
+  @IsOptional()
+  @IsIn(['HIDDEN', 'OPTIONAL', 'REQUIRED'])
+  documentField?: 'HIDDEN' | 'OPTIONAL' | 'REQUIRED';
 }
 
 class LadderDto {
@@ -247,6 +280,17 @@ export class CertificationsController {
   @RequirePermissions(PERMISSIONS.CERTS_VERIFY)
   pending() {
     return this.certs.listPending();
+  }
+
+  /**
+   * How many are waiting, for the navigation badge. Separate from the list
+   * so the nav shell — which renders on every page — does not fetch and
+   * discard the whole queue to show a number.
+   */
+  @Get('pending/count')
+  @RequirePermissions(PERMISSIONS.CERTS_VERIFY)
+  pendingCount() {
+    return this.certs.pendingCount();
   }
 
   @Get('expiring')

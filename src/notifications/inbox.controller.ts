@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -9,13 +10,19 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { IsBoolean, IsIn, IsObject, IsOptional } from 'class-validator';
+import { IsObject, IsString } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { AuditService } from '../audit/audit.service';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  DEFAULT_INBOX_SORT,
+  INBOX_SORTS,
+  isInboxSort,
+  orderByFor,
+} from './inbox-sort';
 import {
   MESSAGE_TYPES,
   MESSAGE_TYPE_KEYS,
@@ -27,6 +34,11 @@ import {
 class ChannelSettingsDto {
   @IsObject()
   channels!: ChannelSettings;
+}
+
+class InboxSortDto {
+  @IsString()
+  sort!: string;
 }
 
 function requireMember(auth: AuthContext): number {
@@ -45,6 +57,7 @@ export class InboxController {
   async list(
     @CurrentAuth() auth: AuthContext,
     @Query('filter') filter?: string,
+    @Query('sort') sort?: string,
   ) {
     const memberId = requireMember(auth);
     const where =
@@ -53,11 +66,60 @@ export class InboxController {
         : filter === 'unread'
           ? { memberId, readAt: null }
           : { memberId };
-    return this.prisma.inboxMessage.findMany({
-      where,
-      orderBy: [{ completedAt: 'asc' }, { createdAt: 'desc' }],
-      take: 200,
+    // A sort in the query wins for this one request — that is the member
+    // trying an order out — while the saved preference is what they get on
+    // arrival. Saving is a separate, deliberate act.
+    const saved = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: { inboxSort: true },
     });
+    const messages = await this.prisma.inboxMessage.findMany({
+      where,
+      orderBy: orderByFor(sort ?? saved?.inboxSort),
+      take: 200,
+      include: {
+        completedBy: { select: { firstName: true, lastName: true } },
+      },
+    });
+    // Naming the person only when it was somebody else. "Done by you" on your
+    // own task is noise; "Done by Jane" on a task five people were asked to do
+    // is the whole point.
+    return messages.map(({ completedById, completedBy, ...message }) => ({
+      ...message,
+      completedById,
+      completedBy:
+        completedById && completedById !== memberId ? completedBy : null,
+    }));
+  }
+
+  /** The orders on offer, and the one this member has saved. */
+  @Get('sort')
+  async sortOptions(@CurrentAuth() auth: AuthContext) {
+    const member = await this.prisma.member.findUnique({
+      where: { id: requireMember(auth) },
+      select: { inboxSort: true },
+    });
+    return {
+      options: Object.entries(INBOX_SORTS).map(([key, label]) => ({
+        key,
+        label,
+      })),
+      current: isInboxSort(member?.inboxSort)
+        ? member.inboxSort
+        : DEFAULT_INBOX_SORT,
+    };
+  }
+
+  @Put('sort')
+  async saveSort(@CurrentAuth() auth: AuthContext, @Body() body: InboxSortDto) {
+    if (!isInboxSort(body.sort)) {
+      throw new BadRequestException(`Unknown inbox sort: ${body.sort}`);
+    }
+    await this.prisma.member.update({
+      where: { id: requireMember(auth) },
+      data: { inboxSort: body.sort },
+    });
+    return { ok: true, sort: body.sort };
   }
 
   /** Counts for the navigation badge. */

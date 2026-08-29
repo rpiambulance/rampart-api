@@ -40,6 +40,8 @@ model Member {
   navLayout       String    @default("sidebar") // UI preference: sidebar | topnav
   eventView       String    @default("list") // UI preference: list | day | week | month
   timeFormat      String    @default("24h") // UI preference: 24h | 12h
+  /// UI preference: how the inbox is ordered. See INBOX_SORTS.
+  inboxSort       String    @default("unreadFirst")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -54,6 +56,7 @@ model Member {
   checklistsStarted  ChecklistEnrollment[] @relation("ChecklistEnrolled")
   checklistsBegunFor ChecklistEnrollment[] @relation("ChecklistStarter")
   crewsTakenOutOfService Crew[]            @relation("CrewOutOfServiceBy")
+  inboxTasksCompleted    InboxMessage[]    @relation("InboxCompletedBy")
   webhooksCreated    Webhook[]             @relation("WebhookCreator")
   choresAssigned     Chore[]               @relation("ChoreAssignee")
   choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
@@ -133,6 +136,14 @@ model CertificationType {
   abbreviation          String
   issuingOrg            String?
   defaultValidityMonths Int? // null = non-expiring
+  /// What this type asks of whoever submits it. A driver's licence needs its
+  /// number and its expiry; a one-off class needs neither, and asking anyway
+  /// trains people to leave fields blank. Everything defaults to OPTIONAL,
+  /// which is how every type behaved before this existed.
+  identifierField       FieldRequirement @default(OPTIONAL)
+  issuedAtField         FieldRequirement @default(OPTIONAL)
+  expiresAtField        FieldRequirement @default(OPTIONAL)
+  documentField         FieldRequirement @default(OPTIONAL)
   active                Boolean @default(true)
   /// Suggested by a member submitting a certification the list did not have.
   /// It works like any other type, but is marked until somebody with settings
@@ -166,6 +177,13 @@ model CertificationSupersession {
   @@index([lowerTypeId])
 }
 
+
+/// Whether a field is asked for, and whether it may be left blank.
+enum FieldRequirement {
+  HIDDEN
+  OPTIONAL
+  REQUIRED
+}
 
 enum CertStatus {
   PENDING_VERIFICATION
@@ -805,14 +823,27 @@ model InboxMessage {
   actionLabel String?
   actionUrl   String?
   completedAt DateTime?
+  /// Who dealt with it. Usually the recipient, but a task sent to everyone
+  /// who could do a thing is finished by whichever one of them does it, and
+  /// the rest should be told by whom rather than finding it silently gone.
+  completedById Int?
+
+  /// What the task is about, when it is about a record — so that acting on
+  /// that record can close every copy of the task at once. Deliberately a
+  /// loose reference rather than a relation per kind: the inbox does not want
+  /// a foreign key to every table in the schema.
+  subjectType String?
+  subjectId   Int?
 
   readAt    DateTime?
   createdAt DateTime  @default(now())
 
-  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member      Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  completedBy Member? @relation("InboxCompletedBy", fields: [completedById], references: [id])
 
   @@index([memberId, readAt])
   @@index([memberId, isTask, completedAt])
+  @@index([subjectType, subjectId])
 }
 
 model AppSetting {

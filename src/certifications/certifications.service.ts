@@ -13,6 +13,24 @@ import { CertificationGraphService } from './certification-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import type { FieldRequirement } from '../generated/prisma/enums';
+
+/**
+ * What a verification task is about, so that one officer's decision closes
+ * the copy sitting in every other officer's inbox.
+ */
+const CERT_TASK_SUBJECT = 'MemberCertification';
+
+/** The fields a certification type can ask for, and what each is called. */
+const CERT_FIELDS = [
+  {
+    key: 'identifier',
+    column: 'identifierField',
+    label: 'a certificate number',
+  },
+  { key: 'issuedAt', column: 'issuedAtField', label: 'an issue date' },
+  { key: 'expiresAt', column: 'expiresAtField', label: 'an expiry date' },
+] as const;
 
 @Injectable()
 export class CertificationsService {
@@ -54,6 +72,10 @@ export class CertificationsService {
       issuingOrg: string;
       defaultValidityMonths: number | null;
       active: boolean;
+      identifierField: FieldRequirement;
+      issuedAtField: FieldRequirement;
+      expiresAtField: FieldRequirement;
+      documentField: FieldRequirement;
     }>,
   ) {
     return this.prisma.certificationType.update({ where: { id }, data });
@@ -77,6 +99,13 @@ export class CertificationsService {
       },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  async pendingCount() {
+    const count = await this.prisma.memberCertification.count({
+      where: { status: 'PENDING_VERIFICATION' },
+    });
+    return { count };
   }
 
   /** Expiring/expired report (replaces .expired_certs.php). */
@@ -157,6 +186,8 @@ export class CertificationsService {
       : await this.typeForProposal(memberId, input.proposedTypeName ?? '');
     if (!type) throw new NotFoundException('Unknown certification type');
 
+    const expiresAtInput = input.expiresAt;
+    let issuedAtValue = input.issuedAt;
     let expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     if (!expiresAt && input.issuedAt && type.defaultValidityMonths) {
       const d = new Date(input.issuedAt);
@@ -168,12 +199,35 @@ export class CertificationsService {
     const byOfficer =
       enteredBy && enteredBy.kind === 'member' ? enteredBy.memberId : undefined;
 
+    // What this type asks for. A required field left blank is refused here
+    // rather than arriving as a record nobody can verify; a hidden one is
+    // dropped rather than trusted, since the form that omitted it is not the
+    // only way in.
+    const missing: string[] = [];
+    const kept: { identifier?: string; issuedAt?: string; expiresAt?: string } =
+      {};
+    for (const field of CERT_FIELDS) {
+      const requirement = type[field.column];
+      const value =
+        field.key === 'expiresAt' ? expiresAtInput : input[field.key];
+      if (requirement === 'HIDDEN') continue;
+      if (requirement === 'REQUIRED' && !value) missing.push(field.label);
+      if (value) kept[field.key] = value;
+    }
+    if (missing.length) {
+      throw new BadRequestException(
+        `${type.name} needs ${missing.join(' and ')}.`,
+      );
+    }
+    if (type.expiresAtField === 'HIDDEN') expiresAt = null;
+    if (type.issuedAtField === 'HIDDEN') issuedAtValue = undefined;
+
     const created = await this.prisma.memberCertification.create({
       data: {
         memberId,
         typeId: type.id,
-        identifier: input.identifier,
-        issuedAt: input.issuedAt ? new Date(input.issuedAt) : null,
+        identifier: kept.identifier,
+        issuedAt: issuedAtValue ? new Date(issuedAtValue) : null,
         expiresAt,
         ...(byOfficer
           ? {
@@ -192,6 +246,35 @@ export class CertificationsService {
         'MemberCertification',
         created.id,
         { memberId, typeId: input.typeId },
+      );
+    }
+
+    // Only a submission that is actually waiting on somebody. An officer
+    // entering a certification has already verified it by doing so, and
+    // asking the room to check their work would be noise.
+    if (created.status === 'PENDING_VERIFICATION') {
+      const member = await this.prisma.member.findUnique({
+        where: { id: memberId },
+        select: { firstName: true, lastName: true },
+      });
+      const who = member
+        ? `${member.firstName} ${member.lastName}`
+        : `Member ${memberId}`;
+      await this.notifications.notifyPermissionHolders(
+        PERMISSIONS.CERTS_VERIFY,
+        {
+          type: 'cert.submitted',
+          subject: `${type.name} to verify for ${who}`,
+          body:
+            `${who} submitted ${type.name}` +
+            `${created.identifier ? ` (${created.identifier})` : ''} for ` +
+            'verification. Whoever gets to it first closes this for everyone.',
+          task: {
+            actionLabel: 'Review certifications',
+            actionUrl: '/admin/certifications',
+          },
+          about: { type: CERT_TASK_SUBJECT, id: created.id },
+        },
       );
     }
     return created;
@@ -342,12 +425,26 @@ export class CertificationsService {
       certificationId,
       input,
     );
+    if (isVerifier) {
+      // Editing it as an officer is itself the check, so the queue's task is
+      // finished — by them.
+      await this.notifications.completeTasksAbout(
+        { type: CERT_TASK_SUBJECT, id: certificationId },
+        auth.memberId,
+      );
+    }
     return updated;
   }
 
   /** Withdraws a certification. Same ownership rule as amending. */
   async remove(auth: AuthContext, certificationId: number) {
     await this.requireOwnOrVerifier(auth, certificationId);
+    // Before the row goes: a task pointing at a certification that no longer
+    // exists is a job nobody can finish or dismiss.
+    await this.notifications.completeTasksAbout(
+      { type: CERT_TASK_SUBJECT, id: certificationId },
+      auth.kind === 'member' ? auth.memberId : null,
+    );
     await this.prisma.memberCertification.delete({
       where: { id: certificationId },
     });
@@ -641,6 +738,13 @@ export class CertificationsService {
       'MemberCertification',
       certificationId,
       decision,
+    );
+    // Everyone who could have checked this was asked to; one of them has, so
+    // the rest are told it is done and by whom rather than opening it to find
+    // the work already gone.
+    await this.notifications.completeTasksAbout(
+      { type: CERT_TASK_SUBJECT, id: certificationId },
+      auth.memberId,
     );
     // Named, so the member knows which of theirs this is about, and told why
     // when it was turned down — a rejection with no reason leaves them to

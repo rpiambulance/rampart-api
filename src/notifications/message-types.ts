@@ -61,6 +61,14 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'cert.submitted',
+    label: 'Certification awaiting verification',
+    description:
+      'A member submitted a certification that somebody needs to check.',
+    audience: 'officers',
+    defaults: { email: false, slack: false },
+  },
+  {
     key: 'cert.decided',
     label: 'Certification verified or rejected',
     description: 'An officer has reviewed a submitted certification.',

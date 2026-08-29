@@ -40,6 +40,12 @@ export interface Notice {
   body: string;
   /** Something to be done, not merely read. */
   task?: { actionLabel: string; actionUrl: string };
+  /**
+   * The record this is about, when there is one. A task sent to everybody who
+   * could deal with something can then be closed for all of them the moment
+   * one of them does. See completeTasksAbout.
+   */
+  about?: { type: string; id: number };
 }
 
 /** Email settings as held in AppSetting; see the console's Email card. */
@@ -202,6 +208,8 @@ export class NotificationsService {
         isTask: !!notice.task,
         actionLabel: notice.task?.actionLabel ?? null,
         actionUrl: notice.task?.actionUrl ?? null,
+        subjectType: notice.about?.type ?? null,
+        subjectId: notice.about?.id ?? null,
       },
     });
 
@@ -302,6 +310,30 @@ export class NotificationsService {
    * To everyone holding a permission — the people who can actually act on it.
    * Used for a task that names a job rather than a role.
    */
+  /**
+   * Close every outstanding task about a record, naming who dealt with it.
+   *
+   * A task sent to everyone who could verify a certification is finished the
+   * moment one of them verifies it. Leaving the other copies open asks four
+   * more people to look at something already done; deleting them leaves a
+   * gap where a task used to be. So they are completed, and credited.
+   */
+  async completeTasksAbout(
+    about: { type: string; id: number },
+    byMemberId: number | null,
+  ): Promise<number> {
+    const result = await this.prisma.inboxMessage.updateMany({
+      where: {
+        subjectType: about.type,
+        subjectId: about.id,
+        isTask: true,
+        completedAt: null,
+      },
+      data: { completedAt: new Date(), completedById: byMemberId },
+    });
+    return result.count;
+  }
+
   async notifyPermissionHolders(permission: string, notice: Notice) {
     const today = nyToday();
     const [byRole, byCredential] = await Promise.all([

@@ -30,6 +30,12 @@ import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { AvailabilityStatus } from '../generated/prisma/enums';
 
+class InviteDto {
+  @IsArray()
+  @IsInt({ each: true })
+  memberIds!: number[];
+}
+
 class CreatePollDto {
   @IsString()
   name!: string;
@@ -99,11 +105,18 @@ export class AvailabilityController {
         name: body.name,
         createdById: requireMember(auth),
         invites: {
-          create: [...new Set(body.memberIds)].map((memberId) => ({ memberId })),
+          create: [...new Set(body.memberIds)].map((memberId) => ({
+            memberId,
+          })),
         },
       },
     });
-    await this.audit.log(auth, 'availability.poll.create', 'AvailabilityPoll', poll.id);
+    await this.audit.log(
+      auth,
+      'availability.poll.create',
+      'AvailabilityPoll',
+      poll.id,
+    );
     for (const memberId of new Set(body.memberIds)) {
       await this.notifications.notify(memberId, {
         type: 'availability.requested',
@@ -116,6 +129,78 @@ export class AvailabilityController {
       });
     }
     return poll;
+  }
+
+  /**
+   * Invite more people to a poll already running.
+   *
+   * Anyone already invited is skipped rather than re-notified: a poll gets
+   * added to as names come to mind, and the people asked last week should not
+   * get the same request again each time somebody else is added.
+   */
+  @Post(':id/invites')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_MANAGE_DEFAULTS)
+  async invite(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: InviteDto,
+  ) {
+    const poll = await this.prisma.availabilityPoll.findUniqueOrThrow({
+      where: { id },
+      include: { invites: { select: { memberId: true } } },
+    });
+    if (poll.status !== 'OPEN') {
+      throw new BadRequestException(
+        'That poll is closed. Reopen it before adding anybody.',
+      );
+    }
+    const already = new Set(poll.invites.map((invite) => invite.memberId));
+    const added = [...new Set(body.memberIds)].filter(
+      (memberId) => !already.has(memberId),
+    );
+    if (!added.length) return { added: 0 };
+
+    await this.prisma.availabilityPollInvite.createMany({
+      data: added.map((memberId) => ({ pollId: id, memberId })),
+      skipDuplicates: true,
+    });
+    await this.audit.log(
+      auth,
+      'availability.poll.invite',
+      'AvailabilityPoll',
+      id,
+      { added },
+    );
+    for (const memberId of added) {
+      await this.notifications.notify(memberId, {
+        type: 'availability.requested',
+        subject: `Availability requested: ${poll.name}`,
+        body: 'Tell us which weeknights you can ride.',
+        task: {
+          actionLabel: 'Fill in your availability',
+          actionUrl: '/availability',
+        },
+      });
+    }
+    return { added: added.length };
+  }
+
+  /** Who could still be added: active members not already invited. */
+  @Get(':id/candidates')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_MANAGE_DEFAULTS)
+  async candidates(@Param('id', ParseIntPipe) id: number) {
+    const invited = await this.prisma.availabilityPollInvite.findMany({
+      where: { pollId: id },
+      select: { memberId: true },
+    });
+    return this.prisma.member.findMany({
+      where: {
+        active: true,
+        id: { notIn: invited.map((invite) => invite.memberId) },
+      },
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
   }
 
   /** Full grid: invited members × weekdays, for the defaults editor overlay. */
@@ -165,7 +250,13 @@ export class AvailabilityController {
         closedAt: body.status === 'CLOSED' ? new Date() : null,
       },
     });
-    await this.audit.log(auth, 'availability.poll.status', 'AvailabilityPoll', id, body);
+    await this.audit.log(
+      auth,
+      'availability.poll.status',
+      'AvailabilityPoll',
+      id,
+      body,
+    );
     return poll;
   }
 
@@ -210,9 +301,18 @@ export class AvailabilityController {
     for (const entry of body.entries) {
       await this.prisma.availabilityResponse.upsert({
         where: {
-          pollId_memberId_weekday: { pollId: id, memberId, weekday: entry.weekday },
+          pollId_memberId_weekday: {
+            pollId: id,
+            memberId,
+            weekday: entry.weekday,
+          },
         },
-        create: { pollId: id, memberId, weekday: entry.weekday, status: entry.status },
+        create: {
+          pollId: id,
+          memberId,
+          weekday: entry.weekday,
+          status: entry.status,
+        },
         update: { status: entry.status },
       });
     }
