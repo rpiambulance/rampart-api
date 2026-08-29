@@ -316,6 +316,13 @@ export class CertificationsController {
     return this.certs.recomputeSuspensions();
   }
 
+  /** Cheap enough for the navigation badge; see heldSuspensions. */
+  @Get('suspensions/held')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)
+  heldSuspensions() {
+    return this.certs.heldSuspensions();
+  }
+
   /** Apply it anyway, past the crowd guard, because somebody has looked. */
   @Post('suspensions/apply')
   @RequirePermissions(PERMISSIONS.CREDENTIALS_GRANT)

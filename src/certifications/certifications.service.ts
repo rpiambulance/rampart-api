@@ -980,10 +980,15 @@ export class CertificationsService {
       const missing: string[] = [];
       for (const req of certReqs) {
         if (waived.has(req.id)) continue;
+        // A higher certification answers the requirement: a Paramedic meets a
+        // requirement for EMT. Checked here as well as on the promotion
+        // checklist — matching the exact type would suspend every medic on
+        // the roster for not holding the card they outrank.
+        const accepted = await this.graph.satisfying(req.certificationTypeId!);
         const ok = await this.prisma.memberCertification.findFirst({
           where: {
             memberId: cred.memberId,
-            typeId: req.certificationTypeId!,
+            typeId: { in: accepted },
             status: 'VERIFIED',
             OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
           },
@@ -1087,15 +1092,37 @@ export class CertificationsService {
       (stored?.value as unknown as { fingerprint?: string } | undefined)
         ?.fingerprint ?? '';
     if (previous === fingerprint) return false;
+    // The count travels with it so the navigation badge is a single indexed
+    // read. Recomputing the sweep on every page load, for every officer, to
+    // show one number would cost far more than the number is worth.
     // Through `unknown`: a plain `as object` is stripped by the lint rule for
     // unnecessary assertions, which leaves it failing to compile.
-    const value = { fingerprint } as unknown as Prisma.InputJsonObject;
+    const value = {
+      fingerprint,
+      count: suspensions.length,
+      at: new Date().toISOString(),
+    } as unknown as Prisma.InputJsonObject;
     await this.prisma.appSetting.upsert({
       where: { key: MASS_SUSPENSION_KEY },
       create: { key: MASS_SUSPENSION_KEY, value },
       update: { value },
     });
     return true;
+  }
+
+  /**
+   * Whether a sweep is currently held back, and how many it would affect.
+   *
+   * Read from what the last blocked sweep recorded rather than by planning a
+   * new one: this is called on every page render for anyone who could act on
+   * it, and the plan is a query per credential.
+   */
+  async heldSuspensions(): Promise<{ held: boolean; count: number }> {
+    const stored = await this.prisma.appSetting.findUnique({
+      where: { key: MASS_SUSPENSION_KEY },
+    });
+    const value = stored?.value as unknown as { count?: number } | undefined;
+    return { held: !!stored, count: value?.count ?? 0 };
   }
 
   /** Forgets the reported sweep, so the next problem is announced afresh. */

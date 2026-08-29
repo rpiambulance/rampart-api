@@ -268,13 +268,18 @@ export class CredentialsService {
       ).map((row) => row.memberId),
     );
 
+    const accepted = await this.certGraph.satisfying(req.certificationTypeId!);
     const members: Array<{ id: number; name: string; reason: string }> = [];
     for (const holder of holders) {
       if (waived.has(holder.memberId)) continue;
+      // Anything that outranks it counts, exactly as the nightly check and
+      // the promotion checklist count it — otherwise this previews a
+      // different rule from the one that would actually be applied, and
+      // grandfathers the wrong people.
       const held = await this.prisma.memberCertification.findFirst({
         where: {
           memberId: holder.memberId,
-          typeId: req.certificationTypeId!,
+          typeId: { in: accepted },
           status: 'VERIFIED',
           OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
         },
@@ -282,7 +287,7 @@ export class CredentialsService {
       });
       if (held) continue;
       const lapsed = await this.prisma.memberCertification.findFirst({
-        where: { memberId: holder.memberId, typeId: req.certificationTypeId! },
+        where: { memberId: holder.memberId, typeId: { in: accepted } },
         orderBy: { expiresAt: 'desc' },
         select: { status: true, expiresAt: true },
       });
@@ -594,10 +599,15 @@ export class CredentialsService {
         adjustment.reqKind === 'CERTIFICATION' &&
         adjustment.certificationType
       ) {
+        // Ladder-aware like every other certification check.
         const cert = await this.prisma.memberCertification.findFirst({
           where: {
             memberId,
-            typeId: adjustment.certificationTypeId!,
+            typeId: {
+              in: await this.certGraph.satisfying(
+                adjustment.certificationTypeId!,
+              ),
+            },
             status: 'VERIFIED',
             OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
           },

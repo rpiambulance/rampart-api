@@ -22,12 +22,15 @@ type Req = {
 
 function serviceWith(options: {
   requirements: Req[];
+  /** typeId -> ids that satisfy it, mirroring CertificationGraphService. */
+  ladder?: Record<number, number[]>;
   /** Credential holders, and whether each holds a current certification. */
   holders: Array<{
     id: number;
     memberId: number;
     status: string;
-    holdsCert: boolean;
+    /** True, or the certification type ids actually held. */
+    holdsCert: boolean | number[];
   }>;
   waivers?: Array<{ memberId: number; requirementId: number }>;
 }) {
@@ -77,11 +80,24 @@ function serviceWith(options: {
       },
     },
     memberCertification: {
-      findFirst: ({ where }: { where: { memberId: number } }) => {
+      findFirst: ({
+        where,
+      }: {
+        where: { memberId: number; typeId?: { in: number[] } };
+      }) => {
         const holder = options.holders.find(
           (h) => h.memberId === where.memberId,
         );
-        return Promise.resolve(holder?.holdsCert ? { id: 1 } : null);
+        if (!holder) return Promise.resolve(null);
+        // A list means "these are the type ids they actually hold", and the
+        // query's accepted set decides — which is what makes the ladder
+        // testable rather than assumed.
+        if (Array.isArray(holder.holdsCert)) {
+          const accepted = where.typeId?.in ?? [];
+          const match = holder.holdsCert.some((id) => accepted.includes(id));
+          return Promise.resolve(match ? { id: 1 } : null);
+        }
+        return Promise.resolve(holder.holdsCert ? { id: 1 } : null);
       },
     },
     promotionRequirementAdjustment: {
@@ -100,8 +116,11 @@ function serviceWith(options: {
       return Promise.resolve();
     },
   };
+  const graph = {
+    satisfying: (id: number) => Promise.resolve(options.ladder?.[id] ?? [id]),
+  };
   const service = new CertificationsService(
-    {} as never,
+    graph as never,
     // The credential graph: no ladder in these tests, so nothing is
     // inherited and each credential is judged on its own requirements.
     { idsBelow: () => Promise.resolve([]) } as never,
@@ -195,6 +214,30 @@ describe('ongoing vs promotion requirements', () => {
       holders: [{ id: 1, memberId: 7, status: 'ACTIVE', holdsCert: false }],
     });
     await service.recomputeSuspensions(7);
+    expect(updates).toEqual([{ id: 1, status: 'SUSPENDED' }]);
+  });
+
+  it('accepts a certification that outranks the one required', async () => {
+    // The requirement names EMT (5). The member holds Paramedic (7), which
+    // outranks it. Matching the exact type would suspend every medic on the
+    // roster for not holding the card they outrank.
+    const { service, updates } = serviceWith({
+      requirements: [ongoing],
+      ladder: { 5: [5, 6, 7] },
+      holders: [{ id: 1, memberId: 7, status: 'ACTIVE', holdsCert: [7] }],
+    });
+    await service.recomputeSuspensions();
+    expect(updates).toEqual([]);
+  });
+
+  it('still suspends somebody holding only something lower', async () => {
+    // CFR (4) is below EMT (5) and does not answer it.
+    const { service, updates } = serviceWith({
+      requirements: [ongoing],
+      ladder: { 5: [5, 6, 7] },
+      holders: [{ id: 1, memberId: 7, status: 'ACTIVE', holdsCert: [4] }],
+    });
+    await service.recomputeSuspensions();
     expect(updates).toEqual([{ id: 1, status: 'SUSPENDED' }]);
   });
 });
