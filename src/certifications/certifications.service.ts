@@ -900,12 +900,18 @@ export class CertificationsService {
       : everybody;
     if (!wanted.length) return { notified: 0 };
 
+    const results: Array<{
+      memberId: number;
+      memberName: string;
+      email: string;
+      slack: string;
+    }> = [];
     for (const row of wanted) {
       const cards =
         row.missing.length === 1
           ? row.missing[0]
           : `${row.missing.slice(0, -1).join(', ')} and ${row.missing.at(-1)}`;
-      await this.notifications.notify(
+      const { delivery } = await this.notifications.notifyReporting(
         row.memberId,
         {
           type: 'credential.suspension-warning',
@@ -923,6 +929,12 @@ export class CertificationsService {
         },
         { email: opts.email, slack: opts.slack },
       );
+      results.push({
+        memberId: row.memberId,
+        memberName: row.memberName,
+        email: delivery.email,
+        slack: delivery.slack,
+      });
     }
     await this.audit.log(
       auth,
@@ -935,7 +947,23 @@ export class CertificationsService {
         slack: opts.slack,
       },
     );
-    return { notified: wanted.length };
+    // The inbox copy is always written, so `notified` is honest on its own —
+    // but it is not the whole story, and the per-channel results are what
+    // tell somebody their message reached nobody's phone.
+    return {
+      notified: wanted.length,
+      results,
+      summary: {
+        emailSent: results.filter((r) => r.email === 'sent').length,
+        emailFailed: results.filter((r) => r.email === 'failed').length,
+        emailNoAddress: results.filter((r) => r.email === 'no-destination')
+          .length,
+        slackSent: results.filter((r) => r.slack === 'sent').length,
+        slackFailed: results.filter((r) => r.slack === 'failed').length,
+        slackNotLinked: results.filter((r) => r.slack === 'no-destination')
+          .length,
+      },
+    };
   }
 
   /**

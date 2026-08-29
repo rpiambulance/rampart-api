@@ -33,6 +33,27 @@ export function portalUrl(path: string): string {
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
+/**
+ * What became of one channel for one recipient.
+ *
+ * "Sent" means the far end accepted it, which is as much as anything here can
+ * honestly claim — an accepted email can still bounce later. The rest are the
+ * reasons a message never left, and are worth telling the sender: somebody
+ * warning five people that their credentials are at risk needs to know that
+ * two of them were never reached.
+ */
+export type DeliveryOutcome =
+  | 'sent'
+  | 'failed'
+  | 'not-requested'
+  /** No address on file, or no Slack account linked. */
+  | 'no-destination';
+
+export interface DeliveryReport {
+  email: DeliveryOutcome;
+  slack: DeliveryOutcome;
+}
+
 export interface Notice {
   /** Message type key; decides email/Slack delivery. See message-types.ts. */
   type: string;
@@ -201,6 +222,20 @@ export class NotificationsService {
   async notify(
     memberId: number,
     notice: Notice,
+    channels?: { email: boolean; slack: boolean },
+  ) {
+    const { message } = await this.notifyWithDelivery(
+      memberId,
+      notice,
+      channels,
+    );
+    return message;
+  }
+
+  /** notify(), plus what became of each channel. See notifyReporting. */
+  private async notifyWithDelivery(
+    memberId: number,
+    notice: Notice,
     /**
      * Forces the channels rather than reading them from the member's
      * settings. For a message somebody is deliberately sending, now, having
@@ -225,22 +260,43 @@ export class NotificationsService {
     });
 
     const wanted = channels ?? channelsFor(await this.channels(), notice.type);
-    if (wanted.email || wanted.slack) {
-      await this.deliver(memberId, notice, wanted);
-    }
-    return message;
+    const delivery: DeliveryReport =
+      wanted.email || wanted.slack
+        ? await this.deliver(memberId, notice, wanted)
+        : { email: 'not-requested', slack: 'not-requested' };
+    return { message, delivery };
+  }
+
+  /**
+   * Sends, and says what became of it.
+   *
+   * Anything sent because a person pressed a button should use this one:
+   * "warned five people" is not worth saying if three of them have no Slack
+   * account and the mail server is misconfigured. The plain notify() above
+   * keeps its old shape for the many callers that fire and forget.
+   */
+  async notifyReporting(
+    memberId: number,
+    notice: Notice,
+    channels?: { email: boolean; slack: boolean },
+  ) {
+    return this.notifyWithDelivery(memberId, notice, channels);
   }
 
   private async deliver(
     memberId: number,
     notice: Notice,
     wanted: { email: boolean; slack: boolean },
-  ) {
+  ): Promise<DeliveryReport> {
+    const report: DeliveryReport = {
+      email: wanted.email ? 'no-destination' : 'not-requested',
+      slack: wanted.slack ? 'no-destination' : 'not-requested',
+    };
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
       select: { email: true, slackId: true },
     });
-    if (!member) return;
+    if (!member) return report;
 
     // Absolute for anything leaving the building. The inbox keeps the
     // relative path — it is an in-app link — but a bare "/availability" in an
@@ -250,14 +306,22 @@ export class NotificationsService {
       : notice.body;
 
     if (wanted.email && member.email) {
-      await this.sendEmail(member.email, notice.subject, body);
+      report.email = (await this.sendEmail(member.email, notice.subject, body))
+        ? 'sent'
+        : 'failed';
     }
     // A direct message: the "channel" is the member's own Slack id, so it has
     // to be an id. A handle left by the legacy import would be posted to a
     // channel that does not exist.
     if (wanted.slack && looksLikeSlackId(member.slackId)) {
-      await this.slack.postTo(member.slackId!, `*${notice.subject}*\n${body}`);
+      report.slack = (await this.slack.postTo(
+        member.slackId!,
+        `*${notice.subject}*\n${body}`,
+      ))
+        ? 'sent'
+        : 'failed';
     }
+    return report;
   }
 
   /** Raw email to an outside address (e.g. coverage requesters). */
