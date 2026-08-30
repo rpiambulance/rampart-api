@@ -139,10 +139,37 @@ class TemplateDto {
   notifyRoleIds?: number[];
 }
 
-class SectionDto {
+export class SectionDto {
   @IsString()
   @MaxLength(150)
   heading!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  hasSeal?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  order?: number;
+}
+
+/**
+ * A partial edit to a section.
+ *
+ * Separate from SectionDto because creating one needs a heading and changing
+ * one does not: reusing the create shape made "just turn the seal on" fail
+ * validation for a heading nobody was editing.
+ */
+export class PatchSectionDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  heading?: string;
 
   @IsOptional()
   @IsBoolean()
@@ -216,6 +243,40 @@ class ReorderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items?: OrderItemDto[];
+}
+
+/** As PatchSectionDto, and for the same reason. */
+export class PatchItemDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  label?: string;
+
+  @IsOptional()
+  @IsInt()
+  sectionId?: number | null;
+
+  @IsOptional()
+  @IsIn(KINDS)
+  kind?: (typeof KINDS)[number];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  parLevel?: number | null;
+
+  @IsOptional()
+  @IsIn(TRACKING)
+  expiryTracking?: (typeof TRACKING)[number];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
+
+  @IsOptional()
+  @IsInt()
+  order?: number;
 }
 
 class ResolveDto {
@@ -485,7 +546,7 @@ export class ChecksheetsController {
   @RequirePermissions(PERMISSIONS.CHECKSHEETS_MANAGE)
   updateSection(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: SectionDto,
+    @Body() body: PatchSectionDto,
   ) {
     return this.prisma.checksheetSection.update({
       where: { id },
@@ -535,7 +596,7 @@ export class ChecksheetsController {
   @RequirePermissions(PERMISSIONS.CHECKSHEETS_MANAGE)
   async updateItem(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: ItemDto,
+    @Body() body: PatchItemDto,
   ) {
     const existing = await this.prisma.checksheetItem.findUniqueOrThrow({
       where: { id },
