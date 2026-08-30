@@ -92,8 +92,14 @@ export class MembersService {
     });
     // Every member starts at the floor of the ladder.
     await grantObserver(this.prisma, member.id);
-    await this.audit.log(auth, 'members.create', 'Member', member.id);
-    return member;
+    await this.audit.log(auth, 'members.create', 'Member', member.id, {
+      // Recorded, because "they cannot log in" is answered months later by
+      // whether this said true on the day.
+      keycloakLinked: !!keycloakSubject,
+    });
+    // Told to the caller rather than only to the log: an officer who has just
+    // added somebody needs to know whether that person can actually sign in.
+    return { ...member, keycloakLinked: !!keycloakSubject };
   }
 
   /**

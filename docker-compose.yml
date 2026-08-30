@@ -53,6 +53,11 @@ services:
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000,http://localhost:3002}
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://keycloak:8080/realms/rampart}
       KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-rampart-api}
+      # Lets the API create a login for each new member. Without these a
+      # member added from the roster has no way to sign in, and the API says
+      # so at boot.
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-rampart-api-admin}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-dev-secret-api-admin}
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /data/storage
       WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}

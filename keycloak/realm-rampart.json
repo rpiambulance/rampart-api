@@ -60,6 +60,16 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "rampart-api-admin",
+      "enabled": true,
+      "secret": "dev-secret-api-admin",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "description": "Service account the API uses to create members' Keycloak logins."
     }
   ],
   "users": [
@@ -78,6 +88,17 @@
           "temporary": false
         }
       ]
+    },
+    {
+      "username": "service-account-rampart-api-admin",
+      "enabled": true,
+      "serviceAccountClientId": "rampart-api-admin",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users"
+        ]
+      }
     }
   ],
   "accessTokenLifespan": 28800
