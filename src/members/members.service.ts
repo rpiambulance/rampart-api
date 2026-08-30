@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
@@ -51,6 +55,70 @@ export class MembersService {
     return member;
   }
 
+  /**
+   * Stops the two ways a new member can already be on the roster.
+   *
+   * The address is the one that cannot be argued with: it is unique in the
+   * database, it is how a login finds its member, and two records sharing one
+   * means one of them can never be signed into. That is refused outright, and
+   * says which record it clashes with rather than surfacing a constraint
+   * violation.
+   *
+   * A name is different. Agencies do get two Chris Reillys, so a matching
+   * name is a question — asked once, and answerable — rather than a wall.
+   */
+  private async refuseDuplicates(
+    firstName: string,
+    lastName: string,
+    email: string,
+    opts: { confirmDuplicateName?: boolean },
+  ) {
+    const byEmail = await this.prisma.member.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      select: { id: true, firstName: true, lastName: true, active: true },
+    });
+    if (byEmail) {
+      const sameName =
+        byEmail.firstName.toLowerCase() === firstName.trim().toLowerCase() &&
+        byEmail.lastName.toLowerCase() === lastName.trim().toLowerCase();
+      throw new ConflictException({
+        code: 'DUPLICATE_EMAIL',
+        message: sameName
+          ? `${byEmail.firstName} ${byEmail.lastName} is already on the roster with that email address` +
+            `${byEmail.active ? '' : ', as an inactive member'}. Reactivate or edit that record rather than adding a second one.`
+          : `That email address already belongs to ${byEmail.firstName} ${byEmail.lastName}` +
+            `${byEmail.active ? '' : ' (inactive)'}. Every member needs their own, because it is what their login is matched on.`,
+        existing: byEmail,
+      });
+    }
+
+    if (opts.confirmDuplicateName) return;
+
+    const byName = await this.prisma.member.findMany({
+      where: {
+        firstName: { equals: firstName.trim(), mode: 'insensitive' },
+        lastName: { equals: lastName.trim(), mode: 'insensitive' },
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        active: true,
+      },
+    });
+    if (byName.length) {
+      throw new ConflictException({
+        code: 'DUPLICATE_NAME',
+        message:
+          `${byName.length > 1 ? `${byName.length} members are` : 'A member is'} ` +
+          `already on the roster by that name. Check this is a different person, ` +
+          'then add them again to confirm.',
+        existing: byName,
+      });
+    }
+  }
+
   async create(
     auth: AuthContext,
     data: {
@@ -67,12 +135,17 @@ export class MembersService {
       slackId?: string;
       rin?: string;
       keycloakSubject?: string;
+      /** Acknowledges a name that matches somebody already on the roster. */
+      confirmDuplicateName?: boolean;
     },
   ) {
     // Stored lower case, because that is how a login will arrive looking for
     // it: an address typed with capitals here is a member who cannot be
     // matched to their own account later.
     const email = normalizeEmail(data.email);
+    await this.refuseDuplicates(data.firstName, data.lastName, email, {
+      confirmDuplicateName: data.confirmDuplicateName,
+    });
     let keycloakSubject = data.keycloakSubject ?? null;
     if (!keycloakSubject) {
       keycloakSubject = await this.keycloak.provisionUser({
@@ -81,9 +154,12 @@ export class MembersService {
         lastName: data.lastName,
       });
     }
+    // Everything except the confirmation, which is an answer to a question
+    // this method asked and not a column on the member.
+    const { confirmDuplicateName: _confirmed, ...fields } = data;
     const member = await this.prisma.member.create({
       data: {
-        ...data,
+        ...fields,
         email,
         cellPhone: normalizePhone(data.cellPhone),
         keycloakSubject,

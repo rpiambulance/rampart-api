@@ -74,6 +74,18 @@ class SelfEditDto {
 }
 
 class CreateMemberDto {
+  /**
+   * Set to add somebody whose name matches an existing member.
+   *
+   * Two people really can share a name, so a name clash is a question rather
+   * than a refusal — but it is asked once, deliberately, rather than assumed
+   * away. A matching email is a different matter and cannot be confirmed
+   * past.
+   */
+  @IsOptional()
+  @IsBoolean()
+  confirmDuplicateName?: boolean;
+
   @IsString()
   firstName!: string;
 
