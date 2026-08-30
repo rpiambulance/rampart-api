@@ -66,6 +66,8 @@ model Member {
   checklistsBegunFor ChecklistEnrollment[] @relation("ChecklistStarter")
   crewsTakenOutOfService Crew[]            @relation("CrewOutOfServiceBy")
   inboxTasksCompleted    InboxMessage[]    @relation("InboxCompletedBy")
+  evalAttachments        EvalAttachment[]  @relation("EvalAttachmentUploader")
+  unlinkedLoginsResolved UnlinkedLogin[]   @relation("UnlinkedLoginResolver")
   profileReviewsRequested Member[]         @relation("ProfileReviewRequestedBy")
   profileReviewRequestedBy Member?         @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
   resourcesCreated       Resource[]        @relation("ResourceCreator")
@@ -402,6 +404,13 @@ enum ScoreType {
 
 /// Evaluations are filled in once; checklists are signed off item by item,
 /// over time, by whoever is qualified to sign each line.
+/// Whether a form takes attachments, and whether it requires them.
+enum AttachmentRequirement {
+  NONE
+  OPTIONAL
+  REQUIRED
+}
+
 enum TemplateKind {
   EVALUATION
   CHECKLIST
@@ -430,6 +439,15 @@ model EvalFormTemplate {
   version   Int          @default(1)
   active    Boolean      @default(true)
   createdAt DateTime     @default(now())
+
+  /// Whether this form takes files at all, and whether it insists — a run
+  /// report wants the patient care documentation attached; a shift
+  /// evaluation wants nothing.
+  attachments AttachmentRequirement @default(NONE)
+  /// Shows a warning before the file picker that what is uploaded must carry
+  /// no protected health information. Off by default: a warning on every
+  /// form is a warning nobody reads by the time it matters.
+  phiWarning  Boolean               @default(false)
 
   /// Checklists only: the credentials that let someone sign. Holding any one
   /// of them — or anything above it on the ladder — is enough. An item may
@@ -545,6 +563,32 @@ enum EvalStatus {
   SIGNED
 }
 
+/// A file attached to a completed evaluation.
+///
+/// Opaque id for the same reason certification documents have one: the URL
+/// is the only thing standing between a file and somebody guessing the next
+/// number along.
+model EvalAttachment {
+  id           String   @id @default(uuid(4))
+  evaluationId Int
+  /// What this file is, in the evaluator's words: "PCR page 1", "12-lead".
+  /// A list of filenames is not a record anybody can read later.
+  title        String
+  /// Ordering as entered, so the list reads the way it was built.
+  position     Int      @default(0)
+  storageKey   String
+  fileName     String
+  contentType  String
+  sizeBytes    Int
+  uploadedById Int?
+  uploadedAt   DateTime @default(now())
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  uploadedBy Member?    @relation("EvalAttachmentUploader", fields: [uploadedById], references: [id])
+
+  @@index([evaluationId])
+}
+
 model Evaluation {
   id                Int        @id @default(autoincrement())
   templateId        Int
@@ -569,7 +613,8 @@ model Evaluation {
   evaluator Member           @relation("Evaluator", fields: [evaluatorId], references: [id])
   requestedBy Member?        @relation("EvalRequester", fields: [requestedById], references: [id])
   subject   Member           @relation("EvalSubject", fields: [subjectId], references: [id])
-  scores    EvalScore[]
+  scores      EvalScore[]
+  attachments EvalAttachment[]
 
   @@index([subjectId])
   @@index([evaluatorId])
@@ -1645,4 +1690,28 @@ model ChecksheetDeficiency {
 
   @@index([resolvedAt])
   @@index([assetId, resolvedAt])
+}
+
+/// A Keycloak login with no member record behind it.
+///
+/// Kept as a row rather than only a notification for two reasons: the auth
+/// guard runs on every request, so something has to remember that this
+/// person has already been reported, and an officer needs the address and
+/// the subject id in front of them to link the account.
+model UnlinkedLogin {
+  id              Int      @id @default(autoincrement())
+  keycloakSubject String   @unique
+  email           String?
+  name            String?
+  firstSeenAt     DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  attempts        Int      @default(1)
+  /// Set when somebody links it, or when the login stops being unlinked.
+  resolvedAt      DateTime?
+  resolvedById    Int?
+  resolvedMemberId Int?
+
+  resolvedBy Member? @relation("UnlinkedLoginResolver", fields: [resolvedById], references: [id])
+
+  @@index([resolvedAt])
 }

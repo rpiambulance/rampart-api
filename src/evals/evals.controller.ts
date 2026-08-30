@@ -2,6 +2,9 @@ import {
   Body,
   Controller,
   Delete,
+  Res,
+  UploadedFile,
+  UseInterceptors,
   ForbiddenException,
   Get,
   Param,
@@ -10,6 +13,8 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { Type } from 'class-transformer';
 import {
   IsArray,
@@ -28,6 +33,7 @@ import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { EvalsService, type TemplateNodeInput } from './evals.service';
+import { MAX_UPLOAD_BYTES } from '../storage/upload-limits';
 
 class TemplateOptionDto {
   @IsString()
@@ -150,6 +156,16 @@ class TemplateNodeDto {
 }
 
 class CreateTemplateDto {
+  /** NONE, OPTIONAL or REQUIRED — whether the form takes files at all. */
+  @IsOptional()
+  @IsIn(['NONE', 'OPTIONAL', 'REQUIRED'])
+  attachments?: 'NONE' | 'OPTIONAL' | 'REQUIRED';
+
+  /** Warn, before the picker, that uploads must carry no PHI. */
+  @IsOptional()
+  @IsBoolean()
+  phiWarning?: boolean;
+
   @IsString()
   name!: string;
 
@@ -315,6 +331,8 @@ export class EvalsController {
     return this.evals.createTemplate({
       name: body.name,
       kind: body.kind,
+      attachments: body.attachments,
+      phiWarning: body.phiWarning,
       signoffCredentialTypeIds: body.signoffCredentialTypeIds,
       nodes: body.nodes as TemplateNodeInput[] | undefined,
       items: body.items,
@@ -328,10 +346,58 @@ export class EvalsController {
     @Body() body: CreateTemplateDto,
   ) {
     return this.evals.reviseTemplate(id, {
+      attachments: body.attachments,
+      phiWarning: body.phiWarning,
       signoffCredentialTypeIds: body.signoffCredentialTypeIds,
       nodes: body.nodes as TemplateNodeInput[] | undefined,
       items: body.items,
     });
+  }
+
+  /**
+   * Attaches a titled file to a draft evaluation.
+   *
+   * Multipart, so the title travels with the file rather than in a second
+   * request that could fail on its own and leave a nameless document.
+   */
+  @Post(':id/attachments')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
+  attach(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { title?: string },
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.evals.attach(auth, id, body.title ?? '', file);
+  }
+
+  @Delete('attachments/:attachmentId')
+  removeAttachment(
+    @CurrentAuth() auth: AuthContext,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.evals.removeAttachment(auth, attachmentId);
+  }
+
+  /** Undecorated: the service decides, on the evaluation's own rules. */
+  @Get('attachments/:attachmentId')
+  async attachment(
+    @CurrentAuth() auth: AuthContext,
+    @Param('attachmentId') attachmentId: string,
+    @Res() res: Response,
+  ) {
+    const { attachment, object } = await this.evals.attachment(
+      auth,
+      attachmentId,
+    );
+    res.setHeader('Content-Type', object.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${attachment.fileName.replace(/"/g, '')}"`,
+    );
+    res.send(object.body);
   }
 
   @Post()

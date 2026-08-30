@@ -27,7 +27,13 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { ProfileReviewService } from './profile-review.service';
+import { UnlinkedLoginService } from '../auth/unlinked-login.service';
 import { MembersService } from './members.service';
+
+class LinkLoginDto {
+  @IsInt()
+  memberId!: number;
+}
 
 class ProfileReviewRequestDto {
   /** Shown to the member, for "we are updating the call list" and the like. */
@@ -192,6 +198,7 @@ export class MembersController {
   constructor(
     private readonly members: MembersService,
     private readonly profileReview: ProfileReviewService,
+    private readonly unlinked: UnlinkedLoginService,
   ) {}
 
   @Get()
@@ -257,6 +264,24 @@ export class MembersController {
     // was made because of it.
     await this.profileReview.confirm(memberId);
     return updated;
+  }
+
+  /** Logins waiting to be attached to somebody. */
+  @Get('unlinked-logins')
+  @RequirePermissions(PERMISSIONS.MEMBERS_WRITE)
+  unlinkedLogins() {
+    return this.unlinked.outstanding();
+  }
+
+  /** Attaches one to a member, which closes every officer's copy of the task. */
+  @Post('unlinked-logins/:id/link')
+  @RequirePermissions(PERMISSIONS.MEMBERS_WRITE)
+  linkUnlinkedLogin(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: LinkLoginDto,
+  ) {
+    return this.unlinked.link(auth, id, body.memberId);
   }
 
   /** Whether this member has been asked to check their details. */

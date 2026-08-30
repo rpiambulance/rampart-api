@@ -9,6 +9,8 @@ import type { AuthContext } from '../auth/auth-context';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
+import type { AttachmentRequirement } from '../generated/prisma/enums';
+import { StorageService } from '../storage/storage.service';
 import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScoreType, TemplateKind } from '../generated/prisma/enums';
@@ -117,7 +119,16 @@ export class EvalsService {
     private readonly permissionHolders: PermissionHoldersService,
     private readonly notifications: NotificationsService,
     private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
   ) {}
+
+  /** Attaching and removing are acts of a person, never of an API token. */
+  private static memberOf(auth: AuthContext): number {
+    if (auth.kind !== 'member') {
+      throw new ForbiddenException('This endpoint requires a member session');
+    }
+    return auth.memberId;
+  }
 
   // ---- templates ----
 
@@ -206,12 +217,16 @@ export class EvalsService {
     signoffCredentialTypeIds?: number[];
     nodes?: TemplateNodeInput[];
     items?: TemplateItemInput[];
+    attachments?: AttachmentRequirement;
+    phiWarning?: boolean;
   }) {
     this.assertChecklist(opts.kind, opts.signoffCredentialTypeIds);
     const template = await this.prisma.evalFormTemplate.create({
       data: {
         name: opts.name,
         kind: opts.kind ?? 'EVALUATION',
+        attachments: opts.attachments ?? 'NONE',
+        phiWarning: opts.phiWarning ?? false,
         ...(opts.signoffCredentialTypeIds?.length
           ? {
               signoffCredentialTypes: {
@@ -228,6 +243,132 @@ export class EvalsService {
     });
   }
 
+  // ---- attachments ----
+
+  /**
+   * Files hung off a completed evaluation, each with a title.
+   *
+   * Attached by the evaluator while the evaluation is theirs to write. Once
+   * submitted it is a record, and a record that can still gain pages is not
+   * one — so the same rule as the scores applies.
+   */
+  async attach(
+    auth: AuthContext,
+    evaluationId: number,
+    title: string,
+    file: { originalname: string; mimetype: string; buffer: Buffer },
+  ) {
+    const memberId = EvalsService.memberOf(auth);
+    const evaluation = await this.prisma.evaluation.findUnique({
+      where: { id: evaluationId },
+      include: { template: { select: { attachments: true, name: true } } },
+    });
+    if (!evaluation) throw new NotFoundException('Evaluation not found');
+    if (evaluation.evaluatorId !== memberId) {
+      throw new ForbiddenException('Not your evaluation to attach to');
+    }
+    if (evaluation.status !== 'DRAFT') {
+      throw new BadRequestException(
+        'This evaluation has been submitted; its attachments are part of the record now.',
+      );
+    }
+    if (evaluation.template.attachments === 'NONE') {
+      throw new BadRequestException(
+        `${evaluation.template.name} does not take attachments.`,
+      );
+    }
+    if (!title.trim()) {
+      throw new BadRequestException('Give the file a title — what is it?');
+    }
+
+    const last = await this.prisma.evalAttachment.findFirst({
+      where: { evaluationId },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
+    const storageKey = this.storage.newKey(
+      `evals/${evaluationId}`,
+      file.originalname,
+    );
+    await this.storage.put(storageKey, file.buffer, file.mimetype);
+    const attachment = await this.prisma.evalAttachment.create({
+      data: {
+        evaluationId,
+        title: title.trim(),
+        position: last ? last.position + 1 : 0,
+        storageKey,
+        fileName: file.originalname,
+        contentType: file.mimetype,
+        sizeBytes: file.buffer.length,
+        uploadedById: memberId,
+      },
+    });
+    await this.audit.log(auth, 'evals.attach', 'Evaluation', evaluationId, {
+      attachmentId: attachment.id,
+      title: attachment.title,
+    });
+    return attachment;
+  }
+
+  /** Removing one, on the same terms it could be added. */
+  async removeAttachment(auth: AuthContext, attachmentId: string) {
+    const memberId = EvalsService.memberOf(auth);
+    const attachment = await this.prisma.evalAttachment.findUnique({
+      where: { id: attachmentId },
+      include: { evaluation: { select: { evaluatorId: true, status: true } } },
+    });
+    if (!attachment) throw new NotFoundException('Attachment not found');
+    if (attachment.evaluation.evaluatorId !== memberId) {
+      throw new ForbiddenException('Not yours to remove');
+    }
+    if (attachment.evaluation.status !== 'DRAFT') {
+      throw new BadRequestException(
+        'This evaluation has been submitted; its attachments are part of the record now.',
+      );
+    }
+    await this.prisma.evalAttachment.delete({ where: { id: attachmentId } });
+    await this.audit.log(
+      auth,
+      'evals.attach.remove',
+      'Evaluation',
+      attachment.evaluationId,
+      {
+        attachmentId,
+      },
+    );
+    return { ok: true };
+  }
+
+  /**
+   * The file itself, for whoever may read the evaluation it hangs off.
+   *
+   * The permission question is the evaluation's, not the file's: anything
+   * else would let a link outlive the reason somebody could see it.
+   */
+  async attachment(auth: AuthContext, attachmentId: string) {
+    const attachment = await this.prisma.evalAttachment.findUnique({
+      where: { id: attachmentId },
+      include: {
+        evaluation: {
+          select: { id: true, evaluatorId: true, subjectId: true },
+        },
+      },
+    });
+    if (!attachment) throw new NotFoundException('Attachment not found');
+    const memberId = auth.kind === 'member' ? auth.memberId : null;
+    const party =
+      memberId !== null &&
+      (attachment.evaluation.evaluatorId === memberId ||
+        attachment.evaluation.subjectId === memberId);
+    if (!party && !auth.permissions.has(PERMISSIONS.EVALS_READ_ALL)) {
+      throw new ForbiddenException('Not your evaluation');
+    }
+    return {
+      attachment,
+      object: await this.storage.get(attachment.storageKey),
+    };
+  }
+
   /** Editing an in-use template creates a new version (submitted evals pin the old one). */
   async reviseTemplate(
     templateId: number,
@@ -235,6 +376,8 @@ export class EvalsService {
       signoffCredentialTypeIds?: number[];
       nodes?: TemplateNodeInput[];
       items?: TemplateItemInput[];
+      attachments?: AttachmentRequirement;
+      phiWarning?: boolean;
     },
   ) {
     const existing = await this.prisma.evalFormTemplate.findUnique({
@@ -258,6 +401,15 @@ export class EvalsService {
     const inUse =
       existing.kind === 'CHECKLIST' ? false : existing._count.evaluations > 0;
 
+    // The next free number for this name, rather than existing + 1: name and
+    // version are unique together, and an archived version further along
+    // would turn an edit into a constraint violation.
+    const highest = await this.prisma.evalFormTemplate.aggregate({
+      where: { name: existing.name },
+      _max: { version: true },
+    });
+    const nextVersion = (highest._max.version ?? existing.version) + 1;
+
     if (!inUse) {
       await this.prisma.evalFormGroup.deleteMany({ where: { templateId } });
       await this.prisma.evalFormItem.deleteMany({ where: { templateId } });
@@ -266,9 +418,20 @@ export class EvalsService {
         // `set` rather than `connect`: removing a credential from the list has
         // to actually remove it.
         data: {
+          // The number goes up on every edit, including the ones made in
+          // place. A form nobody has filled in yet is still a different form
+          // afterwards, and "v3" is how somebody holding a printout knows
+          // theirs is stale.
+          version: nextVersion,
           signoffCredentialTypes: {
             set: signoffCredentialTypeIds.map((id) => ({ id })),
           },
+          ...(opts.attachments === undefined
+            ? {}
+            : { attachments: opts.attachments }),
+          ...(opts.phiWarning === undefined
+            ? {}
+            : { phiWarning: opts.phiWarning }),
         },
       });
       await this.writeNodes(templateId, nodes);
@@ -286,7 +449,9 @@ export class EvalsService {
       data: {
         name: existing.name,
         kind: existing.kind,
-        version: existing.version + 1,
+        version: nextVersion,
+        attachments: opts.attachments ?? existing.attachments,
+        phiWarning: opts.phiWarning ?? existing.phiWarning,
         ...(signoffCredentialTypeIds.length
           ? {
               signoffCredentialTypes: {
@@ -590,6 +755,26 @@ export class EvalsService {
         update: value,
       });
     }
+    // A form that insists on documentation is not finished without it, and
+    // the moment to say so is before it becomes a record rather than after.
+    if (opts.submit) {
+      const form = await this.prisma.evaluation.findUniqueOrThrow({
+        where: { id: evaluationId },
+        select: {
+          template: { select: { attachments: true, name: true } },
+          _count: { select: { attachments: true } },
+        },
+      });
+      if (
+        form.template.attachments === 'REQUIRED' &&
+        form._count.attachments === 0
+      ) {
+        throw new BadRequestException(
+          `${form.template.name} needs at least one attachment before it can be submitted.`,
+        );
+      }
+    }
+
     const updated = await this.prisma.evaluation.update({
       where: { id: evaluationId },
       data: {
@@ -736,6 +921,7 @@ export class EvalsService {
         // in order, because a grouped item's `order` counts within its group.
         template: { include: EvalsService.TEMPLATE_INCLUDE },
         scores: true,
+        attachments: { orderBy: { position: 'asc' } },
         evaluator: { select: { id: true, firstName: true, lastName: true } },
         subject: { select: { id: true, firstName: true, lastName: true } },
       },

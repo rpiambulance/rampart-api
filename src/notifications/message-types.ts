@@ -85,6 +85,15 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'member.unlinked-login',
+    label: 'Somebody signed in with no member record',
+    description:
+      'A working Keycloak login matched nothing on the roster, so that person ' +
+      'can see nothing until it is linked.',
+    audience: 'officers',
+    defaults: { email: false, slack: true },
+  },
+  {
     key: 'profile.review-requested',
     label: 'Check your profile details',
     description:

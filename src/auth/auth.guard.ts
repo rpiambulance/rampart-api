@@ -14,6 +14,7 @@ import { nyToday } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { AuthContext } from './auth-context';
+import { UnlinkedLoginService } from './unlinked-login.service';
 
 const API_TOKEN_PREFIX = 'rpa_';
 
@@ -48,6 +49,7 @@ export class AuthGuard implements CanActivate {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly reflector: Reflector,
+    private readonly unlinked: UnlinkedLoginService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -79,6 +81,8 @@ export class AuthGuard implements CanActivate {
 
     let subject: string;
     let email: string | undefined;
+    let payloadName: string | undefined;
+    let payloadFamilyName: string | undefined;
     let emailVerified = false;
     try {
       const { payload } = await jwtVerify(token, this.jwks, {
@@ -86,6 +90,12 @@ export class AuthGuard implements CanActivate {
         ...(audience ? { audience } : {}),
       });
       subject = payload.sub!;
+      payloadName =
+        typeof payload.given_name === 'string' ? payload.given_name : undefined;
+      payloadFamilyName =
+        typeof payload.family_name === 'string'
+          ? payload.family_name
+          : undefined;
       email =
         typeof payload.email === 'string'
           ? payload.email.trim().toLowerCase()
@@ -150,12 +160,23 @@ export class AuthGuard implements CanActivate {
     }
 
     if (!member) {
+      // Somebody is locked out and nobody would otherwise know. Recorded and
+      // announced once per login, not once per request; deliberately not
+      // awaited into the refusal path's failure modes — see record().
+      await this.unlinked.record(
+        subject,
+        email,
+        [payloadName, payloadFamilyName].filter(Boolean).join(' ') || undefined,
+      );
       throw new ForbiddenException({
         code: 'NO_MEMBER_RECORD',
         message:
           'Your login is valid but no member record is linked to it. Contact an officer.',
       });
     }
+    // It matches now, however that happened — an officer linking it, or the
+    // email finally agreeing. Closes the task in every officer's inbox.
+    void this.unlinked.resolveBySubject(subject, member.id).catch(() => {});
     if (!member.active) {
       throw new ForbiddenException({
         code: 'INACTIVE_MEMBER',
