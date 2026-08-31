@@ -125,7 +125,7 @@ export class MembersService {
       firstName: string;
       lastName: string;
       email: string;
-      dob?: string;
+      dob: string;
       personalEmail?: string;
       cellPhone?: string;
       localAddress?: string;
@@ -156,7 +156,8 @@ export class MembersService {
     }
     // Everything except the confirmation, which is an answer to a question
     // this method asked and not a column on the member.
-    const { confirmDuplicateName: _confirmed, ...fields } = data;
+    const fields = { ...data };
+    delete fields.confirmDuplicateName;
     const member = await this.prisma.member.create({
       data: {
         ...fields,

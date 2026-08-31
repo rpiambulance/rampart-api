@@ -101,9 +101,13 @@ class CreateMemberDto {
   @IsEmail()
   email!: string;
 
-  @IsOptional()
+  /**
+   * Required when adding somebody, and only then: editing an existing record
+   * stays partial, or a member migrated in without one could not be touched
+   * at all until somebody found their birthday.
+   */
   @IsDateString()
-  dob?: string;
+  dob!: string;
 
   @IsOptional()
   @IsEmail()
@@ -170,6 +174,12 @@ class UpdateMemberDto extends CreateMemberDto {
   @IsOptional()
   @IsEmail()
   declare email: string;
+
+  // Required to add somebody, optional to edit them: a member migrated in
+  // without one must not be un-editable until somebody finds their birthday.
+  @IsOptional()
+  @IsDateString()
+  declare dob: string;
 
   @IsOptional()
   @IsBoolean()

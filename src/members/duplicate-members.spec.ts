@@ -41,7 +41,12 @@ function serviceWith(existing: {
 }
 
 const auth = { kind: 'member', memberId: 1, permissions: new Set() } as never;
-const casey = { firstName: 'Casey', lastName: 'Reilly', email: 'casey@x.test' };
+const casey = {
+  firstName: 'Casey',
+  lastName: 'Reilly',
+  email: 'casey@x.test',
+  dob: '2004-05-01',
+};
 
 /** The body of a ConflictException, which carries the code and the match. */
 const bodyOf = async (run: Promise<unknown>) => {

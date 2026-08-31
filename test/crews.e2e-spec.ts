@@ -955,6 +955,8 @@ describe('Night crews engine (e2e)', () => {
           firstName: 'Fresh',
           lastName: `Test${stamp}`,
           email: `fresh-${stamp}@example.com`,
+          // Required when adding somebody, as of the roster form asking for it.
+          dob: '2004-05-01',
         })
         .expect(201);
 
