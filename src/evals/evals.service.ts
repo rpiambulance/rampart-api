@@ -14,6 +14,7 @@ import { StorageService } from '../storage/storage.service';
 import { PermissionHoldersService } from '../permissions/permission-holders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScoreType, TemplateKind } from '../generated/prisma/enums';
+import { displayName } from '../common/name';
 
 export interface TemplateItemInput {
   order?: number;
@@ -647,7 +648,13 @@ export class EvalsService {
 
     const evaluator = await this.prisma.member.findUnique({
       where: { id: input.evaluatorId },
-      select: { id: true, active: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        active: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
     });
     if (!evaluator?.active) throw new NotFoundException('Trainer not found');
     await this.assertQualified(input.evaluatorId, input.templateId);
@@ -667,7 +674,7 @@ export class EvalsService {
 
     const trainee = await this.prisma.member.findUniqueOrThrow({
       where: { id: traineeId },
-      select: { firstName: true, lastName: true },
+      select: { firstName: true, preferredFirstName: true, lastName: true },
     });
 
     const evaluation = await this.prisma.evaluation.create({
@@ -699,9 +706,9 @@ export class EvalsService {
 
     await this.notifications.notify(input.evaluatorId, {
       type: 'eval.requested',
-      subject: `Evaluation to fill in: ${trainee.firstName} ${trainee.lastName}`,
+      subject: `Evaluation to fill in: ${displayName(trainee)}`,
       body:
-        `${trainee.firstName} ${trainee.lastName} has asked you for a ` +
+        `${displayName(trainee)} has asked you for a ` +
         `${template.name}${input.evalDate ? ` for ${input.evalDate}` : ''}.`,
       task: {
         actionLabel: 'Fill in the evaluation',
@@ -922,8 +929,22 @@ export class EvalsService {
         template: { include: EvalsService.TEMPLATE_INCLUDE },
         scores: true,
         attachments: { orderBy: { position: 'asc' } },
-        evaluator: { select: { id: true, firstName: true, lastName: true } },
-        subject: { select: { id: true, firstName: true, lastName: true } },
+        evaluator: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
+        subject: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
     });
     if (!evaluation) throw new NotFoundException('Evaluation not found');
@@ -995,8 +1016,22 @@ export class EvalsService {
       where: { OR: [{ subjectId: memberId }, { evaluatorId: memberId }] },
       include: {
         template: { select: { id: true, name: true } },
-        evaluator: { select: { id: true, firstName: true, lastName: true } },
-        subject: { select: { id: true, firstName: true, lastName: true } },
+        evaluator: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
+        subject: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -1007,7 +1042,14 @@ export class EvalsService {
       where: { subjectId },
       include: {
         template: { select: { id: true, name: true } },
-        evaluator: { select: { id: true, firstName: true, lastName: true } },
+        evaluator: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });

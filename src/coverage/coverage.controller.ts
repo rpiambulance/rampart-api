@@ -414,7 +414,14 @@ export class CoverageController {
         event: { include: { positions: true, tier: true } },
         messages: {
           include: {
-            author: { select: { id: true, firstName: true, lastName: true } },
+            author: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
           orderBy: { createdAt: 'asc' },
         },

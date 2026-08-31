@@ -71,7 +71,14 @@ export class RolesController {
         permissions: true,
         members: {
           include: {
-            member: { select: { id: true, firstName: true, lastName: true } },
+            member: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
       },
@@ -151,7 +158,13 @@ export class RolesController {
         endDate: body.endDate ? new Date(body.endDate) : null,
       },
     });
-    await this.audit.log(auth, 'roles.assign', 'MemberRole', assignment.id, body);
+    await this.audit.log(
+      auth,
+      'roles.assign',
+      'MemberRole',
+      assignment.id,
+      body,
+    );
     return assignment;
   }
 

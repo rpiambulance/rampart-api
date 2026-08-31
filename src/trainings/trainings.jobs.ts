@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { AGENCY_TZ } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { displayName } from '../common/name';
 
 /**
  * Monthly lapse report (spec §4.4): for each current-year annual training
@@ -29,7 +30,12 @@ export class TrainingsJobs {
 
     const activeMembers = await this.prisma.member.findMany({
       where: { active: true },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
     });
 
     for (const requirement of requirements) {
@@ -43,13 +49,15 @@ export class TrainingsJobs {
       await this.notifications.notifyOfficerInboxes({
         type: 'training.outstanding',
         subject: `${requirement.name} (${requirement.year}): ${lapsed.length} member(s) incomplete`,
-        body: lapsed.map((m) => `${m.firstName} ${m.lastName}`).join(', '),
+        body: lapsed.map((m) => displayName(m)).join(', '),
         task: {
           actionLabel: 'Review completions',
           actionUrl: `/admin/trainings/annual/${requirement.id}`,
         },
       });
     }
-    this.logger.log(`Lapse report sent for ${requirements.length} requirement(s)`);
+    this.logger.log(
+      `Lapse report sent for ${requirements.length} requirement(s)`,
+    );
   }
 }

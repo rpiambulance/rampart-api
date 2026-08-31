@@ -128,7 +128,12 @@ export class TrainingsController {
     const requirement = await this.prisma.annualTrainingRequirement.create({
       data: body,
     });
-    await this.audit.log(auth, 'trainings.annual.create', 'AnnualTrainingRequirement', requirement.id);
+    await this.audit.log(
+      auth,
+      'trainings.annual.create',
+      'AnnualTrainingRequirement',
+      requirement.id,
+    );
     return requirement;
   }
 
@@ -143,7 +148,13 @@ export class TrainingsController {
       where: { id },
       data: body,
     });
-    await this.audit.log(auth, 'trainings.annual.update', 'AnnualTrainingRequirement', id, body);
+    await this.audit.log(
+      auth,
+      'trainings.annual.update',
+      'AnnualTrainingRequirement',
+      id,
+      body,
+    );
     return requirement;
   }
 
@@ -157,7 +168,12 @@ export class TrainingsController {
       }),
       this.prisma.member.findMany({
         where: { active: true },
-        select: { id: true, firstName: true, lastName: true },
+        select: {
+          id: true,
+          firstName: true,
+          preferredFirstName: true,
+          lastName: true,
+        },
         orderBy: [{ lastName: 'asc' }],
       }),
     ]);
@@ -176,13 +192,20 @@ export class TrainingsController {
     @Param('memberId', ParseIntPipe) memberId: number,
     @Body() body: { completedAt?: string },
   ) {
-    const completedAt = body.completedAt ? new Date(body.completedAt) : new Date();
+    const completedAt = body.completedAt
+      ? new Date(body.completedAt)
+      : new Date();
     const completion = await this.prisma.memberAnnualTraining.upsert({
       where: { requirementId_memberId: { requirementId: id, memberId } },
       create: { requirementId: id, memberId, completedAt },
       update: { completedAt },
     });
-    await this.audit.log(auth, 'trainings.annual.complete', 'MemberAnnualTraining', `${id}:${memberId}`);
+    await this.audit.log(
+      auth,
+      'trainings.annual.complete',
+      'MemberAnnualTraining',
+      `${id}:${memberId}`,
+    );
     return completion;
   }
 
@@ -196,7 +219,12 @@ export class TrainingsController {
     await this.prisma.memberAnnualTraining.deleteMany({
       where: { requirementId: id, memberId },
     });
-    await this.audit.log(auth, 'trainings.annual.uncomplete', 'MemberAnnualTraining', `${id}:${memberId}`);
+    await this.audit.log(
+      auth,
+      'trainings.annual.uncomplete',
+      'MemberAnnualTraining',
+      `${id}:${memberId}`,
+    );
     return { ok: true };
   }
 
@@ -224,7 +252,14 @@ export class TrainingsController {
       include: {
         attendance: {
           include: {
-            member: { select: { id: true, firstName: true, lastName: true } },
+            member: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
       },
@@ -240,12 +275,20 @@ export class TrainingsController {
         sessionAt: body.sessionAt ? new Date(body.sessionAt) : null,
       },
     });
-    await this.audit.log(auth, 'trainings.class.create', 'TrainingClass', trainingClass.id);
+    await this.audit.log(
+      auth,
+      'trainings.class.create',
+      'TrainingClass',
+      trainingClass.id,
+    );
     return trainingClass;
   }
 
   @Post('classes/:id/register')
-  register(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  register(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     const memberId = requireMember(auth);
     return this.prisma.classAttendance.upsert({
       where: { classId_memberId: { classId: id, memberId } },
@@ -267,7 +310,13 @@ export class TrainingsController {
       create: { classId: id, memberId, status: body.status },
       update: { status: body.status },
     });
-    await this.audit.log(auth, 'trainings.class.attendance', 'ClassAttendance', `${id}:${memberId}`, body);
+    await this.audit.log(
+      auth,
+      'trainings.class.attendance',
+      'ClassAttendance',
+      `${id}:${memberId}`,
+      body,
+    );
     return attendance;
   }
 }

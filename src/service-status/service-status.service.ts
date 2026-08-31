@@ -4,6 +4,7 @@ import type { AuthContext } from '../auth/auth-context';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { displayName } from '../common/name';
 
 export const SERVICE_STATUS_KEY = 'agency.serviceStatus';
 
@@ -47,9 +48,9 @@ export class ServiceStatusService {
     if (status.changedById) {
       const member = await this.prisma.member.findUnique({
         where: { id: status.changedById },
-        select: { firstName: true, lastName: true },
+        select: { firstName: true, preferredFirstName: true, lastName: true },
       });
-      changedBy = member ? `${member.firstName} ${member.lastName}` : null;
+      changedBy = member ? displayName(member) : null;
     }
     return { ...status, changedBy };
   }

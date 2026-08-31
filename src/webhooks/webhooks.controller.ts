@@ -77,7 +77,14 @@ export class WebhooksController {
         lastStatus: true,
         lastAt: true,
         lastError: true,
-        createdBy: { select: { id: true, firstName: true, lastName: true } },
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });

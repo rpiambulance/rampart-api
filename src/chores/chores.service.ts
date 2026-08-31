@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ServiceStatusService } from '../service-status/service-status.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import type { ChoreCadence } from '../generated/prisma/enums';
+import { displayName } from '../common/name';
 
 /**
  * The lines ChoreBot opened and closed with. Kept because they are the
@@ -103,11 +104,32 @@ export class ChoresService {
   private static readonly OCCURRENCE_INCLUDE = {
     chore: {
       include: {
-        assignee: { select: { id: true, firstName: true, lastName: true } },
+        assignee: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
     },
-    assignee: { select: { id: true, firstName: true, lastName: true } },
-    completedBy: { select: { id: true, firstName: true, lastName: true } },
+    assignee: {
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
+    },
+    completedBy: {
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
+    },
   } as const;
 
   occurrencesOn(dateStr: string) {
@@ -173,10 +195,10 @@ export class ChoresService {
       occurrence: (typeof occurrences)[number],
     ): Record<string, unknown> => {
       const whose = ChoresService.whoseNight(occurrence);
-      const assigned = whose ? ` _(${whose.firstName} ${whose.lastName})_` : '';
+      const assigned = whose ? ` _(${displayName(whose)})_` : '';
       if (occurrence.completedAt) {
         const who = occurrence.completedBy
-          ? `${occurrence.completedBy.firstName} ${occurrence.completedBy.lastName}`
+          ? displayName(occurrence.completedBy)
           : 'someone';
         return {
           type: 'section',
@@ -303,7 +325,14 @@ export class ChoresService {
       },
       include: {
         chore: true,
-        completedBy: { select: { id: true, firstName: true, lastName: true } },
+        completedBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
     });
 

@@ -12,6 +12,7 @@ import { normalizePhone } from '../common/phone';
 import { grantObserver } from '../credentials/observer';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { displayName } from '../common/name';
 
 @Injectable()
 export class MembersService {
@@ -76,7 +77,13 @@ export class MembersService {
   ) {
     const byEmail = await this.prisma.member.findFirst({
       where: { email: { equals: email, mode: 'insensitive' } },
-      select: { id: true, firstName: true, lastName: true, active: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+        active: true,
+      },
     });
     if (byEmail) {
       const sameName =
@@ -85,9 +92,9 @@ export class MembersService {
       throw new ConflictException({
         code: 'DUPLICATE_EMAIL',
         message: sameName
-          ? `${byEmail.firstName} ${byEmail.lastName} is already on the roster with that email address` +
+          ? `${displayName(byEmail)} is already on the roster with that email address` +
             `${byEmail.active ? '' : ', as an inactive member'}. Reactivate or edit that record rather than adding a second one.`
-          : `That email address already belongs to ${byEmail.firstName} ${byEmail.lastName}` +
+          : `That email address already belongs to ${displayName(byEmail)}` +
             `${byEmail.active ? '' : ' (inactive)'}. Every member needs their own, because it is what their login is matched on.`,
         existing: byEmail,
       });
@@ -103,6 +110,7 @@ export class MembersService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         email: true,
         active: true,
@@ -225,6 +233,7 @@ export class MembersService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         email: true,
         createdAt: true,
@@ -276,7 +285,12 @@ export class MembersService {
         id: { in: ids.filter((id) => id !== actingMemberId) },
         active: true,
       },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
     });
     for (const target of targets) {
       await this.prisma.member.update({
@@ -289,13 +303,13 @@ export class MembersService {
       });
       this.webhooks.emit('member.deactivated', {
         memberId: target.id,
-        name: `${target.firstName} ${target.lastName}`,
+        name: displayName(target),
         reason,
       });
     }
     return {
       deactivated: targets.length,
-      members: targets.map((t) => `${t.firstName} ${t.lastName}`),
+      members: targets.map((t) => displayName(t)),
     };
   }
 

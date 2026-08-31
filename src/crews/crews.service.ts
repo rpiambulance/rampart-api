@@ -24,6 +24,7 @@ import { WebhooksService } from '../webhooks/webhooks.service';
 import { SettingsService } from '../settings/settings.service';
 import { CrewPosition } from '../generated/prisma/enums';
 import { CrewEligibilityService, DayContext } from './crew-eligibility.service';
+import { displayName, initialAndSurname } from '../common/name';
 
 export const CREW_POSITIONS: CrewPosition[] = [
   'CC',
@@ -138,7 +139,7 @@ export class CrewsService {
           view.vacant = false;
           view.member = {
             id: slot.member.id,
-            name: `${slot.member.firstName.charAt(0)}. ${slot.member.lastName}`,
+            name: initialAndSurname(slot.member),
           };
           if (slot.member.id === memberId && !historical) {
             view.canDrop = isBeforeDeadline(
@@ -218,6 +219,7 @@ export class CrewsService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         credentials: {
           where: { status: 'ACTIVE' },
@@ -229,6 +231,7 @@ export class CrewsService {
     const out: Array<{
       id: number;
       firstName: string;
+      preferredFirstName: string | null;
       lastName: string;
       positions: CrewPosition[];
     }> = [];
@@ -253,6 +256,7 @@ export class CrewsService {
       out.push({
         id: member.id,
         firstName: member.firstName,
+        preferredFirstName: member.preferredFirstName,
         lastName: member.lastName,
         positions,
       });
@@ -315,6 +319,7 @@ export class CrewsService {
               select: {
                 id: true,
                 firstName: true,
+                preferredFirstName: true,
                 lastName: true,
                 credentials: {
                   where: { status: 'ACTIVE' },
@@ -746,7 +751,7 @@ export class CrewsService {
 
     const member = await this.prisma.member.findUniqueOrThrow({
       where: { id: memberId },
-      select: { firstName: true, lastName: true },
+      select: { firstName: true, preferredFirstName: true, lastName: true },
     });
     const weekday = WEEKDAY_NAMES[weekdayOf(dateStr)];
     const onDefault = await this.prisma.defaultCrewTemplate.findFirst({
@@ -760,7 +765,7 @@ export class CrewsService {
     if ((heldSlots.length || onDefault) && !night?.outOfService) {
       await this.notifications.notifyOfficerInboxes({
         type: 'crew.unfilled',
-        subject: `Crew absence: ${member.firstName} ${member.lastName} — ${weekday} ${dateStr}`,
+        subject: `Crew absence: ${displayName(member)} — ${weekday} ${dateStr}`,
         body: heldSlots.length
           ? `Vacated ${heldSlots.map((s) => s.position).join(', ')}${note ? ` — "${note}"` : ''}`
           : `Will be skipped by the default template${note ? ` — "${note}"` : ''}`,
@@ -811,6 +816,7 @@ export class CrewsService {
               select: {
                 id: true,
                 firstName: true,
+                preferredFirstName: true,
                 lastName: true,
                 credentials: {
                   where: { status: 'ACTIVE' },

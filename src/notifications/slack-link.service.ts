@@ -4,6 +4,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { looksLikeSlackId } from './slack-id';
 import { SlackService } from './slack.service';
+import { displayName } from '../common/name';
 
 export interface SlackWorkspaceUser {
   id: string;
@@ -105,6 +106,7 @@ export class SlackLinkService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         email: true,
         personalEmail: true,
@@ -171,7 +173,7 @@ export class SlackLinkService {
       taken.add(match.id);
       out.push({
         memberId: member.id,
-        memberName: `${member.firstName} ${member.lastName}`,
+        memberName: displayName(member),
         memberEmail: member.email,
         slackId: match.id,
         slackName: match.name,
@@ -226,10 +228,10 @@ export class SlackLinkService {
 
     const existing = await this.prisma.member.findFirst({
       where: { slackId: slackUserId },
-      select: { firstName: true, lastName: true },
+      select: { firstName: true, preferredFirstName: true, lastName: true },
     });
     if (existing) {
-      return `You are already linked to ${existing.firstName} ${existing.lastName}.`;
+      return `You are already linked to ${displayName(existing)}.`;
     }
 
     const res = await fetch(
@@ -252,7 +254,13 @@ export class SlackLinkService {
     // a real id is the point.
     const candidate = await this.prisma.member.findFirst({
       where: { active: true, OR: [{ email }, { personalEmail: email }] },
-      select: { id: true, firstName: true, lastName: true, slackId: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+        slackId: true,
+      },
     });
     const member =
       candidate && !looksLikeSlackId(candidate.slackId) ? candidate : null;
@@ -268,6 +276,6 @@ export class SlackLinkService {
       slackId: slackUserId,
       email,
     });
-    return `Linked to ${member.firstName} ${member.lastName}. You will get portal messages here from now on.`;
+    return `Linked to ${displayName(member)}. You will get portal messages here from now on.`;
   }
 }

@@ -28,15 +28,21 @@ function requireMember(auth: AuthContext): number {
 const CREW_START = '18:00';
 const CREW_END = '06:00';
 
-const ICS_UID_DOMAIN =
-  process.env.ICS_UID_DOMAIN ?? 'rampart.rpiambulance.com';
+const ICS_UID_DOMAIN = process.env.ICS_UID_DOMAIN ?? 'rampart.rpiambulance.com';
 
 function icsEscape(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\n/g, '\\n');
 }
 
 function fmtUtc(date: Date): string {
-  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return date
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '');
 }
 
 /** Per-member tokenized ICS feeds (spec §5.3). */
@@ -88,7 +94,11 @@ export class CalendarController {
   async feed(@Param('token') token: string) {
     const icsToken = await this.prisma.icsToken.findUnique({
       where: { token },
-      include: { member: { select: { id: true, firstName: true } } },
+      include: {
+        member: {
+          select: { id: true, firstName: true, preferredFirstName: true },
+        },
+      },
     });
     if (!icsToken) throw new NotFoundException();
 

@@ -90,7 +90,14 @@ export class AvailabilityController {
   list() {
     return this.prisma.availabilityPoll.findMany({
       include: {
-        createdBy: { select: { id: true, firstName: true, lastName: true } },
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
         _count: { select: { invites: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -198,7 +205,12 @@ export class AvailabilityController {
         active: true,
         id: { notIn: invited.map((invite) => invite.memberId) },
       },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
   }
@@ -212,7 +224,14 @@ export class AvailabilityController {
       include: {
         invites: {
           include: {
-            member: { select: { id: true, firstName: true, lastName: true } },
+            member: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
         responses: true,

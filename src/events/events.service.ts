@@ -96,7 +96,14 @@ export class EventsService {
         positions: true,
         signups: {
           include: {
-            member: { select: { id: true, firstName: true, lastName: true } },
+            member: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
       },
@@ -125,8 +132,9 @@ export class EventsService {
           }),
         )
       ).filter((p): p is string => !!p);
-      myPosition = event.signups.find((s) => s.member.id === viewerId)
-        ?.position;
+      myPosition = event.signups.find(
+        (s) => s.member.id === viewerId,
+      )?.position;
     }
 
     return { ...event, eligiblePositions, myPosition };
@@ -247,7 +255,10 @@ export class EventsService {
   }
 
   async setLocked(auth: AuthContext, eventId: number, locked: boolean) {
-    await this.prisma.event.update({ where: { id: eventId }, data: { locked } });
+    await this.prisma.event.update({
+      where: { id: eventId },
+      data: { locked },
+    });
     await this.audit.log(auth, 'events.lock', 'Event', eventId, { locked });
     return { ok: true };
   }
@@ -357,25 +368,26 @@ export class EventsService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
-    const transitions: Record<WorkflowAction, { from: string[]; to: string }> = {
-      REQUEST_AVAILABILITY: { from: ['DRAFT'], to: 'AVAILABILITY_REQUESTED' },
-      SUBMIT_FOR_APPROVAL: {
-        from: ['DRAFT', 'AVAILABILITY_REQUESTED'],
-        to: 'PENDING_APPROVAL',
-      },
-      APPROVE: { from: ['PENDING_APPROVAL'], to: 'APPROVED' },
-      // A request can be turned down at any point before it is approved —
-      // there is no reason to walk a request that will never be staffed all
-      // the way to the approval step just to decline it there.
-      DENY: {
-        from: ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'],
-        to: 'DENIED',
-      },
-      CANCEL: {
-        from: ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'],
-        to: 'CANCELLED',
-      },
-    };
+    const transitions: Record<WorkflowAction, { from: string[]; to: string }> =
+      {
+        REQUEST_AVAILABILITY: { from: ['DRAFT'], to: 'AVAILABILITY_REQUESTED' },
+        SUBMIT_FOR_APPROVAL: {
+          from: ['DRAFT', 'AVAILABILITY_REQUESTED'],
+          to: 'PENDING_APPROVAL',
+        },
+        APPROVE: { from: ['PENDING_APPROVAL'], to: 'APPROVED' },
+        // A request can be turned down at any point before it is approved —
+        // there is no reason to walk a request that will never be staffed all
+        // the way to the approval step just to decline it there.
+        DENY: {
+          from: ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'],
+          to: 'DENIED',
+        },
+        CANCEL: {
+          from: ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'],
+          to: 'CANCELLED',
+        },
+      };
     const transition = transitions[action];
     if (!transition.from.includes(event.workflowStatus)) {
       throw new BadRequestException(
@@ -392,11 +404,17 @@ export class EventsService {
         ...(action === 'DENY' || action === 'CANCEL' ? { hidden: true } : {}),
       },
     });
-    await this.audit.log(auth, `events.workflow.${action.toLowerCase()}`, 'Event', eventId, {
-      from: event.workflowStatus,
-      to: transition.to,
-      notes,
-    });
+    await this.audit.log(
+      auth,
+      `events.workflow.${action.toLowerCase()}`,
+      'Event',
+      eventId,
+      {
+        from: event.workflowStatus,
+        to: transition.to,
+        notes,
+      },
+    );
 
     if (action === 'REQUEST_AVAILABILITY') {
       await this.notifications.notifyAllActiveMembers({
@@ -435,7 +453,9 @@ export class EventsService {
     positions: string[],
     note?: string,
   ) {
-    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
     if (!event) throw new NotFoundException('Event not found');
     if (
       !['AVAILABILITY_REQUESTED', 'PENDING_APPROVAL'].includes(
@@ -464,6 +484,7 @@ export class EventsService {
           select: {
             id: true,
             firstName: true,
+            preferredFirstName: true,
             lastName: true,
             credentials: {
               where: { status: 'ACTIVE' },
@@ -482,7 +503,11 @@ export class EventsService {
     return this.prisma.eventTier.findMany({ where: { active: true } });
   }
 
-  createTier(data: { name: string; description?: string; defaults?: Record<string, unknown> }) {
+  createTier(data: {
+    name: string;
+    description?: string;
+    defaults?: Record<string, unknown>;
+  }) {
     return this.prisma.eventTier.create({
       data: { ...data, defaults: data.defaults as object | undefined },
     });
@@ -490,7 +515,12 @@ export class EventsService {
 
   updateTier(
     id: number,
-    data: Partial<{ name: string; description: string; defaults: Record<string, unknown>; active: boolean }>,
+    data: Partial<{
+      name: string;
+      description: string;
+      defaults: Record<string, unknown>;
+      active: boolean;
+    }>,
   ) {
     return this.prisma.eventTier.update({
       where: { id },
@@ -510,7 +540,11 @@ export class EventsService {
 
   updateKind(
     id: number,
-    data: Partial<{ name: string; defaults: Record<string, unknown>; active: boolean }>,
+    data: Partial<{
+      name: string;
+      defaults: Record<string, unknown>;
+      active: boolean;
+    }>,
   ) {
     return this.prisma.eventKind.update({
       where: { id },

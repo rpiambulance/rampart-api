@@ -2208,4 +2208,121 @@ describe('Night crews engine (e2e)', () => {
       .set(as(bob))
       .expect(200);
   });
+
+  describe('asking for an account', () => {
+    // The request form asks for what the profile holds. If any of it is
+    // dropped on the way in, an officer has to chase for it by email —
+    // which is the whole thing this was meant to avoid.
+    it('keeps the profile details it was given', async () => {
+      const code = `E2E${stamp}`.slice(0, 20).toUpperCase();
+      await prisma.inviteCode.create({ data: { code, maxUses: 1 } });
+      const email = `wants-in-${stamp}@example.com`;
+
+      await request(app.getHttpServer())
+        .post('/v1/requests/account')
+        .send({
+          inviteCode: code,
+          firstName: 'Daniel',
+          preferredFirstName: 'Alex',
+          lastName: `Test${stamp}`,
+          email,
+          personalEmail: `alex-${stamp}@example.com`,
+          cellPhone: '518-555-0101',
+          homePhone: '518-555-0102',
+          localAddress: '110 8th St',
+          homeAddress: '1 Elsewhere Ave',
+          dob: '2004-03-09',
+          note: 'Already an EMT.',
+        })
+        .expect(201);
+
+      const saved = await prisma.accountRequest.findFirstOrThrow({
+        where: { email },
+      });
+      expect(saved).toMatchObject({
+        firstName: 'Daniel',
+        preferredFirstName: 'Alex',
+        personalEmail: `alex-${stamp}@example.com`,
+        cellPhone: '518-555-0101',
+        homePhone: '518-555-0102',
+        localAddress: '110 8th St',
+        homeAddress: '1 Elsewhere Ave',
+        note: 'Already an EMT.',
+      });
+      // Stored as a calendar day, not shifted by whatever zone the box is in.
+      expect(saved.dob?.toISOString().slice(0, 10)).toBe('2004-03-09');
+
+      await prisma.accountRequest.deleteMany({ where: { email } });
+      await prisma.inviteCode.delete({ where: { code } });
+    });
+
+    it('leaves out what was not filled in, rather than storing blanks', async () => {
+      const code = `E2EB${stamp}`.slice(0, 20).toUpperCase();
+      await prisma.inviteCode.create({ data: { code, maxUses: 1 } });
+      const email = `sparse-${stamp}@example.com`;
+
+      await request(app.getHttpServer())
+        .post('/v1/requests/account')
+        .send({
+          inviteCode: code,
+          firstName: 'Sam',
+          lastName: `Test${stamp}`,
+          email,
+        })
+        .expect(201);
+
+      const saved = await prisma.accountRequest.findFirstOrThrow({
+        where: { email },
+      });
+      expect(saved.preferredFirstName).toBeNull();
+      expect(saved.cellPhone).toBeNull();
+      expect(saved.dob).toBeNull();
+
+      await prisma.accountRequest.deleteMany({ where: { email } });
+      await prisma.inviteCode.delete({ where: { code } });
+    });
+
+    // The officer's review page renders straight from this payload, so if a
+    // field is not in it, it is not on the page however well it was stored.
+    it('hands the review page every detail it was given', async () => {
+      const code = `E2EP${stamp}`.slice(0, 20).toUpperCase();
+      await prisma.inviteCode.create({ data: { code, maxUses: 1 } });
+      const email = `review-${stamp}@example.com`;
+      await request(app.getHttpServer())
+        .post('/v1/requests/account')
+        .send({
+          inviteCode: code,
+          firstName: 'Daniel',
+          preferredFirstName: 'Alex',
+          lastName: `Test${stamp}`,
+          email,
+          cellPhone: '518-555-0101',
+          personalEmail: `alex-${stamp}@example.com`,
+          localAddress: '110 8th St',
+          dob: '2004-03-09',
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/requests/account/pending')
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .expect(200);
+
+      const mine = (res.body as Array<Record<string, unknown>>).find(
+        (row) => row.email === email,
+      );
+      expect(mine).toMatchObject({
+        firstName: 'Daniel',
+        preferredFirstName: 'Alex',
+        cellPhone: '518-555-0101',
+        personalEmail: `alex-${stamp}@example.com`,
+        localAddress: '110 8th St',
+      });
+      expect(String(mine?.dob)).toContain('2004-03-09');
+
+      await prisma.accountRequest.deleteMany({ where: { email } });
+      await prisma.inviteCode.delete({ where: { code } });
+    });
+  });
 });

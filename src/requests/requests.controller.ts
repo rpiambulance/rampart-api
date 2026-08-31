@@ -85,10 +85,46 @@ class AccountRequestDto {
   @IsEmail()
   email!: string;
 
+  /**
+   * The same contact detail a member keeps on their profile.
+   *
+   * All optional: somebody asking to join should not be turned away over a
+   * home phone number, and everything here can be edited once they are in.
+   * Asking now only saves the chasing afterwards.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  preferredFirstName?: string;
+
+  @IsOptional()
+  @IsEmail()
+  personalEmail?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(40)
-  phone?: string;
+  cellPhone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  homePhone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  localAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  homeAddress?: string;
+
+  /** Required to create a member, so worth having before the officer starts. */
+  @IsOptional()
+  @IsDateString()
+  dob?: string;
 
   @IsOptional()
   @IsString()

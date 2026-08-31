@@ -16,105 +16,105 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Member {
-  id              Int       @id @default(autoincrement())
-  legacyId        Int?      @unique // members.id from the old MySQL portal
-  keycloakSubject String?   @unique
+  id                 Int       @id @default(autoincrement())
+  legacyId           Int?      @unique // members.id from the old MySQL portal
+  keycloakSubject    String?   @unique
   /// The legal first name: what is on the licence and the certification
   /// card, and what the agency is obliged to record. Only an officer changes
   /// it, because it is identity.
-  firstName       String
+  firstName          String
   /// What they would rather be called. Theirs to set, and what the portal
   /// shows wherever a name is shown to people rather than to a registry.
   preferredFirstName String?
-  lastName        String
-  dob             DateTime? @db.Date
-  email           String    @unique
-  personalEmail   String?
-  cellPhone       String?
-  homePhone       String?
-  localAddress    String?
-  homeAddress     String?
-  rcsId           String?
+  lastName           String
+  dob                DateTime? @db.Date
+  email              String    @unique
+  personalEmail      String?
+  cellPhone          String?
+  homePhone          String?
+  localAddress       String?
+  homeAddress        String?
+  rcsId              String?
   /// RPI 900 number. Kept for credentialed members and officers by
   /// convention, not by rule — nothing here requires or checks it.
-  nineHundredNumber String? @map("900number")
-  rin             String?
-  facilityId      String?
-  cardId          String?
-  slackId         String?   @unique
-  active          Boolean   @default(true)
-  navLayout       String    @default("sidebar") // UI preference: sidebar | topnav
-  eventView       String    @default("list") // UI preference: list | day | week | month
-  timeFormat      String    @default("24h") // UI preference: 24h | 12h
+  nineHundredNumber  String?   @map("900number")
+  rin                String?
+  facilityId         String?
+  cardId             String?
+  slackId            String?   @unique
+  active             Boolean   @default(true)
+  navLayout          String    @default("sidebar") // UI preference: sidebar | topnav
+  eventView          String    @default("list") // UI preference: list | day | week | month
+  timeFormat         String    @default("24h") // UI preference: 24h | 12h
   /// UI preference: how the inbox is ordered. See INBOX_SORTS.
-  inboxSort       String    @default("unreadFirst")
+  inboxSort          String    @default("unreadFirst")
 
   /// The last time this member said their own details are right, and the
   /// last time somebody asked them to. A request outstanding is simply a
   /// request newer than the confirmation — no third state to keep in step,
   /// and asking twice cannot lose an answer given in between.
-  profileConfirmedAt        DateTime?
-  profileReviewRequestedAt  DateTime?
+  profileConfirmedAt         DateTime?
+  profileReviewRequestedAt   DateTime?
   profileReviewRequestedById Int?
   profileReviewNote          String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
 
-  roles              MemberRole[]
-  credentials        MemberCredential[]
-  certifications     MemberCertification[]
-  verifiedCerts      MemberCertification[] @relation("CertVerifier")
-  evaluationsWritten Evaluation[]          @relation("Evaluator")
-  evaluationsAbout   Evaluation[]          @relation("EvalSubject")
-  evaluationsAsked   Evaluation[]          @relation("EvalRequester")
-  checklistSignoffs  ChecklistSignoff[]    @relation("ChecklistSubject")
-  checklistsStarted  ChecklistEnrollment[] @relation("ChecklistEnrolled")
-  checklistsBegunFor ChecklistEnrollment[] @relation("ChecklistStarter")
-  crewsTakenOutOfService Crew[]            @relation("CrewOutOfServiceBy")
-  inboxTasksCompleted    InboxMessage[]    @relation("InboxCompletedBy")
-  evalAttachments        EvalAttachment[]  @relation("EvalAttachmentUploader")
-  unlinkedLoginsResolved UnlinkedLogin[]   @relation("UnlinkedLoginResolver")
-  profileChangesAsked    ProfileChangeRequest[] @relation("ProfileChangeSubject")
-  profileChangesDecided  ProfileChangeRequest[] @relation("ProfileChangeDecider")
-  inviteCodesCreated     InviteCode[]     @relation("InviteCodeCreator")
-  inviteCodesClosed      InviteCode[]     @relation("InviteCodeCloser")
-  accountRequestsDecided AccountRequest[] @relation("AccountRequestDecider")
-  accountRequestMember   AccountRequest[] @relation("AccountRequestMember")
-  profileReviewsRequested Member[]         @relation("ProfileReviewRequestedBy")
-  profileReviewRequestedBy Member?         @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
-  resourcesCreated       Resource[]        @relation("ResourceCreator")
-  checksheetRuns         ChecksheetRun[]        @relation("ChecksheetCompletedBy")
-  deficienciesResolved   ChecksheetDeficiency[] @relation("DeficiencyResolvedBy")
-  webhooksCreated    Webhook[]             @relation("WebhookCreator")
-  choresAssigned     Chore[]               @relation("ChoreAssignee")
-  choresCompleted    ChoreOccurrence[]     @relation("ChoreCompleter")
-  choreNightsAssigned ChoreOccurrence[]    @relation("ChoreOccurrenceAssignee")
-  runNumbersIssued   RunNumber[]           @relation("RunNumberIssuer")
-  certTypesProposed  CertificationType[]   @relation("CertTypeProposer")
-  checklistSigned    ChecklistSignoff[]    @relation("ChecklistSigner")
-  checklistRevoked   ChecklistSignoff[]    @relation("ChecklistRevoker")
-  promotionRequests  PromotionRequest[]
-  promotionVotes     PromotionVote[]       @relation("Voter")
-  proxiedVotes       PromotionVote[]       @relation("ProxyFor")
-  proxyPrincipalOf   PromotionProxy[]      @relation("ProxyPrincipal")
-  proxyAgentOf       PromotionProxy[]      @relation("ProxyAgent")
-  requirementAdjustments PromotionRequirementAdjustment[] @relation("AdjustmentSubject")
-  adjustmentsCreated     PromotionRequirementAdjustment[] @relation("AdjustmentCreator")
-  crewSlots          CrewSlot[]
-  eventSignups       EventSignup[]
-  fuelLogEntries     FuelLogEntry[]
-  radioAssignments   RadioAssignment[]
-  icsTokens          IcsToken[]
-  apiTokens          ApiToken[]
-  annualTrainings    MemberAnnualTraining[]
-  classAttendance    ClassAttendance[]
-  crewAbsences       CrewAbsence[]
-  pollInvites        AvailabilityPollInvite[]
-  availability       AvailabilityResponse[]
-  inbox              InboxMessage[]
-  pollsCreated       AvailabilityPoll[]
-  eventAvailability  EventAvailability[]
-  coverageMessages   CoverageMessage[]
+  roles                    MemberRole[]
+  credentials              MemberCredential[]
+  certifications           MemberCertification[]
+  verifiedCerts            MemberCertification[]            @relation("CertVerifier")
+  evaluationsWritten       Evaluation[]                     @relation("Evaluator")
+  evaluationsAbout         Evaluation[]                     @relation("EvalSubject")
+  evaluationsAsked         Evaluation[]                     @relation("EvalRequester")
+  checklistSignoffs        ChecklistSignoff[]               @relation("ChecklistSubject")
+  checklistsStarted        ChecklistEnrollment[]            @relation("ChecklistEnrolled")
+  checklistsBegunFor       ChecklistEnrollment[]            @relation("ChecklistStarter")
+  crewsTakenOutOfService   Crew[]                           @relation("CrewOutOfServiceBy")
+  inboxTasksCompleted      InboxMessage[]                   @relation("InboxCompletedBy")
+  evalAttachments          EvalAttachment[]                 @relation("EvalAttachmentUploader")
+  unlinkedLoginsResolved   UnlinkedLogin[]                  @relation("UnlinkedLoginResolver")
+  profileChangesAsked      ProfileChangeRequest[]           @relation("ProfileChangeSubject")
+  profileChangesDecided    ProfileChangeRequest[]           @relation("ProfileChangeDecider")
+  inviteCodesCreated       InviteCode[]                     @relation("InviteCodeCreator")
+  inviteCodesClosed        InviteCode[]                     @relation("InviteCodeCloser")
+  accountRequestsDecided   AccountRequest[]                 @relation("AccountRequestDecider")
+  accountRequestMember     AccountRequest[]                 @relation("AccountRequestMember")
+  profileReviewsRequested  Member[]                         @relation("ProfileReviewRequestedBy")
+  profileReviewRequestedBy Member?                          @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
+  resourcesCreated         Resource[]                       @relation("ResourceCreator")
+  checksheetRuns           ChecksheetRun[]                  @relation("ChecksheetCompletedBy")
+  deficienciesResolved     ChecksheetDeficiency[]           @relation("DeficiencyResolvedBy")
+  webhooksCreated          Webhook[]                        @relation("WebhookCreator")
+  choresAssigned           Chore[]                          @relation("ChoreAssignee")
+  choresCompleted          ChoreOccurrence[]                @relation("ChoreCompleter")
+  choreNightsAssigned      ChoreOccurrence[]                @relation("ChoreOccurrenceAssignee")
+  runNumbersIssued         RunNumber[]                      @relation("RunNumberIssuer")
+  certTypesProposed        CertificationType[]              @relation("CertTypeProposer")
+  checklistSigned          ChecklistSignoff[]               @relation("ChecklistSigner")
+  checklistRevoked         ChecklistSignoff[]               @relation("ChecklistRevoker")
+  promotionRequests        PromotionRequest[]
+  promotionVotes           PromotionVote[]                  @relation("Voter")
+  proxiedVotes             PromotionVote[]                  @relation("ProxyFor")
+  proxyPrincipalOf         PromotionProxy[]                 @relation("ProxyPrincipal")
+  proxyAgentOf             PromotionProxy[]                 @relation("ProxyAgent")
+  requirementAdjustments   PromotionRequirementAdjustment[] @relation("AdjustmentSubject")
+  adjustmentsCreated       PromotionRequirementAdjustment[] @relation("AdjustmentCreator")
+  crewSlots                CrewSlot[]
+  eventSignups             EventSignup[]
+  fuelLogEntries           FuelLogEntry[]
+  radioAssignments         RadioAssignment[]
+  icsTokens                IcsToken[]
+  apiTokens                ApiToken[]
+  annualTrainings          MemberAnnualTraining[]
+  classAttendance          ClassAttendance[]
+  crewAbsences             CrewAbsence[]
+  pollInvites              AvailabilityPollInvite[]
+  availability             AvailabilityResponse[]
+  inbox                    InboxMessage[]
+  pollsCreated             AvailabilityPoll[]
+  eventAvailability        EventAvailability[]
+  coverageMessages         CoverageMessage[]
 }
 
 // ---------------------------------------------------------------------------
@@ -122,15 +122,15 @@ model Member {
 // ---------------------------------------------------------------------------
 
 model Role {
-  id          Int              @id @default(autoincrement())
-  name        String           @unique
-  description String?
-  isOfficer   Boolean          @default(false)
-  permissions RolePermission[]
-  members     MemberRole[]
-  credentialLinks CredentialTypeRole[]
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id                  Int                  @id @default(autoincrement())
+  name                String               @unique
+  description         String?
+  isOfficer           Boolean              @default(false)
+  permissions         RolePermission[]
+  members             MemberRole[]
+  credentialLinks     CredentialTypeRole[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
   checksheetTemplates ChecksheetTemplate[] @relation("ChecksheetNotifyRoles")
 }
 
@@ -160,8 +160,8 @@ model MemberRole {
 // ---------------------------------------------------------------------------
 
 model CertificationType {
-  id                    Int     @id @default(autoincrement())
-  name                  String  @unique
+  id                    Int              @id @default(autoincrement())
+  name                  String           @unique
   abbreviation          String
   issuingOrg            String?
   defaultValidityMonths Int? // null = non-expiring
@@ -173,24 +173,24 @@ model CertificationType {
   issuedAtField         FieldRequirement @default(OPTIONAL)
   expiresAtField        FieldRequirement @default(OPTIONAL)
   documentField         FieldRequirement @default(OPTIONAL)
-  active                Boolean @default(true)
+  active                Boolean          @default(true)
   /// Suggested by a member submitting a certification the list did not have.
   /// It works like any other type, but is marked until somebody with settings
   /// permission has looked at how it is configured — an abbreviation and a
   /// validity period guessed by whoever happened to submit first should not
   /// silently become the agency's.
-  proposed              Boolean @default(false)
+  proposed              Boolean          @default(false)
   proposedById          Int?
   proposedAt            DateTime?
 
   proposedBy Member? @relation("CertTypeProposer", fields: [proposedById], references: [id])
 
-  memberCertifications  MemberCertification[]
+  memberCertifications   MemberCertification[]
   credentialRequirements CredentialRequirement[]
   requirementAdjustments PromotionRequirementAdjustment[]
   /// Certifications this one outranks, and the ones that outrank it.
-  supersedes             CertificationSupersession[] @relation("Supersedes")
-  supersededBy           CertificationSupersession[] @relation("SupersededBy")
+  supersedes             CertificationSupersession[]      @relation("Supersedes")
+  supersededBy           CertificationSupersession[]      @relation("SupersededBy")
 }
 
 /// Certification ranking: holding the higher one satisfies a requirement for
@@ -205,7 +205,6 @@ model CertificationSupersession {
   @@id([higherTypeId, lowerTypeId])
   @@index([lowerTypeId])
 }
-
 
 /// Whether a field is asked for, and whether it may be left blank.
 enum FieldRequirement {
@@ -284,15 +283,15 @@ model CredentialType {
   outranksAll Boolean     @default(false)
   active      Boolean     @default(true)
 
-  linkedRoles     CredentialTypeRole[] // roles conferred automatically while ACTIVE
-  prerequisites   CredentialPrerequisite[] @relation("Prerequisites")
-  prerequisiteOf  CredentialPrerequisite[] @relation("PrerequisiteOf")
-  requirements    CredentialRequirement[]
-  memberCredentials MemberCredential[]
-  promotionRequests PromotionRequest[]
+  linkedRoles            CredentialTypeRole[] // roles conferred automatically while ACTIVE
+  prerequisites          CredentialPrerequisite[]         @relation("Prerequisites")
+  prerequisiteOf         CredentialPrerequisite[]         @relation("PrerequisiteOf")
+  requirements           CredentialRequirement[]
+  memberCredentials      MemberCredential[]
+  promotionRequests      PromotionRequest[]
   requirementAdjustments PromotionRequirementAdjustment[]
-  checklistSignoffLevel  EvalFormTemplate[] @relation("ChecklistSignoffLevel")
-  checklistItemLevel     EvalFormItem[]     @relation("ChecklistItemSignoffLevel")
+  checklistSignoffLevel  EvalFormTemplate[]               @relation("ChecklistSignoffLevel")
+  checklistItemLevel     EvalFormItem[]                   @relation("ChecklistItemSignoffLevel")
 }
 
 // Holding this credential ACTIVE confers the linked role's permissions
@@ -336,7 +335,7 @@ enum RequirementKind {
 }
 
 model CredentialRequirement {
-  id                  Int             @id @default(autoincrement())
+  id                  Int              @id @default(autoincrement())
   credentialTypeId    Int
   kind                RequirementKind
   certificationTypeId Int?
@@ -356,10 +355,10 @@ model CredentialRequirement {
   /// told and given time. Null means immediately.
   effectiveFrom       DateTime?        @db.Date
 
-  credentialType    CredentialType     @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
-  certificationType CertificationType? @relation(fields: [certificationTypeId], references: [id])
-  evalTemplate      EvalFormTemplate?  @relation(fields: [evalTemplateId], references: [id])
-  class             TrainingClass?     @relation(fields: [classId], references: [id])
+  credentialType    CredentialType                   @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
+  certificationType CertificationType?               @relation(fields: [certificationTypeId], references: [id])
+  evalTemplate      EvalFormTemplate?                @relation(fields: [evalTemplateId], references: [id])
+  class             TrainingClass?                   @relation(fields: [classId], references: [id])
   adjustments       PromotionRequirementAdjustment[]
 }
 
@@ -479,10 +478,10 @@ model EvalFormTemplate {
 /// A titled run of items. Groups and loose items share one ordering space at
 /// the top of a form, so a group moves exactly like a single item does.
 model EvalFormGroup {
-  id         Int    @id @default(autoincrement())
-  templateId Int
-  order      Int
-  heading    String
+  id          Int     @id @default(autoincrement())
+  templateId  Int
+  order       Int
+  heading     String
   /// Shown under the heading, before the first item.
   description String?
 
@@ -493,30 +492,30 @@ model EvalFormGroup {
 }
 
 model EvalFormItem {
-  id         Int       @id @default(autoincrement())
-  templateId Int
+  id           Int          @id @default(autoincrement())
+  templateId   Int
   /// Null = loose at the top level; otherwise the group it sits in. `order`
   /// is read within whichever of the two contains it.
-  groupId    Int?
-  order      Int
-  prompt     String
-  scoreType  ScoreType
+  groupId      Int?
+  order        Int
+  prompt       String
+  scoreType    ScoreType
   /// For OPTIONS and MULTI_SELECT: [{ value, label }], in offer order.
-  options    Json?
+  options      Json?
   /// NUMBER only: bounds and unit, all optional.
-  minValue   Float?
-  maxValue   Float?
-  unit       String?
+  minValue     Float?
+  maxValue     Float?
+  unit         String?
   /// Whether the trainee fills this in when requesting the evaluation.
   traineeInput TraineeInput @default(NONE)
 
-  template              EvalFormTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  group                 EvalFormGroup?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  template               EvalFormTemplate   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  group                  EvalFormGroup?     @relation(fields: [groupId], references: [id], onDelete: Cascade)
   /// Checklists only: who may sign this line, instead of the checklist's own
   /// set. Empty means the checklist's set applies.
-  signoffCredentialTypes CredentialType[] @relation("ChecklistItemSignoffLevel")
-  scores                EvalScore[]
-  signoffs              ChecklistSignoff[]
+  signoffCredentialTypes CredentialType[]   @relation("ChecklistItemSignoffLevel")
+  scores                 EvalScore[]
+  signoffs               ChecklistSignoff[]
 
   @@index([templateId])
   @@index([groupId])
@@ -602,13 +601,13 @@ model EvalAttachment {
 }
 
 model Evaluation {
-  id                Int        @id @default(autoincrement())
+  id                Int          @id @default(autoincrement())
   templateId        Int
   evaluatorId       Int
   subjectId         Int
-  status            EvalStatus @default(DRAFT)
+  status            EvalStatus   @default(DRAFT)
   /// The day being evaluated.
-  evalDate          DateTime?  @db.Date
+  evalDate          DateTime?    @db.Date
   /// Set when the trainee asked for this rather than the trainer starting it.
   requestedById     Int?
   requestedAt       DateTime?
@@ -618,13 +617,13 @@ model Evaluation {
   readyForPromotion Boolean?
   signedByEvaluator DateTime?
   signedBySubject   DateTime?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
-  template  EvalFormTemplate @relation(fields: [templateId], references: [id])
-  evaluator Member           @relation("Evaluator", fields: [evaluatorId], references: [id])
-  requestedBy Member?        @relation("EvalRequester", fields: [requestedById], references: [id])
-  subject   Member           @relation("EvalSubject", fields: [subjectId], references: [id])
+  template    EvalFormTemplate @relation(fields: [templateId], references: [id])
+  evaluator   Member           @relation("Evaluator", fields: [evaluatorId], references: [id])
+  requestedBy Member?          @relation("EvalRequester", fields: [requestedById], references: [id])
+  subject     Member           @relation("EvalSubject", fields: [subjectId], references: [id])
   scores      EvalScore[]
   attachments EvalAttachment[]
 
@@ -673,7 +672,7 @@ enum AdjustmentKind {
 }
 
 model PromotionRequirementAdjustment {
-  id                  Int             @id @default(autoincrement())
+  id                  Int              @id @default(autoincrement())
   memberId            Int
   credentialTypeId    Int
   kind                AdjustmentKind
@@ -686,7 +685,7 @@ model PromotionRequirementAdjustment {
   note                String? // waiver reason, or the free-text requirement itself
   satisfiedAt         DateTime? // manual completion for free-text ADDITIONAL items
   createdById         Int
-  createdAt           DateTime        @default(now())
+  createdAt           DateTime         @default(now())
 
   member            Member                 @relation("AdjustmentSubject", fields: [memberId], references: [id], onDelete: Cascade)
   credentialType    CredentialType         @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
@@ -752,11 +751,11 @@ model PromotionProxy {
 }
 
 model PromotionApproval {
-  requestId  Int      @id
+  requestId    Int      @id
   approvedById Int
-  approved   Boolean
-  notes      String?
-  decidedAt  DateTime @default(now())
+  approved     Boolean
+  notes        String?
+  decidedAt    DateTime @default(now())
 
   request PromotionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 }
@@ -774,8 +773,8 @@ enum CrewPosition {
 }
 
 model Crew {
-  id    Int      @id @default(autoincrement())
-  date  DateTime @unique @db.Date
+  id                 Int       @id @default(autoincrement())
+  date               DateTime  @unique @db.Date
   /// The agency is not running a crew that night. The duty supervisor seat
   /// is kept regardless — somebody still carries the phone — so this marks
   /// the night rather than emptying it.
@@ -891,10 +890,10 @@ model InboxMessage {
   body     String
 
   /// A task is something to be done, not merely read.
-  isTask      Boolean   @default(false)
-  actionLabel String?
-  actionUrl   String?
-  completedAt DateTime?
+  isTask        Boolean   @default(false)
+  actionLabel   String?
+  actionUrl     String?
+  completedAt   DateTime?
   /// Who dealt with it. Usually the recipient, but a task sent to everyone
   /// who could do a thing is finished by whichever one of them does it, and
   /// the rest should be told by whom rather than finding it silently gone.
@@ -976,36 +975,36 @@ enum EventWorkflowStatus {
 }
 
 model Event {
-  id          Int      @id @default(autoincrement())
-  title       String
-  description String?
-  location    String?
-  startsAt    DateTime
-  endsAt      DateTime
-  kindId      Int
-  locked      Boolean  @default(false)
-  attendeeCap Int? // cap for the non-positional pool; null = unlimited
-  hidden      Boolean  @default(false)
-  gcalEventId String?
-  legacyKey   String?  @unique // "game-<id>" / "event-<id>" from the old MySQL portal
+  id             Int                 @id @default(autoincrement())
+  title          String
+  description    String?
+  location       String?
+  startsAt       DateTime
+  endsAt         DateTime
+  kindId         Int
+  locked         Boolean             @default(false)
+  attendeeCap    Int? // cap for the non-positional pool; null = unlimited
+  hidden         Boolean             @default(false)
+  gcalEventId    String?
+  legacyKey      String?             @unique // "game-<id>" / "event-<id>" from the old MySQL portal
   workflowStatus EventWorkflowStatus @default(APPROVED)
-  tierId      Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  tierId         Int?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
-  kind      EventKind       @relation(fields: [kindId], references: [id])
-  tier      EventTier?      @relation(fields: [tierId], references: [id])
-  positions EventPosition[]
-  runNumbers RunNumber[]
-  signups   EventSignup[]
+  kind                  EventKind           @relation(fields: [kindId], references: [id])
+  tier                  EventTier?          @relation(fields: [tierId], references: [id])
+  positions             EventPosition[]
+  runNumbers            RunNumber[]
+  signups               EventSignup[]
   availabilityResponses EventAvailability[]
-  coverageRequest        CoverageRequest?
+  coverageRequest       CoverageRequest?
 
   @@index([startsAt])
 }
 
 model EventPosition {
-  id                    Int    @id @default(autoincrement())
+  id                    Int     @id @default(autoincrement())
   eventId               Int
   position              String // cc, driver, attendant, observer, ees, ...
   /// How many are wanted. Null means no limit — take everyone who signs up.
@@ -1018,10 +1017,10 @@ model EventPosition {
 }
 
 model EventSignup {
-  id       Int     @id @default(autoincrement())
-  eventId  Int
-  memberId Int
-  position String? // null = plain attendee (counted against attendeeCap)
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  memberId  Int
+  position  String? // null = plain attendee (counted against attendeeCap)
   createdAt DateTime @default(now())
 
   event  Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -1030,7 +1029,9 @@ model EventSignup {
   @@unique([eventId, memberId])
 }
 
-/** "I can work this" responses gathered during AVAILABILITY_REQUESTED. */
+/**
+ * "I can work this" responses gathered during AVAILABILITY_REQUESTED.
+ */
 model EventAvailability {
   eventId   Int
   memberId  Int
@@ -1111,7 +1112,7 @@ model MemberAnnualTraining {
 }
 
 model TrainingClass {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   name        String
   description String?
   sessionAt   DateTime?
@@ -1307,15 +1308,15 @@ model AccessLog {
 /// webhook that is down must never fail the action that triggered it, and an
 /// event worth sending is usually still worth sending a minute later.
 model Webhook {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   name        String
   url         String
   /// Event keys this endpoint wants. Empty means every event.
   events      String[]
   /// Signs each delivery so the receiver can tell it really came from here.
   secret      String
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
   createdById Int?
   /// Set on the last attempt, successful or not, so a dead endpoint is
   /// visible in the console without reading delivery rows.
@@ -1323,20 +1324,20 @@ model Webhook {
   lastAt      DateTime?
   lastError   String?
 
-  createdBy  Member?             @relation("WebhookCreator", fields: [createdById], references: [id])
+  createdBy  Member?           @relation("WebhookCreator", fields: [createdById], references: [id])
   deliveries WebhookDelivery[]
 }
 
 model WebhookDelivery {
-  id         BigInt   @id @default(autoincrement())
-  webhookId  Int
-  event      String
-  payload    Json
-  attempts   Int      @default(0)
-  status     Int?
-  error      String?
+  id          BigInt    @id @default(autoincrement())
+  webhookId   Int
+  event       String
+  payload     Json
+  attempts    Int       @default(0)
+  status      Int?
+  error       String?
   deliveredAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
@@ -1371,28 +1372,28 @@ model Chore {
   assigneeId  Int?
   createdAt   DateTime     @default(now())
 
-  assignee    Member?          @relation("ChoreAssignee", fields: [assigneeId], references: [id])
+  assignee    Member?           @relation("ChoreAssignee", fields: [assigneeId], references: [id])
   occurrences ChoreOccurrence[]
 }
 
 /// One instance of a chore on one day.
 model ChoreOccurrence {
-  id          Int       @id @default(autoincrement())
-  choreId     Int
-  dueOn       DateTime  @db.Date
+  id            Int       @id @default(autoincrement())
+  choreId       Int
+  dueOn         DateTime  @db.Date
   /// Overrides the chore's standing assignee for this night only, so one
   /// shift can be handed over without disturbing the arrangement behind it.
   /// Null means the chore's own assignee applies.
-  assigneeId  Int?
-  completedAt DateTime?
+  assigneeId    Int?
+  completedAt   DateTime?
   completedById Int?
   /// Whatever the member typed back, from Slack or the portal.
-  note        String?
+  note          String?
   /// Slack message this was announced in, so the post can be updated in place
   /// when somebody claims it rather than adding another line to the channel.
-  slackChannel String?
-  slackTs      String?
-  postedAt     DateTime?
+  slackChannel  String?
+  slackTs       String?
+  postedAt      DateTime?
 
   chore       Chore   @relation(fields: [choreId], references: [id], onDelete: Cascade)
   assignee    Member? @relation("ChoreOccurrenceAssignee", fields: [assigneeId], references: [id])
@@ -1525,22 +1526,22 @@ model Asset {
 }
 
 model ChecksheetTemplate {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique
-  description String?
-  active      Boolean @default(true)
+  id                Int               @id @default(autoincrement())
+  name              String            @unique
+  description       String?
+  active            Boolean           @default(true)
   /// Which kind of thing this is a check for. Null means it stands alone and
   /// runs name no asset — a station sweep rather than a truck.
-  assetKindId Int?
-  cadence     ChecksheetCadence @default(NONE)
+  assetKindId       Int?
+  cadence           ChecksheetCadence @default(NONE)
   /// Days ahead of an expiry to start warning. Null uses the agency default.
   expiryWarningDays Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
-  assetKind AssetKind? @relation(fields: [assetKindId], references: [id])
+  assetKind   AssetKind? @relation(fields: [assetKindId], references: [id])
   /// Told when a sheet is completed, and when something on it is expiring.
-  notifyRoles Role[]  @relation("ChecksheetNotifyRoles")
+  notifyRoles Role[]     @relation("ChecksheetNotifyRoles")
 
   sections     ChecksheetSection[]
   items        ChecksheetItem[]
@@ -1558,7 +1559,7 @@ model ChecksheetSection {
   /// person checking reads the seal number rather than opening it.
   hasSeal     Boolean @default(false)
 
-  template ChecksheetTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template ChecksheetTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
   items    ChecksheetItem[]
   entries  ChecksheetSectionEntry[]
 
@@ -1571,9 +1572,9 @@ model ChecksheetSection {
 /// confirm it matches, move on. The number is recorded rather than merely
 /// confirmed so a seal changing between checks is visible afterwards.
 model ChecksheetSectionEntry {
-  id        Int     @id @default(autoincrement())
-  runId     Int
-  sectionId Int
+  id          Int     @id @default(autoincrement())
+  runId       Int
+  sectionId   Int
   /// Whether there was a seal on it at all. A section can be configured to
   /// carry a seal and be found without one, which is worth recording rather
   /// than refusing to accept.
@@ -1594,17 +1595,17 @@ model ChecksheetSectionEntry {
 }
 
 model ChecksheetItem {
-  id         Int    @id @default(autoincrement())
-  templateId Int
+  id             Int                @id @default(autoincrement())
+  templateId     Int
   /// Null = loose at the top of the sheet; otherwise the section it sits in.
-  sectionId  Int?
-  order      Int
-  label      String
-  notes      String?
-  kind       ChecksheetItemKind @default(PRESENCE)
+  sectionId      Int?
+  order          Int
+  label          String
+  notes          String?
+  kind           ChecksheetItemKind @default(PRESENCE)
   /// PAR only: how many there should be.
-  parLevel   Int?
-  expiryTracking ExpiryTracking @default(NONE)
+  parLevel       Int?
+  expiryTracking ExpiryTracking     @default(NONE)
 
   template     ChecksheetTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
   section      ChecksheetSection?     @relation(fields: [sectionId], references: [id], onDelete: Cascade)
@@ -1625,27 +1626,27 @@ model ChecksheetRun {
   /// Free text about the check as a whole.
   comment       String?
 
-  template    ChecksheetTemplate     @relation(fields: [templateId], references: [id])
-  asset       Asset?                 @relation(fields: [assetId], references: [id])
-  completedBy Member?                @relation("ChecksheetCompletedBy", fields: [completedById], references: [id])
-  entries       ChecksheetEntry[]
+  template       ChecksheetTemplate       @relation(fields: [templateId], references: [id])
+  asset          Asset?                   @relation(fields: [assetId], references: [id])
+  completedBy    Member?                  @relation("ChecksheetCompletedBy", fields: [completedById], references: [id])
+  entries        ChecksheetEntry[]
   sectionEntries ChecksheetSectionEntry[]
-  opened        ChecksheetDeficiency[] @relation("DeficiencyOpenedBy")
-  closed      ChecksheetDeficiency[] @relation("DeficiencyClosedBy")
+  opened         ChecksheetDeficiency[]   @relation("DeficiencyOpenedBy")
+  closed         ChecksheetDeficiency[]   @relation("DeficiencyClosedBy")
 
   @@index([templateId, completedAt])
   @@index([assetId, completedAt])
 }
 
 model ChecksheetEntry {
-  id     Int  @id @default(autoincrement())
-  runId  Int
-  itemId Int
+  id           Int      @id @default(autoincrement())
+  runId        Int
+  itemId       Int
   /// PRESENCE items.
-  present Boolean?
+  present      Boolean?
   /// PAR items: how many were actually found.
   countPresent Int?
-  note   String?
+  note         String?
 
   run      ChecksheetRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
   item     ChecksheetItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -1656,10 +1657,10 @@ model ChecksheetEntry {
 }
 
 model ChecksheetExpiry {
-  id       Int      @id @default(autoincrement())
-  entryId  Int
+  id        Int      @id @default(autoincrement())
+  entryId   Int
   /// Which of the par units this date belongs to; 0 for a single date.
-  position Int      @default(0)
+  position  Int      @default(0)
   expiresAt DateTime @db.Date
 
   entry ChecksheetEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
@@ -1674,31 +1675,31 @@ model ChecksheetExpiry {
 /// missing item reported on four nights running is one deficiency with four
 /// sightings, not four problems.
 model ChecksheetDeficiency {
-  id         Int      @id @default(autoincrement())
-  templateId Int
-  itemId     Int
-  assetId    Int?
+  id          Int      @id @default(autoincrement())
+  templateId  Int
+  itemId      Int
+  assetId     Int?
   openedRunId Int
-  openedAt   DateTime @default(now())
+  openedAt    DateTime @default(now())
   /// What was wrong, in words, at the time — so the record still reads
   /// correctly after somebody edits the item's label or par level.
-  detail     String
-  expected   Int?
-  found      Int?
+  detail      String
+  expected    Int?
+  found       Int?
   /// The most recent run that saw it still outstanding.
-  lastSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
 
   resolvedAt     DateTime?
   resolvedById   Int?
   resolvedRunId  Int?
   resolutionNote String?
 
-  template   ChecksheetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  item       ChecksheetItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  asset      Asset?             @relation(fields: [assetId], references: [id])
-  openedRun  ChecksheetRun      @relation("DeficiencyOpenedBy", fields: [openedRunId], references: [id], onDelete: Cascade)
-  resolvedRun ChecksheetRun?    @relation("DeficiencyClosedBy", fields: [resolvedRunId], references: [id])
-  resolvedBy Member?            @relation("DeficiencyResolvedBy", fields: [resolvedById], references: [id])
+  template    ChecksheetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  item        ChecksheetItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  asset       Asset?             @relation(fields: [assetId], references: [id])
+  openedRun   ChecksheetRun      @relation("DeficiencyOpenedBy", fields: [openedRunId], references: [id], onDelete: Cascade)
+  resolvedRun ChecksheetRun?     @relation("DeficiencyClosedBy", fields: [resolvedRunId], references: [id])
+  resolvedBy  Member?            @relation("DeficiencyResolvedBy", fields: [resolvedById], references: [id])
 
   @@index([resolvedAt])
   @@index([assetId, resolvedAt])
@@ -1711,16 +1712,16 @@ model ChecksheetDeficiency {
 /// person has already been reported, and an officer needs the address and
 /// the subject id in front of them to link the account.
 model UnlinkedLogin {
-  id              Int      @id @default(autoincrement())
-  keycloakSubject String   @unique
-  email           String?
-  name            String?
-  firstSeenAt     DateTime @default(now())
-  lastSeenAt      DateTime @default(now())
-  attempts        Int      @default(1)
+  id               Int       @id @default(autoincrement())
+  keycloakSubject  String    @unique
+  email            String?
+  name             String?
+  firstSeenAt      DateTime  @default(now())
+  lastSeenAt       DateTime  @default(now())
+  attempts         Int       @default(1)
   /// Set when somebody links it, or when the login stops being unlinked.
-  resolvedAt      DateTime?
-  resolvedById    Int?
+  resolvedAt       DateTime?
+  resolvedById     Int?
   resolvedMemberId Int?
 
   resolvedBy Member? @relation("UnlinkedLoginResolver", fields: [resolvedById], references: [id])
@@ -1784,20 +1785,31 @@ model InviteCode {
 
 /// Somebody asking to be let in, from the invite-code portal.
 model AccountRequest {
-  id           Int           @id @default(autoincrement())
-  inviteCode   String?
-  firstName    String
-  lastName     String
-  email        String
-  phone        String?
-  note         String?
-  status       RequestStatus @default(PENDING)
-  createdAt    DateTime      @default(now())
-  decidedAt    DateTime?
-  decidedById  Int?
-  decisionNote String?
+  id                 Int           @id @default(autoincrement())
+  inviteCode         String?
+  firstName          String
+  /// What they go by, if that is not their legal first name.
+  preferredFirstName String?
+  lastName           String
+  email              String
+  /// The rest of the contact detail a member keeps on their own profile,
+  /// asked for here so that approving a request does not begin with an
+  /// officer emailing to ask for a phone number.
+  personalEmail      String?
+  cellPhone          String?
+  homePhone          String?
+  localAddress       String?
+  homeAddress        String?
+  /// Required to create a member, so worth asking while they are here.
+  dob                DateTime?     @db.Date
+  note               String?
+  status             RequestStatus @default(PENDING)
+  createdAt          DateTime      @default(now())
+  decidedAt          DateTime?
+  decidedById        Int?
+  decisionNote       String?
   /// The member created from it, once approved.
-  memberId     Int?
+  memberId           Int?
 
   invite    InviteCode? @relation(fields: [inviteCode], references: [code])
   decidedBy Member?     @relation("AccountRequestDecider", fields: [decidedById], references: [id])

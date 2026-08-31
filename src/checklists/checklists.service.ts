@@ -11,6 +11,7 @@ import { CredentialGraphService } from '../credentials/credential-graph.service'
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { displayName } from '../common/name';
 
 /** The live sign-off for an item is the newest one nobody has taken back. */
 const LIVE = { revokedAt: null } as const;
@@ -19,7 +20,14 @@ const SIGNOFF_SELECT = {
   id: true,
   signedAt: true,
   note: true,
-  signedBy: { select: { id: true, firstName: true, lastName: true } },
+  signedBy: {
+    select: {
+      id: true,
+      firstName: true,
+      preferredFirstName: true,
+      lastName: true,
+    },
+  },
 } as const;
 
 const CREDENTIALS = {
@@ -130,8 +138,17 @@ export class ChecklistsService {
     const enrollments = await this.prisma.checklistEnrollment.findMany({
       where: { templateId, member: { active: true } },
       include: {
-        member: { select: { id: true, firstName: true, lastName: true } },
-        startedBy: { select: { firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
+        startedBy: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
       },
     });
     const members = enrollments
@@ -166,7 +183,7 @@ export class ChecklistsService {
         lastSignedAt: lastAt,
         startedAt: enrollment?.startedAt ?? null,
         startedBy: enrollment?.startedBy
-          ? `${enrollment.startedBy.firstName} ${enrollment.startedBy.lastName}`
+          ? displayName(enrollment.startedBy)
           : null,
       };
     });
@@ -195,7 +212,12 @@ export class ChecklistsService {
             }
           : {}),
       },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
     return members.filter((member) => !started.has(member.id));
@@ -210,7 +232,12 @@ export class ChecklistsService {
     const template = await this.templateOrThrow(templateId);
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
     });
     if (!member) throw new NotFoundException('Member not found');
 
@@ -343,7 +370,12 @@ export class ChecklistsService {
 
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
-      select: { active: true, firstName: true, lastName: true },
+      select: {
+        active: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
     });
     if (!member?.active) throw new NotFoundException('Member not found');
 
@@ -570,9 +602,9 @@ export class ChecklistsService {
 
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
-      select: { firstName: true, lastName: true },
+      select: { firstName: true, preferredFirstName: true, lastName: true },
     });
-    const who = `${member?.firstName ?? ''} ${member?.lastName ?? ''}`.trim();
+    const who = `${member ? displayName(member) : ''}`.trim();
     const credential = await this.leadsTo(templateId);
 
     await this.notifications.notify(memberId, {

@@ -89,7 +89,14 @@ export class RunNumbersService {
     return this.prisma.runNumber.findMany({
       include: {
         location: { select: { abbr: true, name: true } },
-        issuedBy: { select: { id: true, firstName: true, lastName: true } },
+        issuedBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
         event: { select: { id: true, title: true } },
       },
       orderBy: { issuedAt: 'desc' },

@@ -11,6 +11,7 @@ import { normalizeEmail } from '../common/email';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { displayName } from '../common/name';
 
 /**
  * The profile fields a member cannot change for themselves.
@@ -89,7 +90,12 @@ export class RequestsService {
 
     const member = await this.prisma.member.findUniqueOrThrow({
       where: { id: auth.memberId },
-      select: { firstName: true, lastName: true, email: true },
+      select: {
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+        email: true,
+      },
     });
     const current = member[input.field];
     if (current === value) {
@@ -112,7 +118,7 @@ export class RequestsService {
       PERMISSIONS.MEMBERS_WRITE,
       {
         type: 'profile.change-requested',
-        subject: `${member.firstName} ${member.lastName} asked to change their ${REQUESTABLE_FIELDS[input.field].toLowerCase()}`,
+        subject: `${displayName(member)} asked to change their ${REQUESTABLE_FIELDS[input.field].toLowerCase()}`,
         body:
           `From "${current ?? 'blank'}" to "${value}".` +
           (input.reason?.trim() ? `\n\n"${input.reason.trim()}"` : '') +
@@ -131,7 +137,14 @@ export class RequestsService {
     return this.prisma.profileChangeRequest.findMany({
       where: { status: 'PENDING' },
       include: {
-        member: { select: { id: true, firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -181,11 +194,11 @@ export class RequestsService {
             email: { equals: value, mode: 'insensitive' },
             id: { not: request.memberId },
           },
-          select: { firstName: true, lastName: true },
+          select: { firstName: true, preferredFirstName: true, lastName: true },
         });
         if (taken) {
           throw new BadRequestException(
-            `${taken.firstName} ${taken.lastName} already has that address.`,
+            `${displayName(taken)} already has that address.`,
           );
         }
       }
@@ -260,7 +273,9 @@ export class RequestsService {
   listInvites() {
     return this.prisma.inviteCode.findMany({
       include: {
-        createdBy: { select: { firstName: true, lastName: true } },
+        createdBy: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
         _count: { select: { requests: true } },
       },
       orderBy: [{ closedAt: 'asc' }, { createdAt: 'desc' }],
@@ -307,7 +322,13 @@ export class RequestsService {
     firstName: string;
     lastName: string;
     email: string;
-    phone?: string;
+    preferredFirstName?: string;
+    personalEmail?: string;
+    cellPhone?: string;
+    homePhone?: string;
+    localAddress?: string;
+    homeAddress?: string;
+    dob?: string;
     note?: string;
   }) {
     const code = input.inviteCode.trim().toUpperCase();
@@ -344,7 +365,17 @@ export class RequestsService {
         firstName: input.firstName.trim(),
         lastName: input.lastName.trim(),
         email,
-        phone: input.phone?.trim() || null,
+        preferredFirstName: input.preferredFirstName?.trim() || null,
+        personalEmail: input.personalEmail?.trim()
+          ? normalizeEmail(input.personalEmail)
+          : null,
+        cellPhone: input.cellPhone?.trim() || null,
+        homePhone: input.homePhone?.trim() || null,
+        localAddress: input.localAddress?.trim() || null,
+        homeAddress: input.homeAddress?.trim() || null,
+        // Same handling as the roster's own form, so a date entered here and
+        // a date entered there land on the same day.
+        dob: input.dob ? new Date(input.dob) : null,
         note: input.note?.trim() || null,
       },
     });

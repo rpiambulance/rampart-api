@@ -49,7 +49,7 @@ export class ProfileReviewService {
         profileConfirmedAt: true,
         profileReviewNote: true,
         profileReviewRequestedBy: {
-          select: { firstName: true, lastName: true },
+          select: { firstName: true, preferredFirstName: true, lastName: true },
         },
       },
     });
@@ -84,7 +84,12 @@ export class ProfileReviewService {
   async requestFrom(auth: AuthContext, memberId: number, note?: string) {
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
-      select: { id: true, active: true, firstName: true },
+      select: {
+        id: true,
+        active: true,
+        firstName: true,
+        preferredFirstName: true,
+      },
     });
     if (!member) throw new NotFoundException('No such member');
 

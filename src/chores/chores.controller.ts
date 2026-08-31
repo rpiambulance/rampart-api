@@ -107,7 +107,14 @@ export class ChoresController {
   definitions() {
     return this.prisma.chore.findMany({
       include: {
-        assignee: { select: { id: true, firstName: true, lastName: true } },
+        assignee: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: [{ active: 'desc' }, { name: 'asc' }],
     });

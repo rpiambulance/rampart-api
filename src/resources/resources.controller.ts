@@ -100,7 +100,9 @@ export class ResourcesController {
     return this.prisma.resource.findMany({
       orderBy: [{ position: 'asc' }, { title: 'asc' }],
       include: {
-        createdBy: { select: { firstName: true, lastName: true } },
+        createdBy: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
       },
     });
   }

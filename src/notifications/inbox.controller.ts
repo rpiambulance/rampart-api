@@ -93,7 +93,9 @@ export class InboxController {
       orderBy: orderByFor(sort ?? saved?.inboxSort),
       take: 200,
       include: {
-        completedBy: { select: { firstName: true, lastName: true } },
+        completedBy: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
       },
     });
     // Naming the person only when it was somebody else. "Done by you" on your

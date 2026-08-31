@@ -35,7 +35,12 @@ export async function whosOnText(
       slots: {
         include: {
           member: {
-            select: { firstName: true, lastName: true, slackId: true },
+            select: {
+              firstName: true,
+              preferredFirstName: true,
+              lastName: true,
+              slackId: true,
+            },
           },
         },
       },

@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { FieldRequirement } from '../generated/prisma/enums';
 import type { Prisma } from '../generated/prisma/client';
+import { displayName } from '../common/name';
 
 /**
  * What a verification task is about, so that one officer's decision closes
@@ -123,7 +124,14 @@ export class CertificationsService {
       include: {
         type: true,
         documents: true,
-        member: { select: { id: true, firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -150,7 +158,13 @@ export class CertificationsService {
       include: {
         type: true,
         member: {
-          select: { id: true, firstName: true, lastName: true, email: true },
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+            email: true,
+          },
         },
       },
       orderBy: { expiresAt: 'asc' },
@@ -283,11 +297,9 @@ export class CertificationsService {
     if (created.status === 'PENDING_VERIFICATION') {
       const member = await this.prisma.member.findUnique({
         where: { id: memberId },
-        select: { firstName: true, lastName: true },
+        select: { firstName: true, preferredFirstName: true, lastName: true },
       });
-      const who = member
-        ? `${member.firstName} ${member.lastName}`
-        : `Member ${memberId}`;
+      const who = member ? displayName(member) : `Member ${memberId}`;
       await this.notifications.notifyPermissionHolders(
         PERMISSIONS.CERTS_VERIFY,
         {
@@ -1019,7 +1031,9 @@ export class CertificationsService {
             },
           },
         },
-        member: { select: { firstName: true, lastName: true } },
+        member: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
       },
     });
 
@@ -1077,7 +1091,7 @@ export class CertificationsService {
             id: cred.id,
             to: 'ACTIVE',
             memberId: cred.memberId,
-            memberName: `${cred.member.firstName} ${cred.member.lastName}`,
+            memberName: displayName(cred.member),
             credential: cred.type.name,
             missing: [],
           });
@@ -1136,7 +1150,7 @@ export class CertificationsService {
           id: cred.id,
           to: target,
           memberId: cred.memberId,
-          memberName: `${cred.member.firstName} ${cred.member.lastName}`,
+          memberName: displayName(cred.member),
           credential: cred.type.name,
           missing,
         });

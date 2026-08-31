@@ -13,6 +13,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { nyToday } from '../common/dates';
+import { displayName } from '../common/name';
 
 /**
  * Promotion workflow (spec §4.3): request → TC review → unanimous vote
@@ -55,7 +56,10 @@ export class PromotionsService {
     });
     const held = await this.graph.heldKeys(memberId);
     const open = await this.prisma.promotionRequest.findMany({
-      where: { memberId, status: { in: ['PENDING', 'IN_VOTE', 'TC_APPROVED'] } },
+      where: {
+        memberId,
+        status: { in: ['PENDING', 'IN_VOTE', 'TC_APPROVED'] },
+      },
       select: { credentialTypeId: true },
     });
     const openIds = new Set(open.map((r) => r.credentialTypeId));
@@ -114,9 +118,9 @@ export class PromotionsService {
     // find out who it is about.
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
-      select: { firstName: true, lastName: true },
+      select: { firstName: true, preferredFirstName: true, lastName: true },
     });
-    const who = member ? `${member.firstName} ${member.lastName}` : `Member ${memberId}`;
+    const who = member ? displayName(member) : `Member ${memberId}`;
     await this.notifications.notifyOfficerInboxes({
       type: 'promotion.requested',
       subject: `Promotion request: ${who} — ${match.name}`,
@@ -133,7 +137,14 @@ export class PromotionsService {
     return this.prisma.promotionRequest.findMany({
       where: status ? { status: status as never } : {},
       include: {
-        member: { select: { id: true, firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
         credentialType: true,
         votes: true,
         proxies: true,
@@ -147,18 +158,53 @@ export class PromotionsService {
     const request = await this.prisma.promotionRequest.findUnique({
       where: { id: requestId },
       include: {
-        member: { select: { id: true, firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
         credentialType: true,
         votes: {
           include: {
-            voter: { select: { id: true, firstName: true, lastName: true } },
-            proxyFor: { select: { id: true, firstName: true, lastName: true } },
+            voter: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
+            proxyFor: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
         proxies: {
           include: {
-            principal: { select: { id: true, firstName: true, lastName: true } },
-            proxy: { select: { id: true, firstName: true, lastName: true } },
+            principal: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
+            proxy: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
         captainApproval: true,
@@ -174,7 +220,14 @@ export class PromotionsService {
       where: { subjectId: request.memberId, status: 'SIGNED' },
       include: {
         template: { select: { id: true, name: true } },
-        evaluator: { select: { id: true, firstName: true, lastName: true } },
+        evaluator: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -186,7 +239,9 @@ export class PromotionsService {
   async appointProxy(principalId: number, requestId: number, proxyId: number) {
     const committee = await this.trainingCommittee();
     if (!committee.includes(principalId)) {
-      throw new ForbiddenException('Only Training Committee members appoint proxies');
+      throw new ForbiddenException(
+        'Only Training Committee members appoint proxies',
+      );
     }
     if (committee.includes(proxyId)) {
       throw new BadRequestException(
@@ -245,7 +300,9 @@ export class PromotionsService {
         );
       }
     } else {
-      throw new ForbiddenException('You are not eligible to vote on this request');
+      throw new ForbiddenException(
+        'You are not eligible to vote on this request',
+      );
     }
 
     const memberOfRecord = principalId ?? voterId;
@@ -288,7 +345,9 @@ export class PromotionsService {
       return { status: 'DENIED' };
     }
 
-    const covered = new Set(request.votes.map((v) => v.proxyForId ?? v.voterId));
+    const covered = new Set(
+      request.votes.map((v) => v.proxyForId ?? v.voterId),
+    );
     const unanimous =
       committee.length > 0 && committee.every((id) => covered.has(id));
     if (unanimous) {
@@ -307,7 +366,10 @@ export class PromotionsService {
       });
       return { status: 'TC_APPROVED' };
     }
-    return { status: 'IN_VOTE', votesRemaining: committee.length - covered.size };
+    return {
+      status: 'IN_VOTE',
+      votesRemaining: committee.length - covered.size,
+    };
   }
 
   /** Captain's final approval — grants the credential automatically. */
@@ -323,7 +385,9 @@ export class PromotionsService {
     });
     if (!request) throw new NotFoundException('Request not found');
     if (request.status !== 'TC_APPROVED') {
-      throw new BadRequestException('Request has not passed the Training Committee');
+      throw new BadRequestException(
+        'Request has not passed the Training Committee',
+      );
     }
 
     await this.prisma.promotionApproval.create({
@@ -341,9 +405,15 @@ export class PromotionsService {
         resolvedAt: new Date(),
       },
     });
-    await this.audit.log(auth, 'promotions.captain-decision', 'PromotionRequest', requestId, {
-      approved,
-    });
+    await this.audit.log(
+      auth,
+      'promotions.captain-decision',
+      'PromotionRequest',
+      requestId,
+      {
+        approved,
+      },
+    );
 
     if (approved) {
       await this.credentials.grant(
@@ -379,7 +449,14 @@ export class PromotionsService {
         certificationType: true,
         evalTemplate: true,
         class: true,
-        createdBy: { select: { id: true, firstName: true, lastName: true } },
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -407,7 +484,10 @@ export class PromotionsService {
       const requirement = await this.prisma.credentialRequirement.findUnique({
         where: { id: input.requirementId },
       });
-      if (!requirement || requirement.credentialTypeId !== input.credentialTypeId) {
+      if (
+        !requirement ||
+        requirement.credentialTypeId !== input.credentialTypeId
+      ) {
         throw new BadRequestException(
           'Requirement does not belong to that credential',
         );
@@ -416,7 +496,10 @@ export class PromotionsService {
       if (input.reqKind === 'CERTIFICATION' && !input.certificationTypeId) {
         throw new BadRequestException('certificationTypeId required');
       }
-      if (input.reqKind === 'EVALUATION_COUNT' && (!input.evalTemplateId || !input.count)) {
+      if (
+        input.reqKind === 'EVALUATION_COUNT' &&
+        (!input.evalTemplateId || !input.count)
+      ) {
         throw new BadRequestException('evalTemplateId and count required');
       }
       if (input.reqKind === 'CLASS' && !input.classId) {
@@ -443,7 +526,13 @@ export class PromotionsService {
         createdById: auth.memberId,
       },
     });
-    await this.audit.log(auth, 'promotions.adjustment.create', 'PromotionRequirementAdjustment', adjustment.id, input);
+    await this.audit.log(
+      auth,
+      'promotions.adjustment.create',
+      'PromotionRequirementAdjustment',
+      adjustment.id,
+      input,
+    );
     return adjustment;
   }
 
@@ -456,7 +545,13 @@ export class PromotionsService {
       where: { id: adjustmentId },
       data: { satisfiedAt: satisfied ? new Date() : null },
     });
-    await this.audit.log(auth, 'promotions.adjustment.satisfy', 'PromotionRequirementAdjustment', adjustmentId, { satisfied });
+    await this.audit.log(
+      auth,
+      'promotions.adjustment.satisfy',
+      'PromotionRequirementAdjustment',
+      adjustmentId,
+      { satisfied },
+    );
     return adjustment;
   }
 
@@ -464,7 +559,12 @@ export class PromotionsService {
     await this.prisma.promotionRequirementAdjustment.delete({
       where: { id: adjustmentId },
     });
-    await this.audit.log(auth, 'promotions.adjustment.remove', 'PromotionRequirementAdjustment', adjustmentId);
+    await this.audit.log(
+      auth,
+      'promotions.adjustment.remove',
+      'PromotionRequirementAdjustment',
+      adjustmentId,
+    );
     return { ok: true };
   }
 

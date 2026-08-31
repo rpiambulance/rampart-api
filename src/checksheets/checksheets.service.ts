@@ -18,6 +18,7 @@ import {
   type ItemShape,
   type SectionEntryInput,
 } from './checksheet-logic';
+import { displayName } from '../common/name';
 
 /** Warn this far ahead of an expiry unless the template says otherwise. */
 export const DEFAULT_EXPIRY_WARNING_DAYS = 30;
@@ -443,7 +444,7 @@ export class ChecksheetsService {
     const who = summary.by
       ? await this.prisma.member.findUnique({
           where: { id: summary.by },
-          select: { firstName: true, lastName: true },
+          select: { firstName: true, preferredFirstName: true, lastName: true },
         })
       : null;
 
@@ -462,7 +463,7 @@ export class ChecksheetsService {
       summary.shortfalls ? `: ${summary.shortfalls} short` : ''
     }`;
     const lines = [
-      `${who ? `${who.firstName} ${who.lastName}` : 'Somebody'} completed ${template.name}${asset ? ` for ${asset.name}` : ''}.`,
+      `${who ? displayName(who) : 'Somebody'} completed ${template.name}${asset ? ` for ${asset.name}` : ''}.`,
       summary.shortfalls
         ? `${summary.shortfalls} item${summary.shortfalls === 1 ? '' : 's'} short or missing.`
         : 'Everything present.',
@@ -653,7 +654,14 @@ export class ChecksheetsService {
       include: {
         template: { select: { id: true, name: true } },
         asset: { select: { id: true, name: true } },
-        completedBy: { select: { id: true, firstName: true, lastName: true } },
+        completedBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { completedAt: 'desc' },
       take: Math.min(filter.take ?? 100, 500),
@@ -666,7 +674,14 @@ export class ChecksheetsService {
       include: {
         template: { include: TEMPLATE_SHAPE },
         asset: true,
-        completedBy: { select: { id: true, firstName: true, lastName: true } },
+        completedBy: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
         entries: { include: { expiries: { orderBy: { position: 'asc' } } } },
       },
     });

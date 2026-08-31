@@ -13,6 +13,7 @@ import {
   type ConflictContext,
   type ConflictResolver,
 } from './conflicts';
+import { displayName } from '../common/name';
 
 /** Accepts either the Nest PrismaService or a bare client. */
 export type LegacyPrisma = PrismaClient;
@@ -295,7 +296,7 @@ export async function runLegacyMigration(
             if (!row) return null;
             return {
               id: row.id,
-              summary: `${row.firstName} ${row.lastName} <${row.email}>`,
+              summary: `${displayName(row)} <${row.email}>`,
               // A row already claimed by another legacy member must never be
               // re-pointed, or the earlier import would silently lose its record.
               linkable: row.legacyId === null,

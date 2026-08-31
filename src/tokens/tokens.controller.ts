@@ -9,12 +9,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { randomBytes, createHash } from 'crypto';
-import {
-  IsArray,
-  IsDateString,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+import { IsArray, IsDateString, IsOptional, IsString } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { AuditService } from '../audit/audit.service';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -55,7 +50,14 @@ export class TokensController {
         revokedAt: true,
         lastUsedAt: true,
         createdAt: true,
-        owner: { select: { id: true, firstName: true, lastName: true } },
+        owner: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -71,7 +73,9 @@ export class TokensController {
       (p) => !(ALL_PERMISSIONS as string[]).includes(p),
     );
     if (invalid.length) {
-      throw new ForbiddenException(`Unknown permissions: ${invalid.join(', ')}`);
+      throw new ForbiddenException(
+        `Unknown permissions: ${invalid.join(', ')}`,
+      );
     }
     const secret = `rpa_${randomBytes(32).toString('hex')}`;
     const token = await this.prisma.apiToken.create({
@@ -93,7 +97,10 @@ export class TokensController {
 
   @Delete(':id')
   @RequirePermissions(PERMISSIONS.TOKENS_MANAGE)
-  async revoke(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  async revoke(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     await this.prisma.apiToken.update({
       where: { id },
       data: { revokedAt: new Date() },

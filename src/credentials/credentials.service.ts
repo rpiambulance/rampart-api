@@ -15,6 +15,7 @@ import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { CredentialGraphService } from './credential-graph.service';
+import { displayName } from '../common/name';
 
 export const SDS_TITLE = 'Senior Duty Supervisor';
 
@@ -252,7 +253,14 @@ export class CredentialsService {
         status: { in: ['ACTIVE', 'SUSPENDED'] },
       },
       include: {
-        member: { select: { id: true, firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
     });
     const waived = new Set(
@@ -293,7 +301,7 @@ export class CredentialsService {
       });
       members.push({
         id: holder.memberId,
-        name: `${holder.member.firstName} ${holder.member.lastName}`,
+        name: displayName(holder.member),
         reason: !lapsed
           ? 'never held it'
           : lapsed.status !== 'VERIFIED'
@@ -777,6 +785,7 @@ export class CredentialsService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         credentials: {
           where: { status: 'ACTIVE' },
@@ -855,6 +864,7 @@ export class CredentialsService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         nineHundredNumber: true,
       },
@@ -875,9 +885,9 @@ export class CredentialsService {
         PERMISSIONS.MEMBERS_WRITE,
         {
           type: 'promotion.number',
-          subject: `900 number needed: ${member.firstName} ${member.lastName}`,
+          subject: `900 number needed: ${displayName(member)}`,
           body:
-            `${member.firstName} ${member.lastName} was cleared as ` +
+            `${displayName(member)} was cleared as ` +
             `${credentialKey.replace(/_/g, '-')} and has no 900 number yet.`,
           task: {
             actionLabel: 'Issue the number',

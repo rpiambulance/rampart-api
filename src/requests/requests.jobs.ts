@@ -4,6 +4,7 @@ import { AGENCY_TZ } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { displayName } from '../common/name';
 
 /**
  * One message a day about people asking for accounts.
@@ -27,7 +28,13 @@ export class RequestsJobs {
     const waiting = await this.prisma.accountRequest.findMany({
       where: { status: 'PENDING' },
       orderBy: { createdAt: 'asc' },
-      select: { firstName: true, lastName: true, email: true, createdAt: true },
+      select: {
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+        email: true,
+        createdAt: true,
+      },
     });
     if (!waiting.length) return;
 
@@ -35,7 +42,7 @@ export class RequestsJobs {
     const fresh = waiting.filter((row) => row.createdAt >= since).length;
     const lines = waiting
       .slice(0, 20)
-      .map((row) => `• ${row.firstName} ${row.lastName} — ${row.email}`);
+      .map((row) => `• ${displayName(row)} — ${row.email}`);
     if (waiting.length > lines.length) {
       lines.push(`…and ${waiting.length - lines.length} more.`);
     }

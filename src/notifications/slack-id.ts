@@ -1,3 +1,4 @@
+import { displayName } from '../common/name';
 /**
  * Telling a Slack user ID from something that merely names a Slack user.
  *
@@ -27,5 +28,5 @@ export function mentionFor(member: {
 }): string {
   return looksLikeSlackId(member.slackId)
     ? `<@${member.slackId!.trim()}>`
-    : `${member.firstName} ${member.lastName}`;
+    : displayName(member);
 }

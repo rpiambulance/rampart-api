@@ -24,6 +24,7 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { displayName } from '../common/name';
 
 class FuelEntryDto {
   @IsDateString()
@@ -139,7 +140,14 @@ export class OpsController {
   fuelEntries(@Query('limit') limit?: string) {
     return this.prisma.fuelLogEntry.findMany({
       include: {
-        member: { select: { id: true, firstName: true, lastName: true } },
+        member: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { loggedAt: 'desc' },
       take: limit ? Number(limit) : 100,
@@ -191,7 +199,10 @@ export class OpsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: PatchVehicleDto,
   ) {
-    const vehicle = await this.prisma.vehicle.update({ where: { id }, data: body });
+    const vehicle = await this.prisma.vehicle.update({
+      where: { id },
+      data: body,
+    });
     await this.audit.log(auth, 'vehicles.update', 'Vehicle', id, body);
     return vehicle;
   }
@@ -205,7 +216,14 @@ export class OpsController {
         assignments: {
           where: { returnedAt: null },
           include: {
-            member: { select: { id: true, firstName: true, lastName: true } },
+            member: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
         },
       },
@@ -233,7 +251,12 @@ export class OpsController {
     const assignment = await this.prisma.radioAssignment.create({
       data: { radioId, memberId },
     });
-    await this.audit.log(auth, 'radios.issue', 'RadioAssignment', assignment.id);
+    await this.audit.log(
+      auth,
+      'radios.issue',
+      'RadioAssignment',
+      assignment.id,
+    );
     return assignment;
   }
 
@@ -271,12 +294,15 @@ export class OpsController {
     const members = memberIds.length
       ? await this.prisma.member.findMany({
           where: { id: { in: memberIds } },
-          select: { id: true, firstName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
         })
       : [];
-    const names = new Map(
-      members.map((m) => [m.id, `${m.firstName} ${m.lastName}`]),
-    );
+    const names = new Map(members.map((m) => [m.id, displayName(m)]));
     return entries.map((e) => ({
       ...e,
       id: String(e.id), // BigInt is not JSON-serializable

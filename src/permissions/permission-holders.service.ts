@@ -51,7 +51,12 @@ export class PermissionHoldersService {
     if (!ids.size) return [];
     return this.prisma.member.findMany({
       where: { id: { in: [...ids] }, active: true },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
   }
