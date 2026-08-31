@@ -41,6 +41,21 @@ class InboxSortDto {
   sort!: string;
 }
 
+/**
+ * What still wants reading.
+ *
+ * A task somebody else finished is not unread work — it is a receipt. Tasks
+ * sent to everyone who could do a thing are closed for all of them the
+ * moment one of them acts, and counting those against the people who never
+ * had to touch it leaves a badge nobody can clear by doing anything.
+ *
+ * Kept in one place because the count and the filter have to agree: a badge
+ * saying three over a list showing five is worse than either number alone.
+ */
+function unreadWhere(memberId: number) {
+  return { memberId, readAt: null, completedAt: null };
+}
+
 function requireMember(auth: AuthContext): number {
   if (auth.kind !== 'member') {
     throw new ForbiddenException('This endpoint requires a member session');
@@ -64,7 +79,7 @@ export class InboxController {
       filter === 'tasks'
         ? { memberId, isTask: true, completedAt: null }
         : filter === 'unread'
-          ? { memberId, readAt: null }
+          ? unreadWhere(memberId)
           : { memberId };
     // A sort in the query wins for this one request — that is the member
     // trying an order out — while the saved preference is what they get on
@@ -127,7 +142,7 @@ export class InboxController {
   async summary(@CurrentAuth() auth: AuthContext) {
     const memberId = requireMember(auth);
     const [unread, tasks] = await Promise.all([
-      this.prisma.inboxMessage.count({ where: { memberId, readAt: null } }),
+      this.prisma.inboxMessage.count({ where: unreadWhere(memberId) }),
       this.prisma.inboxMessage.count({
         where: { memberId, isTask: true, completedAt: null },
       }),
