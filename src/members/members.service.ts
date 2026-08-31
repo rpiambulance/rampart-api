@@ -29,6 +29,7 @@ export class MembersService {
       select: {
         id: true,
         firstName: true,
+        preferredFirstName: true,
         lastName: true,
         email: true,
         cellPhone: true,
@@ -311,6 +312,7 @@ export class MembersService {
       localAddress: string;
       homeAddress: string;
       navLayout: string;
+      preferredFirstName: string;
       eventView: string;
       timeFormat: string;
       rcsId: string;

@@ -85,6 +85,30 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'account.requested',
+    label: 'People waiting for accounts',
+    description:
+      'A daily summary of account requests from the invite-code portal. Sent ' +
+      'once a day rather than once per request.',
+    audience: 'officers',
+    defaults: { email: true, slack: true },
+  },
+  {
+    key: 'profile.change-requested',
+    label: 'A member asked to change a locked detail',
+    description:
+      'Somebody has asked an officer to change their name or portal email.',
+    audience: 'officers',
+    defaults: { email: false, slack: true },
+  },
+  {
+    key: 'profile.change-decided',
+    label: 'Your requested change was decided',
+    description: 'An officer approved or declined a change you asked for.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'member.unlinked-login',
     label: 'Somebody signed in with no member record',
     description:

@@ -1,0 +1,402 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomBytes } from 'crypto';
+import { AuditService } from '../audit/audit.service';
+import type { AuthContext } from '../auth/auth-context';
+import { normalizeEmail } from '../common/email';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PERMISSIONS } from '../permissions/catalog';
+import { PrismaService } from '../prisma/prisma.service';
+
+/**
+ * The profile fields a member cannot change for themselves.
+ *
+ * Name and portal email are identity: the email is what a login is matched
+ * on, and a member editing it would lock themselves out. Locked is not the
+ * same as unchangeable though — people marry, and "email an officer" is a
+ * worse process than one that leaves a record.
+ */
+export const REQUESTABLE_FIELDS = {
+  firstName: 'Legal first name',
+  lastName: 'Last name',
+  email: 'Portal email',
+} as const;
+
+export type RequestableField = keyof typeof REQUESTABLE_FIELDS;
+
+export function isRequestableField(value: string): value is RequestableField {
+  return value in REQUESTABLE_FIELDS;
+}
+
+/** Unambiguous by eye and by phone: no O/0, I/1, or similar. */
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function generateInviteCode(bytes = randomBytes(8)): string {
+  return [...bytes]
+    .map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length])
+    .join('');
+}
+
+/** Why an invite code is not usable, or null when it is. */
+export function inviteProblem(
+  invite: {
+    closedAt: Date | null;
+    expiresAt: Date | null;
+    maxUses: number | null;
+    uses: number;
+  } | null,
+  now = new Date(),
+): string | null {
+  if (!invite) return 'That invite code is not one of ours.';
+  if (invite.closedAt) return 'That invite code has been closed.';
+  if (invite.expiresAt && invite.expiresAt < now) {
+    return 'That invite code has expired.';
+  }
+  if (invite.maxUses !== null && invite.uses >= invite.maxUses) {
+    return 'That invite code has been used as many times as it allows.';
+  }
+  return null;
+}
+
+@Injectable()
+export class RequestsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // ------------------------------------------------- profile change requests
+
+  async requestProfileChange(
+    auth: AuthContext,
+    input: { field: string; requestedValue: string; reason?: string },
+  ) {
+    if (auth.kind !== 'member') {
+      throw new ForbiddenException('This endpoint requires a member session');
+    }
+    if (!isRequestableField(input.field)) {
+      throw new BadRequestException(
+        `${input.field} is not a field you have to ask about.`,
+      );
+    }
+    const value = input.requestedValue.trim();
+    if (!value) throw new BadRequestException('Say what it should be.');
+
+    const member = await this.prisma.member.findUniqueOrThrow({
+      where: { id: auth.memberId },
+      select: { firstName: true, lastName: true, email: true },
+    });
+    const current = member[input.field];
+    if (current === value) {
+      throw new BadRequestException(
+        `That is already your ${REQUESTABLE_FIELDS[input.field].toLowerCase()}.`,
+      );
+    }
+
+    const request = await this.prisma.profileChangeRequest.create({
+      data: {
+        memberId: auth.memberId,
+        field: input.field,
+        currentValue: current,
+        requestedValue: value,
+        reason: input.reason?.trim() || null,
+      },
+    });
+
+    await this.notifications.notifyPermissionHolders(
+      PERMISSIONS.MEMBERS_WRITE,
+      {
+        type: 'profile.change-requested',
+        subject: `${member.firstName} ${member.lastName} asked to change their ${REQUESTABLE_FIELDS[input.field].toLowerCase()}`,
+        body:
+          `From "${current ?? 'blank'}" to "${value}".` +
+          (input.reason?.trim() ? `\n\n"${input.reason.trim()}"` : '') +
+          '\n\nWhoever deals with it closes this for everyone.',
+        task: {
+          actionLabel: 'Review the request',
+          actionUrl: '/admin/members/requests',
+        },
+        about: { type: 'ProfileChangeRequest', id: request.id },
+      },
+    );
+    return request;
+  }
+
+  pendingProfileChanges() {
+    return this.prisma.profileChangeRequest.findMany({
+      where: { status: 'PENDING' },
+      include: {
+        member: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  myProfileChanges(memberId: number) {
+    return this.prisma.profileChangeRequest.findMany({
+      where: { memberId },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+  }
+
+  /**
+   * Approving applies the change; declining explains why.
+   *
+   * The value is re-read from the request rather than resent by the client,
+   * so what is applied is what was asked for and reviewed.
+   */
+  async decideProfileChange(
+    auth: AuthContext,
+    id: number,
+    approve: boolean,
+    note?: string,
+  ) {
+    const request = await this.prisma.profileChangeRequest.findUnique({
+      where: { id },
+    });
+    if (!request) throw new NotFoundException('No such request');
+    if (request.status !== 'PENDING') {
+      throw new BadRequestException('That one has already been decided.');
+    }
+    if (!isRequestableField(request.field)) {
+      throw new BadRequestException('That request names a field nobody edits.');
+    }
+
+    if (approve) {
+      const value =
+        request.field === 'email'
+          ? normalizeEmail(request.requestedValue)
+          : request.requestedValue;
+      // The email is unique and is what a login matches on, so a clash has to
+      // be a refusal rather than a constraint violation at the far end.
+      if (request.field === 'email') {
+        const taken = await this.prisma.member.findFirst({
+          where: {
+            email: { equals: value, mode: 'insensitive' },
+            id: { not: request.memberId },
+          },
+          select: { firstName: true, lastName: true },
+        });
+        if (taken) {
+          throw new BadRequestException(
+            `${taken.firstName} ${taken.lastName} already has that address.`,
+          );
+        }
+      }
+      await this.prisma.member.update({
+        where: { id: request.memberId },
+        data: { [request.field]: value },
+      });
+    }
+
+    const decidedById = auth.kind === 'member' ? auth.memberId : null;
+    const updated = await this.prisma.profileChangeRequest.update({
+      where: { id },
+      data: {
+        status: approve ? 'APPROVED' : 'DECLINED',
+        decidedAt: new Date(),
+        decidedById,
+        decisionNote: note?.trim() || null,
+      },
+    });
+    await this.notifications.completeTasksAbout(
+      { type: 'ProfileChangeRequest', id },
+      decidedById,
+    );
+    await this.notifications.notify(request.memberId, {
+      type: 'profile.change-decided',
+      subject: approve
+        ? `Your ${REQUESTABLE_FIELDS[request.field].toLowerCase()} has been changed`
+        : `Your request to change your ${REQUESTABLE_FIELDS[request.field].toLowerCase()} was declined`,
+      body: approve
+        ? `It is now "${request.requestedValue}".` +
+          (request.field === 'email'
+            ? ' Sign in with the new address from now on.'
+            : '')
+        : `It stays "${request.currentValue ?? 'blank'}".` +
+          (note?.trim() ? `\n\n"${note.trim()}"` : ''),
+    });
+    await this.audit.log(
+      auth,
+      'members.profile-change.decide',
+      'Member',
+      request.memberId,
+      {
+        field: request.field,
+        approve,
+      },
+    );
+    return updated;
+  }
+
+  // ------------------------------------------------------------ invite codes
+
+  async createInvite(
+    auth: AuthContext,
+    input: { label?: string; maxUses?: number; expiresAt?: string },
+  ) {
+    const invite = await this.prisma.inviteCode.create({
+      data: {
+        code: generateInviteCode(),
+        label: input.label?.trim() || null,
+        maxUses: input.maxUses ?? null,
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+        createdById: auth.kind === 'member' ? auth.memberId : null,
+      },
+    });
+    await this.audit.log(auth, 'invites.create', 'InviteCode', undefined, {
+      code: invite.code,
+      label: invite.label,
+    });
+    return invite;
+  }
+
+  listInvites() {
+    return this.prisma.inviteCode.findMany({
+      include: {
+        createdBy: { select: { firstName: true, lastName: true } },
+        _count: { select: { requests: true } },
+      },
+      orderBy: [{ closedAt: 'asc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async closeInvite(auth: AuthContext, code: string) {
+    const invite = await this.prisma.inviteCode.findUnique({ where: { code } });
+    if (!invite) throw new NotFoundException('No such invite code');
+    if (invite.closedAt) return invite;
+    const updated = await this.prisma.inviteCode.update({
+      where: { code },
+      data: {
+        closedAt: new Date(),
+        closedById: auth.kind === 'member' ? auth.memberId : null,
+      },
+    });
+    await this.audit.log(auth, 'invites.close', 'InviteCode', undefined, {
+      code,
+    });
+    return updated;
+  }
+
+  /** Whether a code will be accepted, without spending it. */
+  async checkInvite(code: string) {
+    const invite = await this.prisma.inviteCode.findUnique({
+      where: { code: code.trim().toUpperCase() },
+    });
+    const problem = inviteProblem(invite);
+    return { ok: !problem, problem, label: invite?.label ?? null };
+  }
+
+  // -------------------------------------------------------- account requests
+
+  /**
+   * Somebody asking to be let in.
+   *
+   * Public, and the only unauthenticated way to reach the roster — so the
+   * code is checked, spent, and the request recorded, but nobody is notified
+   * here. That happens once a day; see RequestsJobs.
+   */
+  async requestAccount(input: {
+    inviteCode: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string;
+    note?: string;
+  }) {
+    const code = input.inviteCode.trim().toUpperCase();
+    const invite = await this.prisma.inviteCode.findUnique({ where: { code } });
+    const problem = inviteProblem(invite);
+    if (problem) throw new BadRequestException(problem);
+
+    const email = normalizeEmail(input.email);
+    const existingMember = await this.prisma.member.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (existingMember) {
+      throw new BadRequestException(
+        'There is already an account for that email address. Try signing in, ' +
+          'or ask an officer if you cannot get in.',
+      );
+    }
+    const alreadyAsked = await this.prisma.accountRequest.findFirst({
+      where: {
+        email: { equals: email, mode: 'insensitive' },
+        status: 'PENDING',
+      },
+    });
+    if (alreadyAsked) {
+      throw new BadRequestException(
+        'We already have a request from that address waiting to be looked at.',
+      );
+    }
+
+    const request = await this.prisma.accountRequest.create({
+      data: {
+        inviteCode: code,
+        firstName: input.firstName.trim(),
+        lastName: input.lastName.trim(),
+        email,
+        phone: input.phone?.trim() || null,
+        note: input.note?.trim() || null,
+      },
+    });
+    await this.prisma.inviteCode.update({
+      where: { code },
+      data: { uses: { increment: 1 } },
+    });
+    return { id: request.id };
+  }
+
+  pendingAccountRequests() {
+    return this.prisma.accountRequest.findMany({
+      where: { status: 'PENDING' },
+      include: { invite: { select: { code: true, label: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Declining, or recording that a member was made from it. */
+  async decideAccountRequest(
+    auth: AuthContext,
+    id: number,
+    approve: boolean,
+    opts: { memberId?: number; note?: string } = {},
+  ) {
+    const request = await this.prisma.accountRequest.findUnique({
+      where: { id },
+    });
+    if (!request) throw new NotFoundException('No such request');
+    if (request.status !== 'PENDING') {
+      throw new BadRequestException('That one has already been decided.');
+    }
+    const updated = await this.prisma.accountRequest.update({
+      where: { id },
+      data: {
+        status: approve ? 'APPROVED' : 'DECLINED',
+        decidedAt: new Date(),
+        decidedById: auth.kind === 'member' ? auth.memberId : null,
+        decisionNote: opts.note?.trim() || null,
+        memberId: opts.memberId ?? null,
+      },
+    });
+    await this.audit.log(
+      auth,
+      'account-requests.decide',
+      'AccountRequest',
+      id,
+      {
+        approve,
+        memberId: opts.memberId,
+      },
+    );
+    return updated;
+  }
+}

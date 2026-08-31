@@ -44,6 +44,16 @@ class ProfileReviewRequestDto {
 }
 
 class SelfEditDto {
+  /**
+   * What they would rather be called. Editable by the member, unlike the
+   * legal first name beside it — being called the right thing is not a
+   * matter for an officer.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  preferredFirstName?: string;
+
   @IsOptional()
   @IsIn(['sidebar', 'topnav'])
   navLayout?: 'sidebar' | 'topnav';

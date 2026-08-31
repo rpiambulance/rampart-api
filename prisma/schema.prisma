@@ -19,7 +19,13 @@ model Member {
   id              Int       @id @default(autoincrement())
   legacyId        Int?      @unique // members.id from the old MySQL portal
   keycloakSubject String?   @unique
+  /// The legal first name: what is on the licence and the certification
+  /// card, and what the agency is obliged to record. Only an officer changes
+  /// it, because it is identity.
   firstName       String
+  /// What they would rather be called. Theirs to set, and what the portal
+  /// shows wherever a name is shown to people rather than to a registry.
+  preferredFirstName String?
   lastName        String
   dob             DateTime? @db.Date
   email           String    @unique
@@ -68,6 +74,12 @@ model Member {
   inboxTasksCompleted    InboxMessage[]    @relation("InboxCompletedBy")
   evalAttachments        EvalAttachment[]  @relation("EvalAttachmentUploader")
   unlinkedLoginsResolved UnlinkedLogin[]   @relation("UnlinkedLoginResolver")
+  profileChangesAsked    ProfileChangeRequest[] @relation("ProfileChangeSubject")
+  profileChangesDecided  ProfileChangeRequest[] @relation("ProfileChangeDecider")
+  inviteCodesCreated     InviteCode[]     @relation("InviteCodeCreator")
+  inviteCodesClosed      InviteCode[]     @relation("InviteCodeCloser")
+  accountRequestsDecided AccountRequest[] @relation("AccountRequestDecider")
+  accountRequestMember   AccountRequest[] @relation("AccountRequestMember")
   profileReviewsRequested Member[]         @relation("ProfileReviewRequestedBy")
   profileReviewRequestedBy Member?         @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
   resourcesCreated       Resource[]        @relation("ResourceCreator")
@@ -1714,4 +1726,82 @@ model UnlinkedLogin {
   resolvedBy Member? @relation("UnlinkedLoginResolver", fields: [resolvedById], references: [id])
 
   @@index([resolvedAt])
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+/// A member asking for one of the fields only an officer can change.
+///
+/// Name and portal email are locked on the profile page because they are
+/// identity — the email is what a login is matched on. Locked is not the
+/// same as unchangeable, though, and "email an officer" is a worse process
+/// than one that leaves a record.
+model ProfileChangeRequest {
+  id             Int           @id @default(autoincrement())
+  memberId       Int
+  field          String
+  currentValue   String?
+  requestedValue String
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  createdAt      DateTime      @default(now())
+  decidedAt      DateTime?
+  decidedById    Int?
+  decisionNote   String?
+
+  member    Member  @relation("ProfileChangeSubject", fields: [memberId], references: [id], onDelete: Cascade)
+  decidedBy Member? @relation("ProfileChangeDecider", fields: [decidedById], references: [id])
+
+  @@index([status])
+  @@index([memberId])
+}
+
+/// A code that lets somebody outside the agency ask for an account.
+///
+/// The portal is otherwise closed: there is no self-registration, and this is
+/// the controlled way in — handed out at an open house or on a recruiting
+/// poster, and closable the moment it has served its purpose.
+model InviteCode {
+  code        String    @id
+  label       String?
+  createdById Int?
+  createdAt   DateTime  @default(now())
+  /// Closed by hand, or by running out of time or uses.
+  closedAt    DateTime?
+  closedById  Int?
+  expiresAt   DateTime?
+  maxUses     Int?
+  uses        Int       @default(0)
+
+  createdBy Member?          @relation("InviteCodeCreator", fields: [createdById], references: [id])
+  closedBy  Member?          @relation("InviteCodeCloser", fields: [closedById], references: [id])
+  requests  AccountRequest[]
+}
+
+/// Somebody asking to be let in, from the invite-code portal.
+model AccountRequest {
+  id           Int           @id @default(autoincrement())
+  inviteCode   String?
+  firstName    String
+  lastName     String
+  email        String
+  phone        String?
+  note         String?
+  status       RequestStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+  decidedAt    DateTime?
+  decidedById  Int?
+  decisionNote String?
+  /// The member created from it, once approved.
+  memberId     Int?
+
+  invite    InviteCode? @relation(fields: [inviteCode], references: [code])
+  decidedBy Member?     @relation("AccountRequestDecider", fields: [decidedById], references: [id])
+  member    Member?     @relation("AccountRequestMember", fields: [memberId], references: [id])
+
+  @@index([status])
 }

@@ -24,6 +24,9 @@ import { DialertController } from './integrations/dialert.controller';
 import { ChecksheetsController } from './checksheets/checksheets.controller';
 import { ChecksheetsJobs } from './checksheets/checksheets.jobs';
 import { ChecksheetsService } from './checksheets/checksheets.service';
+import { RequestsController } from './requests/requests.controller';
+import { RequestsJobs } from './requests/requests.jobs';
+import { RequestsService } from './requests/requests.service';
 import { ResourcesController } from './resources/resources.controller';
 import { DispatchesController } from './dispatches/dispatches.controller';
 import {
@@ -75,6 +78,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     CoverageController,
     DialertController,
     ResourcesController,
+    RequestsController,
     ChecksheetsController,
     DispatchesController,
     LegacyMigrationController,
@@ -95,6 +99,8 @@ import { TrainingsModule } from './trainings/trainings.module';
     PermissionsGuard,
     BootstrapService,
     ChecksheetsService,
+    RequestsService,
+    RequestsJobs,
     ChecksheetsJobs,
     LegacyMigrationRunner,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
