@@ -61,6 +61,10 @@ export const PERMISSIONS = {
   /** Read completed checksheets, the open deficiencies and the expiry
    *  report. Everyone can always read back their own. */
   CHECKSHEETS_READ_ALL: 'checksheets:read-all',
+  /** Hand out and revoke the links that open a Headsup display, and clear
+   *  the counters on the board. Writing on the board needs nothing: it is a
+   *  whiteboard, and anybody on duty may write on it. */
+  HEADSUP_MANAGE: 'headsup:manage',
   SYSTEM_MIGRATE_LEGACY: 'system:migrate-legacy',
 } as const;
 

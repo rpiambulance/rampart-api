@@ -132,11 +132,13 @@ export class MembersService {
     auth: AuthContext,
     data: {
       firstName: string;
+      preferredFirstName?: string;
       lastName: string;
       email: string;
       dob: string;
       personalEmail?: string;
       cellPhone?: string;
+      homePhone?: string;
       localAddress?: string;
       homeAddress?: string;
       rcsId?: string;

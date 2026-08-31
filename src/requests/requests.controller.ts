@@ -47,10 +47,23 @@ class DecisionDto {
   @MaxLength(1000)
   note?: string;
 
-  /** Account requests only: the member created from it. */
+  /**
+   * Account requests only: an existing member to link it to, instead of
+   * creating one. Left out, approving makes the member from the request.
+   */
   @IsOptional()
   @IsInt()
   memberId?: number;
+
+  /** Supplied when the request itself carried no date of birth. */
+  @IsOptional()
+  @IsDateString()
+  dob?: string;
+
+  /** Answers a warning that the name is already on the roster. */
+  @IsOptional()
+  @IsBoolean()
+  confirmDuplicateName?: boolean;
 }
 
 class InviteDto {
@@ -237,6 +250,8 @@ export class RequestsController {
     return this.requests.decideAccountRequest(auth, id, body.approve, {
       memberId: body.memberId,
       note: body.note,
+      dob: body.dob,
+      confirmDuplicateName: body.confirmDuplicateName,
     });
   }
 }

@@ -2324,5 +2324,243 @@ describe('Night crews engine (e2e)', () => {
       await prisma.accountRequest.deleteMany({ where: { email } });
       await prisma.inviteCode.delete({ where: { code } });
     });
+
+    // The whole point of asking for the details on the form: approving is
+    // supposed to end with a member, not with an officer retyping them.
+    it('creates the member from the request when approved', async () => {
+      const code = `E2EA${stamp}`.slice(0, 20).toUpperCase();
+      await prisma.inviteCode.create({ data: { code, maxUses: 1 } });
+      const email = `joins-${stamp}@example.com`;
+      await request(app.getHttpServer())
+        .post('/v1/requests/account')
+        .send({
+          inviteCode: code,
+          firstName: 'Daniel',
+          preferredFirstName: 'Alex',
+          lastName: `Test${stamp}`,
+          email,
+          cellPhone: '518-555-0101',
+          homePhone: '518-555-0102',
+          personalEmail: `alex-${stamp}@example.com`,
+          localAddress: '110 8th St',
+          homeAddress: '1 Elsewhere Ave',
+          dob: '2004-03-09',
+        })
+        .expect(201);
+      const asked = await prisma.accountRequest.findFirstOrThrow({
+        where: { email },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/requests/account/${asked.id}/decide`)
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .send({ approve: true })
+        .expect(201);
+
+      const madeId = (res.body as { memberId: number }).memberId;
+      expect(madeId).toBeTruthy();
+      const made = await prisma.member.findUniqueOrThrow({
+        where: { id: madeId },
+      });
+      // Every field they filled in survives the trip.
+      expect(made).toMatchObject({
+        firstName: 'Daniel',
+        preferredFirstName: 'Alex',
+        email,
+        personalEmail: `alex-${stamp}@example.com`,
+        homePhone: '518-555-0102',
+        localAddress: '110 8th St',
+        homeAddress: '1 Elsewhere Ave',
+      });
+      expect(made.dob?.toISOString().slice(0, 10)).toBe('2004-03-09');
+
+      await prisma.memberCredential.deleteMany({ where: { memberId: madeId } });
+      await prisma.accountRequest.deleteMany({ where: { email } });
+      await prisma.member.delete({ where: { id: madeId } });
+      await prisma.inviteCode.delete({ where: { code } });
+    });
+
+    it('refuses to invent a date of birth it was never given', async () => {
+      const code = `E2ED${stamp}`.slice(0, 20).toUpperCase();
+      await prisma.inviteCode.create({ data: { code, maxUses: 1 } });
+      const email = `nodob-${stamp}@example.com`;
+      await request(app.getHttpServer())
+        .post('/v1/requests/account')
+        .send({
+          inviteCode: code,
+          firstName: 'Sam',
+          lastName: `Test${stamp}`,
+          email,
+        })
+        .expect(201);
+      const asked = await prisma.accountRequest.findFirstOrThrow({
+        where: { email },
+      });
+
+      const refused = await request(app.getHttpServer())
+        .post(`/v1/requests/account/${asked.id}/decide`)
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .send({ approve: true })
+        .expect(400);
+      expect(refused.body.message).toContain('date of birth');
+      // Still pending, so the officer can answer and try again.
+      expect(
+        (await prisma.accountRequest.findUniqueOrThrow({ where: { id: asked.id } }))
+          .status,
+      ).toBe('PENDING');
+
+      const ok = await request(app.getHttpServer())
+        .post(`/v1/requests/account/${asked.id}/decide`)
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .send({ approve: true, dob: '2003-01-15' })
+        .expect(201);
+      const madeId = (ok.body as { memberId: number }).memberId;
+      expect(
+        (await prisma.member.findUniqueOrThrow({ where: { id: madeId } })).dob
+          ?.toISOString()
+          .slice(0, 10),
+      ).toBe('2003-01-15');
+
+      await prisma.memberCredential.deleteMany({ where: { memberId: madeId } });
+      await prisma.accountRequest.deleteMany({ where: { email } });
+      await prisma.member.delete({ where: { id: madeId } });
+      await prisma.inviteCode.delete({ where: { code } });
+    });
+  });
+
+  describe('the station whiteboard', () => {
+    // A display is a television, not a person: the token in its URL is the
+    // whole credential, so what that token does and does not open is the
+    // security boundary worth testing.
+    it('opens the board with a live link and nothing without one', async () => {
+      const made = await prisma.headsupLink.create({
+        data: { token: `tok${stamp}`, label: 'Bay screen' },
+      });
+
+      await request(app.getHttpServer()).get('/v1/headsup/board').expect(403);
+      await request(app.getHttpServer())
+        .get('/v1/headsup/board?token=nonsense')
+        .expect(403);
+      const ok = await request(app.getHttpServer())
+        .get(`/v1/headsup/board?token=${made.token}`)
+        .expect(200);
+      expect(ok.body.crew).toHaveLength(5);
+      expect(ok.body).toHaveProperty('calls');
+      expect(ok.body).toHaveProperty('notes');
+
+      // Revoking darkens that screen and only that screen.
+      await prisma.headsupLink.update({
+        where: { id: made.id },
+        data: { revokedAt: new Date() },
+      });
+      await request(app.getHttpServer())
+        .get(`/v1/headsup/board?token=${made.token}`)
+        .expect(403);
+      await prisma.headsupLink.delete({ where: { id: made.id } });
+    });
+
+    it('lets anybody signed in write on it, and records who', async () => {
+      const posted = await request(app.getHttpServer())
+        .post('/v1/headsup/notes')
+        .set(as(bob))
+        .send({ body: `Fridge is broken ${stamp}` })
+        .expect(201);
+      const id = posted.body.id;
+      expect(posted.body.createdById).toBe(bob);
+
+      const link = await prisma.headsupLink.create({
+        data: { token: `tok2${stamp}` },
+      });
+      const board = await request(app.getHttpServer())
+        .get(`/v1/headsup/board?token=${link.token}`)
+        .expect(200);
+      expect(
+        (board.body.notes as Array<{ body: string }>).some((n) =>
+          n.body.includes(`Fridge is broken ${stamp}`),
+        ),
+      ).toBe(true);
+
+      // Taking it down leaves a record rather than a hole.
+      await request(app.getHttpServer())
+        .delete(`/v1/headsup/notes/${id}`)
+        .set(as(alice))
+        .expect(200);
+      const gone = await prisma.headsupNote.findUniqueOrThrow({ where: { id } });
+      expect(gone.removedAt).not.toBeNull();
+      expect(gone.removedById).toBe(alice);
+
+      await prisma.headsupNote.delete({ where: { id } });
+      await prisma.headsupLink.delete({ where: { id: link.id } });
+    });
+
+    // The point of a reset that keeps its data: the number starts again, and
+    // what it counted is still there to be counted from another point.
+    it('starts a counter again without losing what it counted', async () => {
+      const before = await prisma.dispatchMishap.count({
+        where: { removedAt: null },
+      });
+      await request(app.getHttpServer())
+        .post('/v1/headsup/mishaps')
+        .set(as(bob))
+        .send({ note: `Sent us to the wrong campus ${stamp}` })
+        .expect(201);
+
+      const counted = await request(app.getHttpServer())
+        .get('/v1/headsup/counters')
+        .set(as(bob))
+        .expect(200);
+      expect(counted.body.mishaps).toBeGreaterThan(0);
+
+      // Clearing needs the permission; writing on the board does not.
+      await request(app.getHttpServer())
+        .post('/v1/headsup/counters/mishaps/reset')
+        .set(as(bob))
+        .set('x-test-permissions', '')
+        .expect(403);
+
+      const reset = await request(app.getHttpServer())
+        .post('/v1/headsup/counters/mishaps/reset')
+        .set(as(alice))
+        .set('x-test-permissions', 'headsup:manage')
+        .expect(201);
+      expect(reset.body.previousCount).toBe(counted.body.mishaps);
+
+      const after = await request(app.getHttpServer())
+        .get('/v1/headsup/counters')
+        .set(as(bob))
+        .expect(200);
+      expect(after.body.mishaps).toBe(0);
+
+      // Nothing was deleted to get that zero.
+      expect(
+        await prisma.dispatchMishap.count({ where: { removedAt: null } }),
+      ).toBe(before + 1);
+
+      await prisma.dispatchMishap.deleteMany({
+        where: { note: { contains: String(stamp) } },
+      });
+      await prisma.headsupCounterReset.deleteMany({
+        where: { counter: 'mishaps' },
+      });
+    });
+
+    it('keeps the display links to those who may hand them out', async () => {
+      await request(app.getHttpServer())
+        .get('/v1/headsup/links')
+        .set(as(bob))
+        .set('x-test-permissions', '')
+        .expect(403);
+      const made = await request(app.getHttpServer())
+        .post('/v1/headsup/links')
+        .set(as(alice))
+        .set('x-test-permissions', 'headsup:manage')
+        .send({ label: `Bay ${stamp}` })
+        .expect(201);
+      expect(made.body.token).toMatch(/^[a-z2-9]{24}$/);
+      await prisma.headsupLink.delete({ where: { id: made.body.id } });
+    });
   });
 });

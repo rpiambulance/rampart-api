@@ -13,6 +13,7 @@ import { isDateOnly, nyDayEnd, nyDayStart } from '../common/dates';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { HeadsupEvents } from '../headsup/headsup.events';
 import { WebhooksService } from '../webhooks/webhooks.service';
 
 /**
@@ -35,6 +36,7 @@ export class DispatchesController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly webhooks: WebhooksService,
+    private readonly headsup: HeadsupEvents,
   ) {}
 
   private async validateIngestToken(raw?: string): Promise<void> {
@@ -100,6 +102,16 @@ export class DispatchesController {
       units: dispatch.units,
       receivedAt: dispatch.receivedAt.toISOString(),
     });
+    // Straight to the screens in the bay, which interrupt themselves for it.
+    // The call count on the board moves with it, so the board is told too.
+    this.headsup.emit({
+      kind: 'dispatch',
+      determinant: dispatch.determinant,
+      complaint: dispatch.complaint,
+      location: dispatch.location,
+      receivedAt: dispatch.receivedAt.toISOString(),
+    });
+    this.headsup.boardChanged();
     return { ok: true, id: dispatch.id };
   }
 

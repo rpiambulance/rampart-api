@@ -115,6 +115,13 @@ model Member {
   pollsCreated             AvailabilityPoll[]
   eventAvailability        EventAvailability[]
   coverageMessages         CoverageMessage[]
+  headsupLinksCreated      HeadsupLink[]                    @relation("HeadsupLinkCreator")
+  headsupLinksRevoked      HeadsupLink[]                    @relation("HeadsupLinkRevoker")
+  headsupNotesWritten      HeadsupNote[]                    @relation("HeadsupNoteAuthor")
+  headsupNotesRemoved      HeadsupNote[]                    @relation("HeadsupNoteRemover")
+  mishapsLogged            DispatchMishap[]                 @relation("DispatchMishapAuthor")
+  mishapsRemoved           DispatchMishap[]                 @relation("DispatchMishapRemover")
+  headsupCounterResets     HeadsupCounterReset[]            @relation("HeadsupCounterResetter")
 }
 
 // ---------------------------------------------------------------------------
@@ -1816,4 +1823,86 @@ model AccountRequest {
   member    Member?     @relation("AccountRequestMember", fields: [memberId], references: [id])
 
   @@index([status])
+}
+
+// ---------------------------------------------------------------- headsup
+// The station whiteboard: what a screen on the wall shows the crew on duty.
+
+/// A link that opens the whiteboard without signing in.
+///
+/// A display is a television in a bay, not a person: it cannot log in, and
+/// nobody wants it to. The token in its URL is the whole credential, so each
+/// screen gets its own — one can be revoked without darkening the rest, and
+/// a link that escapes into the world costs one revocation rather than a
+/// password reset. It grants exactly the board and nothing else.
+model HeadsupLink {
+  id          Int       @id @default(autoincrement())
+  token       String    @unique
+  /// Which screen this is, so an admin revoking one knows what goes dark.
+  label       String?
+  createdAt   DateTime  @default(now())
+  createdById Int?
+  /// Last time a display actually loaded with it, so a link nothing uses can
+  /// be told apart from the one keeping the bay screen alive.
+  lastSeenAt  DateTime?
+  revokedAt   DateTime?
+  revokedById Int?
+
+  createdBy Member? @relation("HeadsupLinkCreator", fields: [createdById], references: [id])
+  revokedBy Member? @relation("HeadsupLinkRevoker", fields: [revokedById], references: [id])
+}
+
+/// A line on the whiteboard.
+model HeadsupNote {
+  id          Int       @id @default(autoincrement())
+  body        String
+  createdAt   DateTime  @default(now())
+  createdById Int?
+  /// Taken down rather than deleted: the board is a shared surface, and who
+  /// removed what is worth being able to answer.
+  removedAt   DateTime?
+  removedById Int?
+
+  createdBy Member? @relation("HeadsupNoteAuthor", fields: [createdById], references: [id])
+  removedBy Member? @relation("HeadsupNoteRemover", fields: [removedById], references: [id])
+
+  @@index([removedAt])
+}
+
+/// A dispatch that went wrong, counted on the board.
+model DispatchMishap {
+  id          Int       @id @default(autoincrement())
+  /// What happened, when somebody bothered to say.
+  note        String?
+  occurredAt  DateTime  @default(now())
+  createdById Int?
+  removedAt   DateTime?
+  removedById Int?
+
+  createdBy Member? @relation("DispatchMishapAuthor", fields: [createdById], references: [id])
+  removedBy Member? @relation("DispatchMishapRemover", fields: [removedById], references: [id])
+
+  @@index([occurredAt])
+}
+
+/// Clearing a counter on the board without losing what it counted.
+///
+/// The numbers on the wall are a season's worth, not all of history, so they
+/// have to be able to start again. Nothing is deleted to do it: the reset is
+/// recorded, and the counter reads what has happened since the most recent
+/// one. Every dispatch and mishap is still there to be counted again from a
+/// different point.
+model HeadsupCounterReset {
+  id            Int      @id @default(autoincrement())
+  /// Which number was cleared: "calls" or "mishaps".
+  counter       String
+  resetAt       DateTime @default(now())
+  resetById     Int?
+  /// What it read at the moment it was cleared, so the season it closes is
+  /// still answerable long after.
+  previousCount Int
+
+  resetBy Member? @relation("HeadsupCounterResetter", fields: [resetById], references: [id])
+
+  @@index([counter, resetAt])
 }

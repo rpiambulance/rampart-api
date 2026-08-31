@@ -24,6 +24,9 @@ import { DialertController } from './integrations/dialert.controller';
 import { ChecksheetsController } from './checksheets/checksheets.controller';
 import { ChecksheetsJobs } from './checksheets/checksheets.jobs';
 import { ChecksheetsService } from './checksheets/checksheets.service';
+import { HeadsupController } from './headsup/headsup.controller';
+import { HeadsupEvents } from './headsup/headsup.events';
+import { HeadsupService } from './headsup/headsup.service';
 import { RequestsController } from './requests/requests.controller';
 import { RequestsJobs } from './requests/requests.jobs';
 import { RequestsService } from './requests/requests.service';
@@ -78,6 +81,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     CoverageController,
     DialertController,
     ResourcesController,
+    HeadsupController,
     RequestsController,
     ChecksheetsController,
     DispatchesController,
@@ -99,6 +103,8 @@ import { TrainingsModule } from './trainings/trainings.module';
     PermissionsGuard,
     BootstrapService,
     ChecksheetsService,
+    HeadsupService,
+    HeadsupEvents,
     RequestsService,
     RequestsJobs,
     ChecksheetsJobs,

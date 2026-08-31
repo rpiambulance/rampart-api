@@ -11,6 +11,7 @@ import { normalizeEmail } from '../common/email';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { MembersService } from '../members/members.service';
 import { displayName } from '../common/name';
 
 /**
@@ -31,6 +32,17 @@ export type RequestableField = keyof typeof REQUESTABLE_FIELDS;
 
 export function isRequestableField(value: string): value is RequestableField {
   return value in REQUESTABLE_FIELDS;
+}
+
+/**
+ * A stored date-of-birth as the calendar day it names.
+ *
+ * The column is a DATE, so the Date it comes back as sits at UTC midnight;
+ * taking the ISO date part gives back exactly the day that was entered,
+ * where local formatting could shift it a day either way.
+ */
+function toDateOnly(value: Date | null): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
 }
 
 /** Unambiguous by eye and by phone: no O/0, I/1, or similar. */
@@ -69,6 +81,7 @@ export class RequestsService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    private readonly members: MembersService,
   ) {}
 
   // ------------------------------------------------- profile change requests
@@ -394,12 +407,30 @@ export class RequestsService {
     });
   }
 
-  /** Declining, or recording that a member was made from it. */
+  /**
+   * Approving, declining, or recording that a member was made from it.
+   *
+   * Approving creates the member from what was asked for, because the point
+   * of collecting their details on the request form was that nobody should
+   * have to retype them. An officer can still hand in an existing `memberId`
+   * — for somebody already on the roster — and then nothing is created.
+   *
+   * Two things can stop the creation, and both are answers rather than
+   * failures: a date of birth the request never captured (optional there,
+   * required on a member) and a name already on the roster. Each comes back
+   * as a question the review page can put to the officer.
+   */
   async decideAccountRequest(
     auth: AuthContext,
     id: number,
     approve: boolean,
-    opts: { memberId?: number; note?: string } = {},
+    opts: {
+      memberId?: number;
+      note?: string;
+      /** Supplied by the officer when the request itself carried none. */
+      dob?: string;
+      confirmDuplicateName?: boolean;
+    } = {},
   ) {
     const request = await this.prisma.accountRequest.findUnique({
       where: { id },
@@ -408,6 +439,36 @@ export class RequestsService {
     if (request.status !== 'PENDING') {
       throw new BadRequestException('That one has already been decided.');
     }
+
+    let createdMemberId = opts.memberId ?? null;
+    let keycloakLinked: boolean | null = null;
+    if (approve && !createdMemberId) {
+      const dob = opts.dob ?? toDateOnly(request.dob);
+      if (!dob) {
+        throw new BadRequestException(
+          'This request has no date of birth, and a member record needs one. ' +
+            'Add it here and approve again.',
+        );
+      }
+      // Anything the requester left blank stays blank rather than becoming an
+      // empty string, so the new member looks the same as one added by hand.
+      const created = await this.members.create(auth, {
+        firstName: request.firstName,
+        preferredFirstName: request.preferredFirstName ?? undefined,
+        lastName: request.lastName,
+        email: request.email,
+        dob,
+        personalEmail: request.personalEmail ?? undefined,
+        cellPhone: request.cellPhone ?? undefined,
+        homePhone: request.homePhone ?? undefined,
+        localAddress: request.localAddress ?? undefined,
+        homeAddress: request.homeAddress ?? undefined,
+        confirmDuplicateName: opts.confirmDuplicateName,
+      });
+      createdMemberId = created.id;
+      keycloakLinked = created.keycloakLinked;
+    }
+
     const updated = await this.prisma.accountRequest.update({
       where: { id },
       data: {
@@ -415,7 +476,7 @@ export class RequestsService {
         decidedAt: new Date(),
         decidedById: auth.kind === 'member' ? auth.memberId : null,
         decisionNote: opts.note?.trim() || null,
-        memberId: opts.memberId ?? null,
+        memberId: createdMemberId,
       },
     });
     await this.audit.log(
@@ -425,9 +486,12 @@ export class RequestsService {
       id,
       {
         approve,
-        memberId: opts.memberId,
+        memberId: createdMemberId,
+        created: !opts.memberId && !!createdMemberId,
       },
     );
-    return updated;
+    // Whether they can actually sign in is the officer's next question, so it
+    // is answered here rather than left to be discovered.
+    return { ...updated, keycloakLinked };
   }
 }
