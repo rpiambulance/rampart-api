@@ -240,6 +240,13 @@ export class RequestsController {
     return this.requests.pendingAccountRequests();
   }
 
+  /** Both kinds of request waiting, for the badge on the nav. */
+  @Get('pending/count')
+  @RequirePermissions(PERMISSIONS.MEMBERS_WRITE)
+  pendingCount() {
+    return this.requests.pendingCount();
+  }
+
   @Post('account/:id/decide')
   @RequirePermissions(PERMISSIONS.MEMBERS_WRITE)
   decideAccountRequest(

@@ -2563,4 +2563,117 @@ describe('Night crews engine (e2e)', () => {
       await prisma.headsupLink.delete({ where: { id: made.body.id } });
     });
   });
+
+  describe('the audit log', () => {
+    // Decisions and traffic are stored apart so they can be pruned apart,
+    // but "what did this person do" is one question. The log has to answer
+    // it without the reader knowing there are two tables.
+    it('shows decisions, page loads and API calls in one timeline', async () => {
+      await prisma.auditLog.create({
+        data: {
+          actorType: 'MEMBER',
+          actorId: alice,
+          action: `test.decision.${stamp}`,
+          entity: 'Thing',
+        },
+      });
+      await prisma.accessLog.createMany({
+        data: [
+          { kind: 'PAGE', memberId: alice, method: 'GET', path: `/members?s=${stamp}` },
+          {
+            kind: 'API',
+            memberId: alice,
+            method: 'POST',
+            path: `/v1/things?s=${stamp}`,
+            status: 201,
+          },
+        ],
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/audit?limit=500')
+        .set(as(alice))
+        .set('x-test-permissions', 'audit:read')
+        .expect(200);
+
+      const rows = res.body as Array<{
+        kind: string;
+        action: string;
+        entityId: string | null;
+        actorName: string;
+      }>;
+      const kinds = new Set(
+        rows
+          .filter(
+            (r) =>
+              r.action === `test.decision.${stamp}` ||
+              r.entityId?.includes(String(stamp)),
+          )
+          .map((r) => r.kind),
+      );
+      expect(kinds).toEqual(new Set(['DECISION', 'PAGE', 'API']));
+
+      // Newest first, whichever record each row came from.
+      const times = rows.map((r) => new Date((r as unknown as { at: string }).at).getTime());
+      expect([...times].sort((a, b) => b - a)).toEqual(times);
+
+      // An actor is named, not left as a bare id, on traffic rows too.
+      const page = rows.find((r) => r.kind === 'PAGE' && r.entityId?.includes(String(stamp)));
+      expect(page?.actorName).not.toMatch(/^member #/);
+    });
+
+    it('can be narrowed to the decision record alone', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/audit?kind=decision&limit=200')
+        .set(as(alice))
+        .set('x-test-permissions', 'audit:read')
+        .expect(200);
+      const kinds = new Set((res.body as Array<{ kind: string }>).map((r) => r.kind));
+      expect(kinds.has('PAGE')).toBe(false);
+      expect(kinds.has('API')).toBe(false);
+    });
+
+    it('is closed to those without the permission', async () => {
+      await request(app.getHttpServer())
+        .get('/v1/audit')
+        .set(as(bob))
+        .set('x-test-permissions', '')
+        .expect(403);
+    });
+
+    it('counts both kinds of request for the nav badge', async () => {
+      const before = await request(app.getHttpServer())
+        .get('/v1/requests/pending/count')
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .expect(200);
+
+      const code = `E2EC${stamp}`.slice(0, 20).toUpperCase();
+      await prisma.inviteCode.create({ data: { code, maxUses: 1 } });
+      const email = `badge-${stamp}@example.com`;
+      await request(app.getHttpServer())
+        .post('/v1/requests/account')
+        .send({ inviteCode: code, firstName: 'Bo', lastName: `Test${stamp}`, email })
+        .expect(201);
+
+      const after = await request(app.getHttpServer())
+        .get('/v1/requests/pending/count')
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .expect(200);
+      expect(after.body.count).toBe(before.body.count + 1);
+
+      await prisma.accountRequest.deleteMany({ where: { email } });
+      await prisma.inviteCode.delete({ where: { code } });
+    });
+
+    afterAll(async () => {
+      await prisma.auditLog.deleteMany({
+        where: { action: { contains: String(stamp) } },
+      });
+      await prisma.accessLog.deleteMany({
+        where: { path: { contains: String(stamp) } },
+      });
+    });
+  });
 });

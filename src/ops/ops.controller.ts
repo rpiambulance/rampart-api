@@ -25,6 +25,11 @@ import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { displayName } from '../common/name';
+import {
+  describeAccess,
+  mergeNewest,
+  type FeedEntry,
+} from '../audit/audit-feed';
 
 class FuelEntryDto {
   @IsDateString()
@@ -276,17 +281,131 @@ export class OpsController {
 
   // ---- audit ----
 
+  /**
+   * The audit log: decisions, page loads and API calls in one timeline.
+   *
+   * They live in two tables on purpose — decisions are kept forever, traffic
+   * is pruned — but that is a storage decision, and reading them apart makes
+   * the obvious question hard: "what did this person do on Tuesday" is one
+   * question, not two. Merged here, filterable by kind, so the decision
+   * record is still readable on its own.
+   */
   @Get('audit')
   @RequirePermissions(PERMISSIONS.AUDIT_READ)
-  async auditLog(@Query('limit') limit?: string) {
-    const entries = await this.prisma.auditLog.findMany({
-      orderBy: { at: 'desc' },
-      take: limit ? Math.min(Number(limit), 500) : 100,
+  async auditLog(
+    @Query('limit') limit?: string,
+    @Query('kind') kind?: string,
+    @Query('memberId') memberId?: string,
+    @Query('q') q?: string,
+  ) {
+    const take = Math.min(Number(limit) || 100, 500);
+    const wanted = (kind ?? 'all').toLowerCase();
+    const member = Number(memberId);
+    const byMember = Number.isInteger(member) ? member : undefined;
+    const search = (q ?? '').trim();
+
+    const wantDecisions = wanted === 'all' || wanted === 'decision';
+    const wantTraffic =
+      wanted === 'all' || wanted === 'page' || wanted === 'api';
+
+    const decisions = wantDecisions
+      ? await this.prisma.auditLog.findMany({
+          where: {
+            ...(byMember
+              ? { actorType: 'MEMBER' as const, actorId: byMember }
+              : {}),
+            ...(search
+              ? {
+                  OR: [
+                    {
+                      action: {
+                        contains: search,
+                        mode: 'insensitive' as const,
+                      },
+                    },
+                    {
+                      entity: {
+                        contains: search,
+                        mode: 'insensitive' as const,
+                      },
+                    },
+                  ],
+                }
+              : {}),
+          },
+          orderBy: { at: 'desc' },
+          take,
+        })
+      : [];
+
+    const traffic = wantTraffic
+      ? await this.prisma.accessLog.findMany({
+          where: {
+            ...(wanted === 'page'
+              ? { kind: 'PAGE' }
+              : wanted === 'api'
+                ? { kind: 'API' }
+                : {}),
+            ...(byMember ? { memberId: byMember } : {}),
+            ...(search
+              ? { path: { contains: search, mode: 'insensitive' as const } }
+              : {}),
+          },
+          orderBy: { at: 'desc' },
+          take,
+        })
+      : [];
+
+    const decisionEntries: FeedEntry[] = decisions.map((e) => ({
+      id: `audit:${e.id}`,
+      kind: 'DECISION' as const,
+      at: e.at,
+      actorType: e.actorType,
+      actorId: e.actorId,
+      actorName: '',
+      action: e.action,
+      entity: e.entity,
+      entityId: e.entityId,
+      diff: e.diff,
+      ip: e.ip,
+    }));
+
+    const trafficEntries: FeedEntry[] = traffic.map((row) => {
+      const described = describeAccess(row);
+      return {
+        id: `access:${row.id}`,
+        kind: row.kind === 'PAGE' ? 'PAGE' : 'API',
+        at: row.at,
+        actorType: row.memberId
+          ? 'MEMBER'
+          : row.apiTokenId
+            ? 'API_TOKEN'
+            : 'SYSTEM',
+        actorId: row.memberId ?? row.apiTokenId,
+        actorName: '',
+        action: described.action,
+        entity: described.entity,
+        entityId: row.path,
+        // What a traffic row has instead of a diff. Enough to tell a
+        // refused request from a served one without opening anything.
+        diff:
+          row.kind === 'PAGE'
+            ? null
+            : {
+                method: row.method,
+                status: row.status,
+                durationMs: row.durationMs,
+              },
+        ip: row.ip,
+      };
     });
-    // resolve member actors to names for display
+
+    const merged = mergeNewest([decisionEntries, trafficEntries], take);
+
+    // Names resolved once for the page, not per row.
     const memberIds = [
       ...new Set(
-        entries
+        merged
           .filter((e) => e.actorType === 'MEMBER' && e.actorId != null)
           .map((e) => e.actorId!),
       ),
@@ -303,9 +422,10 @@ export class OpsController {
         })
       : [];
     const names = new Map(members.map((m) => [m.id, displayName(m)]));
-    return entries.map((e) => ({
+
+    return merged.map((e) => ({
       ...e,
-      id: String(e.id), // BigInt is not JSON-serializable
+      at: e.at.toISOString(),
       actorName:
         e.actorType === 'MEMBER' && e.actorId != null
           ? (names.get(e.actorId) ?? `member #${e.actorId}`)

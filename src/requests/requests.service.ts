@@ -399,6 +399,21 @@ export class RequestsService {
     return { id: request.id };
   }
 
+  /**
+   * How much is waiting, for the badge on the nav.
+   *
+   * Both kinds together, because they are reviewed on one page and a badge
+   * that counted only half of it would send somebody looking for work that
+   * appears to have vanished.
+   */
+  async pendingCount(): Promise<{ count: number }> {
+    const [profile, account] = await Promise.all([
+      this.prisma.profileChangeRequest.count({ where: { status: 'PENDING' } }),
+      this.prisma.accountRequest.count({ where: { status: 'PENDING' } }),
+    ]);
+    return { count: profile + account };
+  }
+
   pendingAccountRequests() {
     return this.prisma.accountRequest.findMany({
       where: { status: 'PENDING' },
