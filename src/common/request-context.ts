@@ -24,20 +24,37 @@ export function currentRequest(): RequestContext | undefined {
 }
 
 /**
+ * The header central uses to name the browser it is rendering for.
+ *
+ * Deliberately not X-Forwarded-For. That chain is hop-counted from the right,
+ * and this leg has a different number of proxies on it than a request the
+ * browser makes directly — folding it in would shift the count and start
+ * reporting the wrong entry, silently, on one path or the other.
+ */
+export const CLIENT_IP_HEADER = 'x-rampart-client-ip';
+
+/**
  * The client address.
  *
- * Behind a proxy the socket address is the proxy's, so X-Forwarded-For is
- * read first — its leftmost entry is the original client. That header is
- * caller-supplied and trivially forged, so it is only worth what the proxy in
- * front of this makes it worth: an address recorded here says "this is what
- * the request claimed", which is the most an application can honestly log.
+ * Two kinds of caller reach this service. Something at a browser talking to
+ * it through the proxy, where Express — now told how many proxies to skip —
+ * resolves the address itself and ignores anything a client prepended. And
+ * one of the portals, rendering server-side on somebody's behalf, where the
+ * socket peer is the portal and the address that matters comes in a header
+ * of its own.
+ *
+ * That header is only worth what the caller is: anyone able to call this API
+ * directly could set it and name any address they liked, in their own rows.
+ * The same was true of the X-Forwarded-For read this replaces, and less
+ * obviously so. What an address here means is "this is what the request
+ * claimed, from a caller we let in" — which is the most an application can
+ * honestly log.
  */
 export function clientIp(req: Request): string | null {
-  const forwarded = req.headers['x-forwarded-for'];
-  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  const first = raw?.split(',')[0]?.trim();
-  if (first) return first;
-  const real = req.headers['x-real-ip'];
-  if (typeof real === 'string' && real.trim()) return real.trim();
+  const passed = req.headers[CLIENT_IP_HEADER];
+  const named = Array.isArray(passed) ? passed[0] : passed;
+  if (typeof named === 'string' && named.trim()) return named.trim();
+  // Express walks X-Forwarded-For from the right, skipping the proxies it
+  // has been told to trust. Set in main.ts; without it this is the proxy.
   return req.ip ?? req.socket?.remoteAddress ?? null;
 }

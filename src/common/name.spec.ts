@@ -29,9 +29,9 @@ describe('what to call somebody', () => {
   );
 
   it('trims a preferred name that was typed with a space', () => {
-    expect(firstNameOf({ firstName: 'Daniel', preferredFirstName: ' Alex ' })).toBe(
-      'Alex',
-    );
+    expect(
+      firstNameOf({ firstName: 'Daniel', preferredFirstName: ' Alex ' }),
+    ).toBe('Alex');
   });
 
   // Narrow selects are common, and a trailing space would show on the board.

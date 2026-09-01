@@ -4,6 +4,18 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
+/**
+ * How many proxies sit in front of this service.
+ *
+ * Wrong in either direction is a real cost: too low and the log records the
+ * proxy, too high and a caller can claim any address they like. Defaults to
+ * one, which is the deployment as it stands — Traefik and nothing else.
+ */
+function trustedProxyHops(): number {
+  const configured = Number(process.env.TRUSTED_PROXY_HOPS);
+  return Number.isInteger(configured) && configured >= 0 ? configured : 1;
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // Slack signs the bytes it sent, so the bytes have to survive parsing:
@@ -19,6 +31,20 @@ async function bootstrap() {
     credentials: true,
   });
   app.enableShutdownHooks();
+
+  // Behind a reverse proxy, so the socket peer is the proxy and never the
+  // caller. Without this Express reports the proxy's address as req.ip —
+  // which lands in the access log, and, more quietly, is what the rate
+  // limiter buckets on: every client sharing one bucket means one noisy
+  // caller can throttle the whole agency.
+  //
+  // A hop count rather than `true`: trusting the whole chain lets any caller
+  // forge their own address by sending an X-Forwarded-For of their choosing,
+  // because Express would believe the leftmost entry. Counting from the
+  // right instead means only the proxies actually in front of this are
+  // trusted, and anything a client prepends is ignored. One is Traefik
+  // alone; raise it to two if Cloudflare or another proxy sits in front.
+  app.set('trust proxy', trustedProxyHops());
 
   // OpenAPI docs at /docs (JSON at /docs-json). Disable with SWAGGER_ENABLED=false.
   if (process.env.SWAGGER_ENABLED !== 'false') {
