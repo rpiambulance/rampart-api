@@ -7,6 +7,7 @@ import { AuthGuard } from '../src/auth/auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { CredentialGraphService } from '../src/credentials/credential-graph.service';
 import { ChoresService } from '../src/chores/chores.service';
+import { ChecksheetsService } from '../src/checksheets/checksheets.service';
 import { CredentialsService } from '../src/credentials/credentials.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
@@ -2729,6 +2730,170 @@ describe('Night crews engine (e2e)', () => {
       const empty = addDays(nyNow().dateStr, 400);
       const service = app.get(ChoresService);
       expect(await service.ensureOccurrences(empty)).toEqual([]);
+    });
+  });
+
+  describe('expired checksheet items', () => {
+    // Both lists have to agree. "Expiring soon" computes from the date, so it
+    // shows an expired item the moment it turns; deficiencies only ever
+    // learned at check time, so the same item was a job on one screen and
+    // invisible on the other.
+    let templateId: number;
+    let itemId: number;
+    let assetId: number;
+    let runId: number;
+
+    beforeAll(async () => {
+      const kind = await prisma.assetKind.create({
+        data: { name: `Bag ${stamp}` },
+      });
+      const asset = await prisma.asset.create({
+        data: { name: `Bag ${stamp}`, kindId: kind.id },
+      });
+      assetId = asset.id;
+      const template = await prisma.checksheetTemplate.create({
+        data: { name: `Sheet ${stamp}`, assetKindId: kind.id, active: true },
+      });
+      templateId = template.id;
+      const item = await prisma.checksheetItem.create({
+        data: {
+          templateId: template.id,
+          label: `Epi ${stamp}`,
+          kind: 'PAR',
+          parLevel: 1,
+          expiryTracking: 'SINGLE',
+          order: 0,
+        },
+      });
+      itemId = item.id;
+
+      // A check done a while ago that recorded a date since passed: in date
+      // when it was written down, expired now, and nothing has looked since.
+      const run = await prisma.checksheetRun.create({
+        data: {
+          templateId: template.id,
+          assetId: asset.id,
+          completedAt: new Date(Date.now() - 30 * 86_400_000),
+          entries: {
+            create: [
+              {
+                itemId: item.id,
+                countPresent: 1,
+                expiries: {
+                  create: [
+                    { position: 0, expiresAt: toDbDate(addDays(nyNow().dateStr, -3)) },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      });
+      runId = run.id;
+    });
+
+    afterAll(async () => {
+      await prisma.checksheetDeficiency.deleteMany({ where: { templateId } });
+      await prisma.checksheetRun.deleteMany({ where: { templateId } });
+      await prisma.checksheetItem.deleteMany({ where: { templateId } });
+      await prisma.checksheetTemplate.deleteMany({ where: { id: templateId } });
+      await prisma.asset.deleteMany({ where: { id: assetId } });
+      await prisma.assetKind.deleteMany({ where: { name: `Bag ${stamp}` } });
+    });
+
+    it('shows it as expired on the expiry report', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/checksheets/expiring?withinDays=30')
+        .set(as(alice))
+        .set('x-test-permissions', 'checksheets:read-all')
+        .expect(200);
+      const mine = (res.body as Array<{ item: { id: number }; expired: boolean }>)
+        .find((row) => row.item.id === itemId);
+      expect(mine?.expired).toBe(true);
+    });
+
+    it('raises it as a deficiency without waiting for the next check', async () => {
+      const service = app.get(ChecksheetsService);
+      expect(await service.openExpiredDeficiencies()).toBeGreaterThan(0);
+
+      const open = await prisma.checksheetDeficiency.findMany({
+        where: { templateId, resolvedAt: null },
+      });
+      expect(open).toHaveLength(1);
+      expect(open[0].detail).toContain('expired');
+      expect(open[0].openedRunId).toBe(runId);
+    });
+
+    it('does not raise a second one on the next sweep', async () => {
+      const service = app.get(ChecksheetsService);
+      expect(await service.openExpiredDeficiencies()).toBe(0);
+      expect(
+        await prisma.checksheetDeficiency.count({
+          where: { templateId, resolvedAt: null },
+        }),
+      ).toBe(1);
+    });
+
+    it('closes it when a check records a date that has not passed', async () => {
+      const service = app.get(ChecksheetsService);
+      await service.complete(
+        { kind: 'member', memberId: alice, permissions: new Set<string>() } as never,
+        {
+          templateId,
+          assetId,
+          entries: [
+            {
+              itemId,
+              countPresent: 1,
+              expiries: [addDays(nyNow().dateStr, 200)],
+            },
+          ],
+        } as never,
+      );
+      expect(
+        await prisma.checksheetDeficiency.count({
+          where: { templateId, resolvedAt: null },
+        }),
+      ).toBe(0);
+    });
+
+    // The headline: somebody checking the bag writes down a date that has
+    // already passed. That is a job, and it belongs on the job list.
+    it('raises one from a check that records a date already passed', async () => {
+      const service = app.get(ChecksheetsService);
+      await service.complete(
+        { kind: 'member', memberId: alice, permissions: new Set<string>() } as never,
+        {
+          templateId,
+          assetId,
+          entries: [
+            {
+              itemId,
+              countPresent: 1,
+              expiries: [addDays(nyNow().dateStr, -1)],
+            },
+          ],
+        } as never,
+      );
+      const open = await prisma.checksheetDeficiency.findMany({
+        where: { templateId, resolvedAt: null },
+      });
+      expect(open).toHaveLength(1);
+      expect(open[0].detail).toContain('expired');
+      // Full par, so nothing is missing — the date alone is the problem.
+      expect(open[0].found).toBeNull();
+
+      // And the same item is on the expiry report, which is the whole point.
+      const res = await request(app.getHttpServer())
+        .get('/v1/checksheets/expiring?withinDays=1')
+        .set(as(alice))
+        .set('x-test-permissions', 'checksheets:read-all')
+        .expect(200);
+      expect(
+        (res.body as Array<{ item: { id: number }; expired: boolean }>).find(
+          (row) => row.item.id === itemId,
+        )?.expired,
+      ).toBe(true);
     });
   });
 });

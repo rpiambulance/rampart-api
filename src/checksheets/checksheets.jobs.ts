@@ -46,6 +46,14 @@ export class ChecksheetsJobs {
       ),
     );
 
+    // Anything already past its date becomes a job on the deficiency list,
+    // not just a line in a warning email. Done before the warnings go out so
+    // the two agree about what is outstanding.
+    const opened = await this.checksheets.openExpiredDeficiencies();
+    if (opened) {
+      this.logger.log(`Deficiencies opened for expired items: ${opened}`);
+    }
+
     const rows = await this.checksheets.expiring(widest);
     if (!rows.length) return;
 

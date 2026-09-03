@@ -1,4 +1,4 @@
-import { addDays, nyToday } from '../common/dates';
+import { addDays, isDateOnly, nyToday, toDbDate } from '../common/dates';
 
 /** The shape of an item, as much of it as the rules below care about. */
 export interface ItemShape {
@@ -62,10 +62,21 @@ export function expirySlots(item: ItemShape): number {
  * An unanswered item is not a shortage — somebody who skipped a line has told
  * us nothing, and inventing a deficiency from silence would fill the list
  * with things nobody has actually looked at.
+ *
+ * A date already past counts too. An expired pack is not a warning about a
+ * future problem, it is a thing that has to be replaced before the next call,
+ * which is exactly what the deficiency list is for. It stays on the expiry
+ * report as well: the two answer different questions — what needs doing, and
+ * what is coming — and something overdue is the honest answer to both.
+ *
+ * One entry per item however many ways it is short, so an item both under par
+ * and out of date reads as one job rather than two, and reconciliation cannot
+ * open a second deficiency for something it has already opened one for.
  */
 export function shortfalls(
   items: ItemShape[],
   entries: EntryInput[],
+  today: Date = nyToday(),
 ): Shortfall[] {
   const byItem = new Map(entries.map((entry) => [entry.itemId, entry]));
   const out: Shortfall[] = [];
@@ -74,26 +85,39 @@ export function shortfalls(
     const entry = byItem.get(item.id);
     if (!entry) continue;
 
+    const reasons: string[] = [];
+    let expected: number | null = null;
+    let found: number | null = null;
+
     if (item.kind === 'PRESENCE') {
-      if (entry.present === false) {
-        out.push({
-          itemId: item.id,
-          detail: `${item.label} — missing`,
-          expected: null,
-          found: null,
-        });
+      if (entry.present === false) reasons.push('missing');
+    } else {
+      const par = item.parLevel ?? 0;
+      const counted = entry.countPresent;
+      if (counted !== undefined && counted !== null && counted < par) {
+        reasons.push(`${counted} of ${par}`);
+        expected = par;
+        found = counted;
       }
-      continue;
     }
 
-    const par = item.parLevel ?? 0;
-    const found = entry.countPresent;
-    if (found === undefined || found === null) continue;
-    if (found < par) {
+    // Same boundary the expiry report uses: something dated today has not
+    // expired yet. The two lists must agree about what "expired" means, or
+    // an item appears on one and not the other for a day.
+    const expired = (entry.expiries ?? [])
+      .filter((date) => isDateOnly(date) && toDbDate(date) < today)
+      .sort();
+    if (expired.length === 1) {
+      reasons.push(`expired ${expired[0]}`);
+    } else if (expired.length > 1) {
+      reasons.push(`${expired.length} expired, earliest ${expired[0]}`);
+    }
+
+    if (reasons.length) {
       out.push({
         itemId: item.id,
-        detail: `${item.label} — ${found} of ${par}`,
-        expected: par,
+        detail: `${item.label} — ${reasons.join('; ')}`,
+        expected,
         found,
       });
     }

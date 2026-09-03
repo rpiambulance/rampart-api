@@ -1,9 +1,9 @@
 import {
+  type ItemShape,
   dueState,
   expirySlots,
   sealsNeedingBreak,
   shortfalls,
-  type ItemShape,
 } from './checksheet-logic';
 
 const item = (over: Partial<ItemShape> = {}): ItemShape => ({
@@ -245,5 +245,104 @@ describe('seals that have to be broken', () => {
         [{ sectionId: 1, sealPresent: true }],
       ),
     ).toEqual(['Drug box']);
+  });
+});
+
+describe('an expired item is a deficiency, not only a warning', () => {
+  const TODAY = new Date('2026-09-03T00:00:00Z');
+  const item = (over: Partial<ItemShape> = {}): ItemShape => ({
+    id: 1,
+    label: 'Epi 0.3mg',
+    kind: 'PAR',
+    parLevel: 2,
+    expiryTracking: 'PER_UNIT',
+    ...over,
+  });
+
+  it('is short when a date has passed, even at full par', () => {
+    const found = shortfalls(
+      [item()],
+      [{ itemId: 1, countPresent: 2, expiries: ['2026-08-01', '2027-01-01'] }],
+      TODAY,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].detail).toBe('Epi 0.3mg — expired 2026-08-01');
+    // Nothing is missing, so the counts say so.
+    expect(found[0]).toMatchObject({ expected: null, found: null });
+  });
+
+  // The boundary has to match the expiry report's, or an item shows on one
+  // list and not the other for a day.
+  it('does not call something dated today expired', () => {
+    expect(
+      shortfalls(
+        [item()],
+        [{ itemId: 1, countPresent: 2, expiries: ['2026-09-03'] }],
+        TODAY,
+      ),
+    ).toEqual([]);
+  });
+
+  it('leaves a future date alone', () => {
+    expect(
+      shortfalls(
+        [item()],
+        [{ itemId: 1, countPresent: 2, expiries: ['2026-12-25'] }],
+        TODAY,
+      ),
+    ).toEqual([]);
+  });
+
+  // One job, not two: reconciliation keys deficiencies on the item, so two
+  // shortfalls for one item would open a second deficiency for it.
+  it('reports an item both under par and out of date once', () => {
+    const found = shortfalls(
+      [item()],
+      [{ itemId: 1, countPresent: 1, expiries: ['2026-08-01'] }],
+      TODAY,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].detail).toBe('Epi 0.3mg — 1 of 2; expired 2026-08-01');
+    // The count is still carried, so the list can show what was expected.
+    expect(found[0]).toMatchObject({ expected: 2, found: 1 });
+  });
+
+  it('names how many when several units have gone off, earliest first', () => {
+    const found = shortfalls(
+      [item({ parLevel: 3 })],
+      [
+        {
+          itemId: 1,
+          countPresent: 3,
+          expiries: ['2026-08-20', '2026-07-04', '2027-05-05'],
+        },
+      ],
+      TODAY,
+    );
+    expect(found[0].detail).toBe('Epi 0.3mg — 2 expired, earliest 2026-07-04');
+  });
+
+  it('counts a missing item that is also out of date as one job', () => {
+    const found = shortfalls(
+      [item({ kind: 'PRESENCE', parLevel: null })],
+      [{ itemId: 1, present: false, expiries: ['2026-08-01'] }],
+      TODAY,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].detail).toBe('Epi 0.3mg — missing; expired 2026-08-01');
+  });
+
+  it('ignores a date it cannot read rather than calling it expired', () => {
+    expect(
+      shortfalls(
+        [item()],
+        [{ itemId: 1, countPresent: 2, expiries: ['soon', ''] }],
+        TODAY,
+      ),
+    ).toEqual([]);
+  });
+
+  it('still says nothing about an item nobody filled in', () => {
+    expect(shortfalls([item()], [], TODAY)).toEqual([]);
   });
 });

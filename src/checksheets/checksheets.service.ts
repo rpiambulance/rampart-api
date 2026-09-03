@@ -580,8 +580,73 @@ export class ChecksheetsService {
         asset: row.entry.run.asset,
         template: row.entry.run.template,
         lastCheckedAt: row.entry.run.completedAt,
+        // The check that recorded this date, so a deficiency raised from it
+        // can point at where the date came from.
+        runId: row.entry.run.id,
+        templateId: row.entry.run.templateId,
+        assetId: row.entry.run.assetId,
+        itemId: row.entry.itemId,
       }))
       .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
+  }
+
+  /**
+   * Opens a deficiency for anything already expired that has not got one.
+   *
+   * A completed check finds what had expired on the day it was done. A date
+   * passes on its own afterwards, and nothing was noticing: the expiry report
+   * computes from the date and showed the item, while the deficiency list —
+   * which only ever learned at check time — said the asset was fine until
+   * somebody happened to check it again. On a bag checked monthly that is
+   * weeks of an expired drug on the shelf and nothing asking for it.
+   *
+   * Keyed the same way reconciliation keys them, so the next completed check
+   * either finds it still expired and keeps it, or finds a fresh date and
+   * closes it. Nothing here resolves anything — a sweep can see that
+   * something is wrong, but only a check can see that it has been put right.
+   */
+  async openExpiredDeficiencies(): Promise<number> {
+    const expired = (await this.expiring(0)).filter((row) => row.expired);
+    if (!expired.length) return 0;
+
+    const open = await this.prisma.checksheetDeficiency.findMany({
+      where: { resolvedAt: null },
+      select: { templateId: true, itemId: true, assetId: true },
+    });
+    const key = (row: {
+      templateId: number;
+      itemId: number;
+      assetId: number | null;
+    }) => `${row.templateId}:${row.itemId}:${row.assetId ?? 0}`;
+    const already = new Set(open.map(key));
+
+    // One deficiency per item however many of its units have gone off: the
+    // list is jobs to do, and replacing them is one job.
+    const wanted = new Map<string, (typeof expired)[number]>();
+    for (const row of expired) {
+      const id = key(row);
+      if (already.has(id)) continue;
+      const held = wanted.get(id);
+      if (!held || row.expiresAt < held.expiresAt) wanted.set(id, row);
+    }
+    if (!wanted.size) return 0;
+
+    const now = new Date();
+    await this.prisma.checksheetDeficiency.createMany({
+      data: [...wanted.values()].map((row) => ({
+        templateId: row.templateId,
+        itemId: row.itemId,
+        assetId: row.assetId,
+        openedRunId: row.runId,
+        // Worded as the check-time path words it, so the list reads the same
+        // whether a person or the sweep noticed.
+        detail: `${row.item.label} — expired ${row.expiresAt.toISOString().slice(0, 10)}`,
+        expected: null,
+        found: null,
+        lastSeenAt: now,
+      })),
+    });
+    return wanted.size;
   }
 
   // ------------------------------------------------------------------- due
