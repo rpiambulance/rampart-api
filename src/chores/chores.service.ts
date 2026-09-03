@@ -89,14 +89,21 @@ export class ChoresService {
       where: { active: true },
     });
     const due = chores.filter((chore) => this.fallsOn(chore, dateStr));
-    if (!due.length) return [];
-    await this.prisma.choreOccurrence.createMany({
-      data: due.map((chore) => ({
-        choreId: chore.id,
-        dueOn: toDbDate(dateStr),
-      })),
-      skipDuplicates: true,
-    });
+    // Only the making is conditional. What is due tonight is whatever has an
+    // occurrence tonight, and plenty gets one without a recurrence rule
+    // saying so: a one-off is created outright, and a chore rescheduled or
+    // retired after the fact leaves its occurrence behind. Returning early
+    // here told Slack there was nothing on precisely those nights, while the
+    // portal — which reads the occurrences — listed them.
+    if (due.length) {
+      await this.prisma.choreOccurrence.createMany({
+        data: due.map((chore) => ({
+          choreId: chore.id,
+          dueOn: toDbDate(dateStr),
+        })),
+        skipDuplicates: true,
+      });
+    }
     return this.occurrencesOn(dateStr);
   }
 

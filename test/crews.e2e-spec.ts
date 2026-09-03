@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { AuthGuard } from '../src/auth/auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { CredentialGraphService } from '../src/credentials/credential-graph.service';
+import { ChoresService } from '../src/chores/chores.service';
 import { CredentialsService } from '../src/credentials/credentials.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
@@ -2674,6 +2675,60 @@ describe('Night crews engine (e2e)', () => {
       await prisma.accessLog.deleteMany({
         where: { path: { contains: String(stamp) } },
       });
+    });
+  });
+
+  describe('what is due tonight', () => {
+    // The reported fault: a night whose only chore is a one-off. Nothing
+    // recurring falls on it, so the job used to answer "no chores" while the
+    // portal — reading the occurrences — listed it.
+    it('sees a one-off that no recurrence rule would find', async () => {
+      const today = nyNow().dateStr;
+      const chore = await prisma.chore.create({
+        data: { name: `One-off ${stamp}`, cadence: 'ONCE', active: true },
+      });
+      await prisma.choreOccurrence.create({
+        data: { choreId: chore.id, dueOn: toDbDate(today) },
+      });
+
+      const service = app.get(ChoresService);
+      const due = await service.ensureOccurrences(today);
+      expect(due.map((o) => o.chore.name)).toContain(`One-off ${stamp}`);
+
+      await prisma.choreOccurrence.deleteMany({ where: { choreId: chore.id } });
+      await prisma.chore.delete({ where: { id: chore.id } });
+    });
+
+    // The same hole from the other side: a chore retired or rescheduled after
+    // its occurrence was made still has to be announced, or somebody is left
+    // holding a job nobody mentioned.
+    it('still sees an occurrence whose chore has since been retired', async () => {
+      const today = nyNow().dateStr;
+      const chore = await prisma.chore.create({
+        data: { name: `Retired ${stamp}`, cadence: 'DAILY', active: true },
+      });
+      await prisma.choreOccurrence.create({
+        data: { choreId: chore.id, dueOn: toDbDate(today) },
+      });
+      await prisma.chore.update({
+        where: { id: chore.id },
+        data: { active: false },
+      });
+
+      const service = app.get(ChoresService);
+      const due = await service.ensureOccurrences(today);
+      expect(due.map((o) => o.chore.name)).toContain(`Retired ${stamp}`);
+
+      await prisma.choreOccurrence.deleteMany({ where: { choreId: chore.id } });
+      await prisma.chore.delete({ where: { id: chore.id } });
+    });
+
+    it('says nothing is due when nothing is', async () => {
+      // A day far enough out that no seeded chore reaches it, and no
+      // occurrence has been made for it.
+      const empty = addDays(nyNow().dateStr, 400);
+      const service = app.get(ChoresService);
+      expect(await service.ensureOccurrences(empty)).toEqual([]);
     });
   });
 });
