@@ -67,7 +67,7 @@ export async function whosOnText(
     const who = slot?.member
       ? mentionFor(slot.member)
       : (slot?.placeholder ?? '_open_');
-    lines.push(`• ${POSITION_LABELS[position]}: ${who}`);
+    lines.push(`*${POSITION_LABELS[position]}:* ${who}`);
   }
   return lines.join('\n');
 }
