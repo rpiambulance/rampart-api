@@ -1,12 +1,6 @@
 import { nyNow, toDbDate } from '../common/dates';
 import type { PrismaService } from '../prisma/prisma.service';
-import {
-  isHandoverMorning,
-  nightsFor,
-  whosOnDate,
-  whosOnReply,
-  whosOnText,
-} from './whoson';
+import { nightsFor, whosOnDate, whosOnReply, whosOnText } from './whoson';
 
 type Slot = {
   position: string;
@@ -166,37 +160,62 @@ describe('what night /whoson was asked about', () => {
   });
 });
 
-describe('the handover morning', () => {
+describe('which night /whoson means at the hour it is asked', () => {
   // A New York wall-clock time, whatever the machine running this thinks.
   const at = (nyTime: string) => new Date(`2026-09-03T${nyTime}:00-04:00`);
+  const dates = (nights: ReturnType<typeof nightsFor>) =>
+    nights?.map((night) => night.date);
 
-  it('is six until nine, and not a minute either side', () => {
-    expect(isHandoverMorning(at('05:59'))).toBe(false);
-    expect(isHandoverMorning(at('06:00'))).toBe(true);
-    expect(isHandoverMorning(at('08:59'))).toBe(true);
-    expect(isHandoverMorning(at('09:00'))).toBe(false);
+  // A crew that came on last night is still in the building at two in the
+  // morning. Answering with the night ahead would name five people who are
+  // asleep.
+  it('gives the crew still on duty through the small hours', () => {
+    expect(dates(nightsFor('', at('00:01')))).toEqual(['2026-09-02']);
+    expect(dates(nightsFor('', at('03:00')))).toEqual(['2026-09-02']);
+    expect(dates(nightsFor('', at('05:59')))).toEqual(['2026-09-02']);
   });
 
-  it('answers with both nights when nothing was asked for', () => {
-    expect(nightsFor('', at('07:00'))).toEqual(['2026-09-02', '2026-09-03']);
-    expect(nightsFor('tonight', at('07:00'))).toEqual([
+  it('still calls that crew tonight, because it is', () => {
+    expect(nightsFor('', at('03:00'))?.[0].label).toBe('*Tonight’s crew:*');
+  });
+
+  it('gives both across the handover', () => {
+    expect(dates(nightsFor('', at('06:00')))).toEqual([
+      '2026-09-02',
+      '2026-09-03',
+    ]);
+    expect(dates(nightsFor('', at('08:59')))).toEqual([
+      '2026-09-02',
+      '2026-09-03',
+    ]);
+    expect(nightsFor('', at('07:00'))?.map((n) => n.label)).toEqual([
+      '*Last night’s crew:*',
+      '*Tonight’s crew:*',
+    ]);
+  });
+
+  it('gives the night ahead once the morning is over', () => {
+    expect(dates(nightsFor('', at('09:00')))).toEqual(['2026-09-03']);
+    expect(dates(nightsFor('', at('14:00')))).toEqual(['2026-09-03']);
+    expect(dates(nightsFor('', at('23:59')))).toEqual(['2026-09-03']);
+  });
+
+  it('treats "tonight" and "today" as having asked for nothing in particular', () => {
+    expect(dates(nightsFor('tonight', at('03:00')))).toEqual(['2026-09-02']);
+    expect(dates(nightsFor('today', at('07:00')))).toEqual([
       '2026-09-02',
       '2026-09-03',
     ]);
   });
 
-  it('answers with one night at any other hour', () => {
-    expect(nightsFor('', at('11:00'))).toEqual(['2026-09-03']);
-    expect(nightsFor('', at('23:00'))).toEqual(['2026-09-03']);
-    expect(nightsFor('', at('03:00'))).toEqual(['2026-09-03']);
-  });
-
-  // Somebody who named a night has said which they mean; giving them two
+  // Somebody who named a night has said which they mean; overriding them
   // would be answering a question they did not ask.
-  it('gives one night to anybody who named one, even at seven', () => {
-    expect(nightsFor('yest', at('07:00'))).toEqual(['2026-09-02']);
-    expect(nightsFor('tomorrow', at('07:00'))).toEqual(['2026-09-04']);
-    expect(nightsFor('2026-08-19', at('07:00'))).toEqual(['2026-08-19']);
+  it('gives one night to anybody who named one, at any hour', () => {
+    expect(dates(nightsFor('yest', at('03:00')))).toEqual(['2026-09-02']);
+    expect(dates(nightsFor('tomorrow', at('03:00')))).toEqual(['2026-09-04']);
+    expect(dates(nightsFor('2026-08-19', at('07:00')))).toEqual(['2026-08-19']);
+    // ...and lets the date decide what to call it.
+    expect(nightsFor('2026-08-19', at('07:00'))?.[0].label).toBeUndefined();
   });
 
   it('still refuses what it cannot read', () => {

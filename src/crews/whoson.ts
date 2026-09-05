@@ -43,38 +43,59 @@ export function whosOnDate(
   return /^\d{4}-\d{2}-\d{2}$/.test(said) ? said : null;
 }
 
-/** 06:00 to 09:00 in New York, as minutes past midnight. */
-const MORNING_START = 6 * 60;
-const MORNING_END = 9 * 60;
-
 /**
- * Whether the answer to "who is on" is two nights rather than one.
- *
- * A night crew works into the following morning, so between the small hours
- * and the start of the day the interesting crew is the one that has just
- * finished — but by breakfast the one coming on that evening matters too.
- * Somebody asking at seven wants both, and cannot say which they meant.
+ * The hours a night crew's shift straddles, in New York, as minutes past
+ * midnight. A crew comes on in the evening, works through, and is relieved
+ * around six; by nine the night is over and the next one is what matters.
  */
-export function isHandoverMorning(now = new Date()): boolean {
-  const { minutes } = nyNow(now);
-  return minutes >= MORNING_START && minutes < MORNING_END;
+const NIGHT_ENDS = 6 * 60;
+const HANDOVER_ENDS = 9 * 60;
+
+/** A night to show, and what to call it at the hour it is being shown. */
+export interface Night {
+  date: string;
+  /** Unset means let the date decide, as it does for an explicit request. */
+  label?: string;
 }
 
 /**
- * The nights a bare /whoson should answer with, newest last.
+ * The nights a bare /whoson should answer with, in the order they happened.
+ *
+ * The calendar day is the wrong answer for a third of the hours in it,
+ * because a night crew belongs to the evening it started and works past
+ * midnight into the next date. So:
+ *
+ *   before 06:00  the crew that came on last night is still in the building,
+ *                 and is what "who is on" means. It is still tonight to
+ *                 anybody awake to ask, so that is what it is called.
+ *   06:00–09:00   one crew has just come off and another has not come on.
+ *                 Both, because which one is meant cannot be guessed.
+ *   after 09:00   the night ahead.
  *
  * Only when nothing was asked for in particular: somebody who typed a date,
  * or "yesterday", has said which night they mean and gets that one.
  */
-export function nightsFor(asked: string, now = new Date()): string[] | null {
-  const today = nyNow(now).dateStr;
+export function nightsFor(asked: string, now = new Date()): Night[] | null {
+  const { dateStr: today, minutes } = nyNow(now);
   const said = asked.trim().toLowerCase();
   const unspecified = said === '' || said === 'today' || said === 'tonight';
-  if (unspecified && isHandoverMorning(now)) {
-    return [addDays(today, -1), today];
+
+  if (unspecified) {
+    const lastNight = addDays(today, -1);
+    if (minutes < NIGHT_ENDS) {
+      return [{ date: lastNight, label: '*Tonight’s crew:*' }];
+    }
+    if (minutes < HANDOVER_ENDS) {
+      return [
+        { date: lastNight, label: '*Last night’s crew:*' },
+        { date: today, label: '*Tonight’s crew:*' },
+      ];
+    }
+    return [{ date: today }];
   }
+
   const one = whosOnDate(asked, today);
-  return one ? [one] : null;
+  return one ? [{ date: one }] : null;
 }
 
 export async function whosOnText(
@@ -148,12 +169,10 @@ export async function whosOnReply(
 ): Promise<string | null> {
   const nights = nightsFor(asked, now);
   if (!nights) return null;
-  if (nights.length === 1) return whosOnText(prisma, nights[0], { now });
-
-  const [previous, tonight] = nights;
-  const parts = await Promise.all([
-    whosOnText(prisma, previous, { label: '*Last night’s crew:*', now }),
-    whosOnText(prisma, tonight, { label: '*Tonight’s crew:*', now }),
-  ]);
+  const parts = await Promise.all(
+    nights.map((night) =>
+      whosOnText(prisma, night.date, { label: night.label, now }),
+    ),
+  );
   return parts.join('\n\n');
 }
