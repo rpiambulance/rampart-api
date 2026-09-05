@@ -8,8 +8,7 @@ import {
 import type { Request } from 'express';
 import { Public } from '../auth/public.decorator';
 import { ChoresService } from '../chores/chores.service';
-import { addDays, nyNow } from '../common/dates';
-import { whosOnText } from '../crews/whoson';
+import { whosOnReply } from '../crews/whoson';
 import { SlackLinkService } from '../notifications/slack-link.service';
 import { SlackService } from '../notifications/slack.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -67,7 +66,13 @@ export class SlackController {
    * works anywhere the app is installed.
    *
    * Accepts "tomorrow" or a plain date, since the question is often asked the
-   * night before.
+   * night before, and "yesterday" — or "yest" — because the morning after is
+   * when somebody wants to know who to ask about a call.
+   *
+   * Asked bare between six and nine in the morning it answers with both the
+   * night that has just ended and the one coming — at that hour a crew has
+   * just come off and another has not yet come on, and which one somebody
+   * means is not something they should have to spell out.
    */
   @Public()
   @Post('commands')
@@ -91,27 +96,17 @@ export class SlackController {
       return { response_type: 'ephemeral', text: 'Unknown command.' };
     }
 
-    const asked = (body.text ?? '').trim().toLowerCase();
-    const today = nyNow().dateStr;
-    const date =
-      asked === '' || asked === 'today' || asked === 'tonight'
-        ? today
-        : asked === 'tomorrow'
-          ? addDays(today, 1)
-          : /^\d{4}-\d{2}-\d{2}$/.test(asked)
-            ? asked
-            : null;
-    if (!date) {
+    const text = await whosOnReply(this.prisma, body.text ?? '');
+    if (!text) {
       return {
         response_type: 'ephemeral',
-        text: 'Try `/whoson`, `/whoson tomorrow`, or `/whoson 2026-08-19`.',
+        text:
+          'Try `/whoson`, `/whoson yesterday`, `/whoson tomorrow`, or ' +
+          '`/whoson 2026-08-19`.',
       };
     }
 
-    return {
-      response_type: 'ephemeral',
-      text: await whosOnText(this.prisma, date),
-    };
+    return { response_type: 'ephemeral', text };
   }
 
   /**
