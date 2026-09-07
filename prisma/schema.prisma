@@ -122,6 +122,7 @@ model Member {
   mishapsLogged            DispatchMishap[]                 @relation("DispatchMishapAuthor")
   mishapsRemoved           DispatchMishap[]                 @relation("DispatchMishapRemover")
   headsupCounterResets     HeadsupCounterReset[]            @relation("HeadsupCounterResetter")
+  defaultOutOfServiceSet   DefaultCrewOutOfService[]        @relation("DefaultOutOfServiceBy")
 }
 
 // ---------------------------------------------------------------------------
@@ -816,6 +817,23 @@ model DefaultCrewTemplate {
   placeholder String?
 
   @@unique([weekday, position])
+}
+
+/// A weekday the agency does not run a crew on, as a standing arrangement.
+///
+/// The per-seat template above cannot say this: it is a row per seat, and
+/// "no crew tonight" is a fact about the night rather than about any one of
+/// them. Generated crews inherit it, and can still be put back in service by
+/// hand for a particular date — the standing arrangement is a default, not a
+/// rule about every week for ever.
+model DefaultCrewOutOfService {
+  weekday Int     @id // 0 = Sunday ... 6 = Saturday
+  reason  String?
+
+  updatedAt   DateTime @updatedAt
+  updatedById Int?
+
+  updatedBy Member? @relation("DefaultOutOfServiceBy", fields: [updatedById], references: [id])
 }
 
 // Declared unavailability for a specific future date. Within the public

@@ -166,20 +166,21 @@ export class CrewEligibilityService {
       }
     }
 
-    const isAttendantCredentialed = await this.graph.satisfies(held, 'A');
-    if (position === 'ATTENDANT') {
-      // Attendant slot needs an attendant, unless an observer already covers
-      // the other rider seat.
-      if (isAttendantCredentialed || day.observerFilled) {
-        return { eligible: true, reason: '' };
-      }
-      return { eligible: false, reason: 'Attendant credential required' };
+    // The two rider seats are the same seat twice. Nothing distinguishes
+    // them — no credential, no different duty — so the only rule left is
+    // that they fill in order: while the first is empty the second is not
+    // offered. Both showing "sign up" at once produces a crew with a gap in
+    // the middle, and a schedule that reads as though somebody skipped a
+    // seat rather than as one with two places left.
+    //
+    // Previously the first seat asked for an attendant credential and the
+    // second steered credentialed attendants away from it. That steered
+    // rather than guaranteed anything — once either seat was taken the other
+    // opened to anyone — while making two seats labelled "Rider" behave
+    // differently for reasons the schedule never showed.
+    if (position === 'OBSERVER' && !day.attendantFilled) {
+      return { eligible: false, reason: 'Take the first rider seat' };
     }
-    // OBSERVER: attendants are steered to the attendant slot until it's
-    // filled. A Duty Supervisor is exempt — they may take any seat.
-    if (!isAttendantCredentialed || day.attendantFilled || outranksAll) {
-      return { eligible: true, reason: '' };
-    }
-    return { eligible: false, reason: 'Please take the attendant slot' };
+    return { eligible: true, reason: '' };
   }
 }

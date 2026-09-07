@@ -19,6 +19,7 @@ import {
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
@@ -26,6 +27,7 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
 import { CrewPosition } from '../generated/prisma/enums';
 import { CREW_POSITIONS, CrewsService } from './crews.service';
@@ -59,6 +61,22 @@ class AbsenceDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+class DefaultOutOfServiceDto {
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  weekday!: number;
+
+  /** False puts the weekday back in service and forgets the reason. */
+  @IsBoolean()
+  outOfService!: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
 }
 
 class DefaultSlotDto {
@@ -100,6 +118,7 @@ export class CrewsController {
     private readonly crews: CrewsService,
     private readonly settings: SettingsService,
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
   ) {}
 
   @Get()
@@ -251,6 +270,66 @@ export class CrewsController {
         placeholder: body.placeholder ?? null,
       },
     });
+  }
+
+  /** Which weekdays the agency does not run a crew on, as a standing rule. */
+  @Get('defaults/out-of-service')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_MANAGE_DEFAULTS)
+  getDefaultOutOfService() {
+    return this.prisma.defaultCrewOutOfService.findMany({
+      orderBy: { weekday: 'asc' },
+      include: {
+        updatedBy: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
+      },
+    });
+  }
+
+  /**
+   * Marking a weekday out of service, or putting it back.
+   *
+   * Only affects nights generated from here on. A week already on the
+   * schedule is left alone — somebody may have signed up for it, and quietly
+   * emptying a crew nobody was warned about is not what "change the default"
+   * should mean.
+   */
+  @Put('defaults/out-of-service')
+  @RequirePermissions(PERMISSIONS.SCHEDULE_CREWS_MANAGE_DEFAULTS)
+  async putDefaultOutOfService(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: DefaultOutOfServiceDto,
+  ) {
+    const updatedById = auth.kind === 'member' ? auth.memberId : null;
+    if (!body.outOfService) {
+      await this.prisma.defaultCrewOutOfService.deleteMany({
+        where: { weekday: body.weekday },
+      });
+      await this.audit.log(
+        auth,
+        'schedule.defaults.in-service',
+        'DefaultCrewOutOfService',
+        body.weekday,
+      );
+      return { weekday: body.weekday, outOfService: false };
+    }
+    const row = await this.prisma.defaultCrewOutOfService.upsert({
+      where: { weekday: body.weekday },
+      create: {
+        weekday: body.weekday,
+        reason: body.reason?.trim() || null,
+        updatedById,
+      },
+      update: { reason: body.reason?.trim() || null, updatedById },
+    });
+    await this.audit.log(
+      auth,
+      'schedule.defaults.out-of-service',
+      'DefaultCrewOutOfService',
+      body.weekday,
+      { reason: row.reason },
+    );
+    return { ...row, outOfService: true };
   }
 
   // ---- scheduling knobs ----

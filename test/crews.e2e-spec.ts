@@ -1,5 +1,11 @@
 import 'dotenv/config';
-import { CanActivate, ExecutionContext, INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  INestApplication,
+  ValidationPipe,
+  VersioningType,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -8,12 +14,19 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { CredentialGraphService } from '../src/credentials/credential-graph.service';
 import { ChoresService } from '../src/chores/chores.service';
 import { ChecksheetsService } from '../src/checksheets/checksheets.service';
+import { CrewsService } from '../src/crews/crews.service';
 import { CredentialsService } from '../src/credentials/credentials.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
 import { CertificationGraphService } from '../src/certifications/certification-graph.service';
 import { NotificationsService } from '../src/notifications/notifications.service';
-import { addDays, nyNow, startOfWeek, toDbDate, weekdayOf } from '../src/common/dates';
+import {
+  addDays,
+  nyNow,
+  startOfWeek,
+  toDbDate,
+  weekdayOf,
+} from '../src/common/dates';
 
 /**
  * Exercises the ported night-crew rules end-to-end against the dev Postgres.
@@ -61,7 +74,9 @@ describe('Night crews engine (e2e)', () => {
       },
     });
     for (const key of credentialKeys) {
-      const type = await prisma.credentialType.findUniqueOrThrow({ where: { key } });
+      const type = await prisma.credentialType.findUniqueOrThrow({
+        where: { key },
+      });
       await prisma.memberCredential.create({
         data: { memberId: member.id, typeId: type.id },
       });
@@ -85,7 +100,9 @@ describe('Night crews engine (e2e)', () => {
       .compile();
     app = moduleRef.createNestApplication();
     app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
     prisma = app.get(PrismaService);
 
@@ -102,7 +119,10 @@ describe('Night crews engine (e2e)', () => {
     tina = await createMember('Tina', ['O', 'A', 'A_CC', 'P_CC', 'CC', 'CC_T']);
 
     // Materialize the two visible weeks.
-    await request(app.getHttpServer()).get('/v1/crews').set(as(bob)).expect(200);
+    await request(app.getHttpServer())
+      .get('/v1/crews')
+      .set(as(bob))
+      .expect(200);
   });
 
   afterAll(async () => {
@@ -211,7 +231,9 @@ describe('Night crews engine (e2e)', () => {
     });
 
     async function typeId(key: string): Promise<number> {
-      const type = await prisma.credentialType.findUniqueOrThrow({ where: { key } });
+      const type = await prisma.credentialType.findUniqueOrThrow({
+        where: { key },
+      });
       return type.id;
     }
 
@@ -220,7 +242,11 @@ describe('Night crews engine (e2e)', () => {
       await request(app.getHttpServer())
         .post('/v1/credentials/grant')
         .set(asGranter(alice))
-        .send({ memberId: dana, credentialTypeId: type, effectiveAt: '2019-04-02' })
+        .send({
+          memberId: dana,
+          credentialTypeId: type,
+          effectiveAt: '2019-04-02',
+        })
         .expect(201);
       const held = await prisma.memberCredential.findUniqueOrThrow({
         where: { memberId_typeId: { memberId: dana, typeId: type } },
@@ -269,7 +295,11 @@ describe('Night crews engine (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/v1/credentials/grant')
         .set(asGranter(alice))
-        .send({ memberId: dana, credentialTypeId: type, effectiveAt: '2999-01-01' })
+        .send({
+          memberId: dana,
+          credentialTypeId: type,
+          effectiveAt: '2999-01-01',
+        })
         .expect(400);
       expect(res.body.message).toContain('future');
     });
@@ -291,8 +321,18 @@ describe('Night crews engine (e2e)', () => {
       // A DS holds the appointment plus its chain, but never FR_CC, which is
       // a CC add-on outside that chain.
       sup = await createMember('Sup', [
-        'O', 'A', 'A_CC', 'P_CC', 'CC', 'CC_T',
-        'A_D', 'P_D', 'D', 'D_T', 'EES', 'DS',
+        'O',
+        'A',
+        'A_CC',
+        'P_CC',
+        'CC',
+        'CC_T',
+        'A_D',
+        'P_D',
+        'D',
+        'D_T',
+        'EES',
+        'DS',
       ]);
       // Backfilled straight to CC without the rungs beneath it, which is what
       // an admin-granted or legacy-imported credential looks like.
@@ -314,8 +354,19 @@ describe('Night crews engine (e2e)', () => {
       const graph = app.get(CredentialGraphService);
       const held = await graph.heldKeys(sup);
       for (const key of [
-        'O', 'A', 'A_CC', 'P_CC', 'CC', 'CC_T', 'A_D', 'P_D', 'D', 'D_T',
-        'EES', 'FR_CC', 'DS',
+        'O',
+        'A',
+        'A_CC',
+        'P_CC',
+        'CC',
+        'CC_T',
+        'A_D',
+        'P_D',
+        'D',
+        'D_T',
+        'EES',
+        'FR_CC',
+        'DS',
       ]) {
         expect([key, await graph.satisfies(held, key)]).toEqual([key, true]);
       }
@@ -351,9 +402,18 @@ describe('Night crews engine (e2e)', () => {
         .set(as(sup))
         .expect(200);
       const day = res.body.nextWeek[3];
-      for (const position of ['CC', 'DRIVER', 'ATTENDANT', 'OBSERVER', 'DUTY_SUP']) {
-        expect([position, day.slots[position].eligible]).toEqual([position, true]);
+      // No credential stands between a DS and any seat.
+      for (const position of ['CC', 'DRIVER', 'ATTENDANT', 'DUTY_SUP']) {
+        expect([position, day.slots[position].eligible]).toEqual([
+          position,
+          true,
+        ]);
       }
+      // The second rider seat is held back until the first is taken. That is
+      // an ordering rule and applies to everybody, a DS included — it is not
+      // the ladder refusing them.
+      expect(day.slots.OBSERVER.eligible).toBe(false);
+      expect(day.slots.OBSERVER.reason).toBe('Take the first rider seat');
     });
   });
 
@@ -396,7 +456,9 @@ describe('Night crews engine (e2e)', () => {
         .get('/v1/members')
         .set(withPerms(scheduler, 'members:read,members:deactivate'))
         .expect(200);
-      expect(plain.body.map((m: { id: number }) => m.id)).not.toContain(retired);
+      expect(plain.body.map((m: { id: number }) => m.id)).not.toContain(
+        retired,
+      );
     });
 
     it('offers only active, suitably credentialed members per position', async () => {
@@ -405,7 +467,10 @@ describe('Night crews engine (e2e)', () => {
         .set(withPerms(scheduler, 'schedule:crews:assign'))
         .expect(200);
       const byId = new Map<number, string[]>(
-        res.body.map((m: { id: number; positions: string[] }) => [m.id, m.positions]),
+        res.body.map((m: { id: number; positions: string[] }) => [
+          m.id,
+          m.positions,
+        ]),
       );
 
       // Inactive members are not candidates at all.
@@ -494,7 +559,9 @@ describe('Night crews engine (e2e)', () => {
     });
 
     afterAll(async () => {
-      await prisma.event.deleteMany({ where: { title: `Future event ${stamp}` } });
+      await prisma.event.deleteMany({
+        where: { title: `Future event ${stamp}` },
+      });
       await prisma.crew.deleteMany({ where: { id: { in: created } } });
     });
 
@@ -528,7 +595,10 @@ describe('Night crews engine (e2e)', () => {
       await request(app.getHttpServer())
         .post('/v1/members/deactivate-many')
         .set(asDeactivator(actor))
-        .send({ memberIds: [lapsed], reason: `No participation since ${cutoff}` })
+        .send({
+          memberIds: [lapsed],
+          reason: `No participation since ${cutoff}`,
+        })
         .expect(201);
 
       const after = await prisma.member.findMany({
@@ -546,14 +616,19 @@ describe('Night crews engine (e2e)', () => {
         .set(asDeactivator(actor))
         .send({ memberIds: [actor], reason: 'test' })
         .expect(201);
-      const self = await prisma.member.findUniqueOrThrow({ where: { id: actor } });
+      const self = await prisma.member.findUniqueOrThrow({
+        where: { id: actor },
+      });
       expect(self.active).toBe(true);
     });
 
     it('requires the deactivate permission and a valid date', async () => {
       await request(app.getHttpServer())
         .get(`/v1/members/inactivity-review?since=${cutoff}`)
-        .set({ 'x-test-member-id': String(actor), 'x-test-permissions': 'members:read' })
+        .set({
+          'x-test-member-id': String(actor),
+          'x-test-permissions': 'members:read',
+        })
         .expect(403);
       await request(app.getHttpServer())
         .get('/v1/members/inactivity-review?since=whenever')
@@ -628,7 +703,11 @@ describe('Night crews engine (e2e)', () => {
         },
       });
       await prisma.memberRole.create({
-        data: { memberId: officer, roleId: role.id, startDate: toDbDate(nyNow().dateStr) },
+        data: {
+          memberId: officer,
+          roleId: role.id,
+          startDate: toDbDate(nyNow().dateStr),
+        },
       });
       try {
         const res = await request(app.getHttpServer())
@@ -709,7 +788,9 @@ describe('Night crews engine (e2e)', () => {
         .set(as(bob))
         .send({ eventView: 'week', active: false })
         .expect(200);
-      const member = await prisma.member.findUniqueOrThrow({ where: { id: bob } });
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { id: bob },
+      });
       expect(member.active).toBe(true);
       expect(member.eventView).toBe('week');
     });
@@ -725,14 +806,19 @@ describe('Night crews engine (e2e)', () => {
         })
         .send({ nineHundredNumber: '900123456' })
         .expect(200);
-      const member = await prisma.member.findUniqueOrThrow({ where: { id: bob } });
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { id: bob },
+      });
       expect(member.nineHundredNumber).toBe('900123456');
     });
 
     it('is not editable without it', async () => {
       await request(app.getHttpServer())
         .patch(`/v1/members/${bob}`)
-        .set({ 'x-test-member-id': String(alice), 'x-test-permissions': 'members:read' })
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'members:read',
+        })
         .send({ nineHundredNumber: '900999999' })
         .expect(403);
     });
@@ -744,14 +830,19 @@ describe('Night crews engine (e2e)', () => {
         .set(as(bob))
         .send({ nineHundredNumber: '900000000' })
         .expect(200);
-      const member = await prisma.member.findUniqueOrThrow({ where: { id: bob } });
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { id: bob },
+      });
       expect(member.nineHundredNumber).toBe('900123456');
     });
 
     it('is on the roster payload', async () => {
       const res = await request(app.getHttpServer())
         .get('/v1/members')
-        .set({ 'x-test-member-id': String(alice), 'x-test-permissions': 'members:read' })
+        .set({
+          'x-test-member-id': String(alice),
+          'x-test-permissions': 'members:read',
+        })
         .expect(200);
       const row = res.body.find((m: { id: number }) => m.id === bob);
       expect(row.nineHundredNumber).toBe('900123456');
@@ -875,7 +966,10 @@ describe('Night crews engine (e2e)', () => {
       await request(app.getHttpServer())
         .post('/v1/crews/bulk')
         .set(as(bob))
-        .send({ weekStart: addDays(startOfWeek(nyNow().dateStr), 7), action: 'clear' })
+        .send({
+          weekStart: addDays(startOfWeek(nyNow().dateStr), 7),
+          action: 'clear',
+        })
         .expect(403);
     });
   });
@@ -1001,13 +1095,17 @@ describe('Night crews engine (e2e)', () => {
           lastName: `Test${stamp}`,
           email: `revoked-${stamp}@example.com`,
           credentials: {
-            create: [{ typeId: observer.id, status: 'REVOKED', revokedAt: new Date() }],
+            create: [
+              { typeId: observer.id, status: 'REVOKED', revokedAt: new Date() },
+            ],
           },
         },
       });
       await backfillObservers(prisma);
       const held = await prisma.memberCredential.findUniqueOrThrow({
-        where: { memberId_typeId: { memberId: member.id, typeId: observer.id } },
+        where: {
+          memberId_typeId: { memberId: member.id, typeId: observer.id },
+        },
       });
       // A revocation leaves a row behind, and the floor respects it.
       expect(held.status).toBe('REVOKED');
@@ -1070,7 +1168,9 @@ describe('Night crews engine (e2e)', () => {
         expect(item?.satisfied).toBe(true);
       } finally {
         await prisma.memberCertification.delete({ where: { id: medic.id } });
-        await prisma.credentialRequirement.delete({ where: { id: requirement.id } });
+        await prisma.credentialRequirement.delete({
+          where: { id: requirement.id },
+        });
       }
     });
 
@@ -1130,7 +1230,9 @@ describe('Night crews engine (e2e)', () => {
         const graph = app.get(CertificationGraphService);
         graph.invalidate();
         // Mid is no longer between them, and no longer outranks anything.
-        expect((await graph.satisfying(low)).sort()).toEqual([low, high].sort());
+        expect((await graph.satisfying(low)).sort()).toEqual(
+          [low, high].sort(),
+        );
         expect(await graph.satisfying(mid)).toEqual([mid]);
       });
 
@@ -1145,7 +1247,6 @@ describe('Night crews engine (e2e)', () => {
         graph.invalidate();
         expect(await graph.satisfying(low)).toEqual([low]);
       });
-
     });
 
     it('refuses a link that would make a certification outrank itself', async () => {
@@ -1164,7 +1265,9 @@ describe('Night crews engine (e2e)', () => {
 
     it('requires settings:write to change the hierarchy', async () => {
       await request(app.getHttpServer())
-        .put(`/v1/certifications/types/${await typeIdFor('NYS EMT')}/supersedes`)
+        .put(
+          `/v1/certifications/types/${await typeIdFor('NYS EMT')}/supersedes`,
+        )
         .set(as(bob))
         .send({ lowerTypeIds: [] })
         .expect(403);
@@ -1197,7 +1300,9 @@ describe('Night crews engine (e2e)', () => {
         .send({ reason: 'No crews available that weekend' })
         .expect(201);
 
-      const row = await prisma.coverageRequest.findUniqueOrThrow({ where: { id } });
+      const row = await prisma.coverageRequest.findUniqueOrThrow({
+        where: { id },
+      });
       expect(row.declinedAt).toBeTruthy();
       expect(row.declineReason).toBe('No crews available that weekend');
 
@@ -1208,9 +1313,9 @@ describe('Night crews engine (e2e)', () => {
           'x-test-permissions': 'events:create',
         })
         .expect(200);
-      expect(
-        listed.body.find((r: { id: number }) => r.id === id).status,
-      ).toBe('DENIED');
+      expect(listed.body.find((r: { id: number }) => r.id === id).status).toBe(
+        'DENIED',
+      );
       await prisma.coverageRequest.delete({ where: { id } });
     });
 
@@ -1260,7 +1365,9 @@ describe('Night crews engine (e2e)', () => {
           'x-test-permissions': 'events:create,events:decline',
         })
         .expect(201);
-      const row = await prisma.coverageRequest.findUniqueOrThrow({ where: { id } });
+      const row = await prisma.coverageRequest.findUniqueOrThrow({
+        where: { id },
+      });
       expect(row.declinedAt).toBeTruthy();
       await prisma.coverageRequest.delete({ where: { id } });
     });
@@ -1489,7 +1596,11 @@ describe('Night crews engine (e2e)', () => {
       return event.id;
     }
 
-    for (const state of ['DRAFT', 'AVAILABILITY_REQUESTED', 'PENDING_APPROVAL']) {
+    for (const state of [
+      'DRAFT',
+      'AVAILABILITY_REQUESTED',
+      'PENDING_APPROVAL',
+    ]) {
       it(`declines from ${state}`, async () => {
         const id = await eventInState(state);
         await request(app.getHttpServer())
@@ -1562,10 +1673,7 @@ describe('Night crews engine (e2e)', () => {
           startsAt: '2027-03-01T18:00:00.000Z',
           endsAt: '2027-03-01T22:00:00.000Z',
           kindId: kind.id,
-          positions: [
-            { position: 'observer' },
-            { position: 'cc', count: 1 },
-          ],
+          positions: [{ position: 'observer' }, { position: 'cc', count: 1 }],
         })
         .expect(201);
       const eventId = created.body.id;
@@ -1669,7 +1777,9 @@ describe('Night crews engine (e2e)', () => {
           })
           .send({ action: 'APPROVE' })
           .expect(201);
-        expect(await icsFor(charlie)).toContain(`Approved then hidden ${stamp}`);
+        expect(await icsFor(charlie)).toContain(
+          `Approved then hidden ${stamp}`,
+        );
 
         // Hiding an approved event takes it back off calendars.
         await request(app.getHttpServer())
@@ -1785,7 +1895,9 @@ describe('Night crews engine (e2e)', () => {
         .get('/v1/inbox')
         .set(as(charlie))
         .expect(200);
-      expect(listed.body.map((m: { id: number }) => m.id)).not.toContain(mine.id);
+      expect(listed.body.map((m: { id: number }) => m.id)).not.toContain(
+        mine.id,
+      );
 
       // ...nor mark it read.
       await request(app.getHttpServer())
@@ -1826,7 +1938,11 @@ describe('Night crews engine (e2e)', () => {
         where: { name: 'Captain' },
       });
       await prisma.memberRole.create({
-        data: { memberId: alice, roleId: captain.id, startDate: toDbDate(nyNow().dateStr) },
+        data: {
+          memberId: alice,
+          roleId: captain.id,
+          startDate: toDbDate(nyNow().dateStr),
+        },
       });
     });
 
@@ -1961,8 +2077,9 @@ describe('Night crews engine (e2e)', () => {
       ]);
       // Items that are not option lists carry none.
       expect(
-        created.body.items.find((i: { scoreType: string }) => i.scoreType === 'TEXT')
-          .options,
+        created.body.items.find(
+          (i: { scoreType: string }) => i.scoreType === 'TEXT',
+        ).options,
       ).toBeNull();
       expect(created.body.items.length).toBe(4);
     });
@@ -2011,9 +2128,7 @@ describe('Night crews engine (e2e)', () => {
         .put(`/v1/evals/${created.body.id}/scores`)
         .set(asAuthor())
         .send({
-          scores: [
-            { itemId: template.body.items[0].id, optionValue: 'good' },
-          ],
+          scores: [{ itemId: template.body.items[0].id, optionValue: 'good' }],
           notes: 'Handled a difficult call well.',
           outcome: 'PASSED',
           readyForPromotion: true,
@@ -2132,14 +2247,14 @@ describe('Night crews engine (e2e)', () => {
     expect(day.slots.DUTY_SUP.eligible).toBe(false); // bob is not a DS
   });
 
-  it('lets an observer take one rider slot, then enforces the fairness limit', async () => {
+  it('lets a rider take one slot, then enforces the fairness limit', async () => {
     await request(app.getHttpServer())
-      .post(`/v1/crews/${await crewIdFor(dayA)}/slots/OBSERVER/signup`)
+      .post(`/v1/crews/${await crewIdFor(dayA)}/slots/ATTENDANT/signup`)
       .set(as(bob))
       .expect(201);
 
     const second = await request(app.getHttpServer())
-      .post(`/v1/crews/${await crewIdFor(dayB)}/slots/OBSERVER/signup`)
+      .post(`/v1/crews/${await crewIdFor(dayB)}/slots/ATTENDANT/signup`)
       .set(as(bob))
       .expect(403);
     expect(second.body.message).toContain('one rider shift');
@@ -2190,7 +2305,9 @@ describe('Night crews engine (e2e)', () => {
     // Alice signs up for today's crew, then tries to drop — the 18:00/T-2
     // deadline has necessarily passed for a same-day shift.
     const today = nyNow().dateStr;
-    const crew = await prisma.crew.findUnique({ where: { date: toDbDate(today) } });
+    const crew = await prisma.crew.findUnique({
+      where: { date: toDbDate(today) },
+    });
     if (!crew) return; // current week may not include today if generated late-week
     await prisma.crewSlot.update({
       where: { crewId_position: { crewId: crew.id, position: 'CC' } },
@@ -2206,7 +2323,7 @@ describe('Night crews engine (e2e)', () => {
   it('far-future drops succeed', async () => {
     const crewId = await crewIdFor(dayA);
     await request(app.getHttpServer())
-      .delete(`/v1/crews/${crewId}/slots/OBSERVER/signup`)
+      .delete(`/v1/crews/${crewId}/slots/ATTENDANT/signup`)
       .set(as(bob))
       .expect(200);
   });
@@ -2409,8 +2526,11 @@ describe('Night crews engine (e2e)', () => {
       expect(refused.body.message).toContain('date of birth');
       // Still pending, so the officer can answer and try again.
       expect(
-        (await prisma.accountRequest.findUniqueOrThrow({ where: { id: asked.id } }))
-          .status,
+        (
+          await prisma.accountRequest.findUniqueOrThrow({
+            where: { id: asked.id },
+          })
+        ).status,
       ).toBe('PENDING');
 
       const ok = await request(app.getHttpServer())
@@ -2490,7 +2610,9 @@ describe('Night crews engine (e2e)', () => {
         .delete(`/v1/headsup/notes/${id}`)
         .set(as(alice))
         .expect(200);
-      const gone = await prisma.headsupNote.findUniqueOrThrow({ where: { id } });
+      const gone = await prisma.headsupNote.findUniqueOrThrow({
+        where: { id },
+      });
       expect(gone.removedAt).not.toBeNull();
       expect(gone.removedById).toBe(alice);
 
@@ -2581,7 +2703,12 @@ describe('Night crews engine (e2e)', () => {
       });
       await prisma.accessLog.createMany({
         data: [
-          { kind: 'PAGE', memberId: alice, method: 'GET', path: `/members?s=${stamp}` },
+          {
+            kind: 'PAGE',
+            memberId: alice,
+            method: 'GET',
+            path: `/members?s=${stamp}`,
+          },
           {
             kind: 'API',
             memberId: alice,
@@ -2616,11 +2743,15 @@ describe('Night crews engine (e2e)', () => {
       expect(kinds).toEqual(new Set(['DECISION', 'PAGE', 'API']));
 
       // Newest first, whichever record each row came from.
-      const times = rows.map((r) => new Date((r as unknown as { at: string }).at).getTime());
+      const times = rows.map((r) =>
+        new Date((r as unknown as { at: string }).at).getTime(),
+      );
       expect([...times].sort((a, b) => b - a)).toEqual(times);
 
       // An actor is named, not left as a bare id, on traffic rows too.
-      const page = rows.find((r) => r.kind === 'PAGE' && r.entityId?.includes(String(stamp)));
+      const page = rows.find(
+        (r) => r.kind === 'PAGE' && r.entityId?.includes(String(stamp)),
+      );
       expect(page?.actorName).not.toMatch(/^member #/);
     });
 
@@ -2630,7 +2761,9 @@ describe('Night crews engine (e2e)', () => {
         .set(as(alice))
         .set('x-test-permissions', 'audit:read')
         .expect(200);
-      const kinds = new Set((res.body as Array<{ kind: string }>).map((r) => r.kind));
+      const kinds = new Set(
+        (res.body as Array<{ kind: string }>).map((r) => r.kind),
+      );
       expect(kinds.has('PAGE')).toBe(false);
       expect(kinds.has('API')).toBe(false);
     });
@@ -2655,7 +2788,12 @@ describe('Night crews engine (e2e)', () => {
       const email = `badge-${stamp}@example.com`;
       await request(app.getHttpServer())
         .post('/v1/requests/account')
-        .send({ inviteCode: code, firstName: 'Bo', lastName: `Test${stamp}`, email })
+        .send({
+          inviteCode: code,
+          firstName: 'Bo',
+          lastName: `Test${stamp}`,
+          email,
+        })
         .expect(201);
 
       const after = await request(app.getHttpServer())
@@ -2781,7 +2919,10 @@ describe('Night crews engine (e2e)', () => {
                 countPresent: 1,
                 expiries: {
                   create: [
-                    { position: 0, expiresAt: toDbDate(addDays(nyNow().dateStr, -3)) },
+                    {
+                      position: 0,
+                      expiresAt: toDbDate(addDays(nyNow().dateStr, -3)),
+                    },
                   ],
                 },
               },
@@ -2807,8 +2948,9 @@ describe('Night crews engine (e2e)', () => {
         .set(as(alice))
         .set('x-test-permissions', 'checksheets:read-all')
         .expect(200);
-      const mine = (res.body as Array<{ item: { id: number }; expired: boolean }>)
-        .find((row) => row.item.id === itemId);
+      const mine = (
+        res.body as Array<{ item: { id: number }; expired: boolean }>
+      ).find((row) => row.item.id === itemId);
       expect(mine?.expired).toBe(true);
     });
 
@@ -2837,7 +2979,11 @@ describe('Night crews engine (e2e)', () => {
     it('closes it when a check records a date that has not passed', async () => {
       const service = app.get(ChecksheetsService);
       await service.complete(
-        { kind: 'member', memberId: alice, permissions: new Set<string>() } as never,
+        {
+          kind: 'member',
+          memberId: alice,
+          permissions: new Set<string>(),
+        } as never,
         {
           templateId,
           assetId,
@@ -2848,7 +2994,7 @@ describe('Night crews engine (e2e)', () => {
               expiries: [addDays(nyNow().dateStr, 200)],
             },
           ],
-        } as never,
+        },
       );
       expect(
         await prisma.checksheetDeficiency.count({
@@ -2862,7 +3008,11 @@ describe('Night crews engine (e2e)', () => {
     it('raises one from a check that records a date already passed', async () => {
       const service = app.get(ChecksheetsService);
       await service.complete(
-        { kind: 'member', memberId: alice, permissions: new Set<string>() } as never,
+        {
+          kind: 'member',
+          memberId: alice,
+          permissions: new Set<string>(),
+        } as never,
         {
           templateId,
           assetId,
@@ -2873,7 +3023,7 @@ describe('Night crews engine (e2e)', () => {
               expiries: [addDays(nyNow().dateStr, -1)],
             },
           ],
-        } as never,
+        },
       );
       const open = await prisma.checksheetDeficiency.findMany({
         where: { templateId, resolvedAt: null },
@@ -2894,6 +3044,97 @@ describe('Night crews engine (e2e)', () => {
           (row) => row.item.id === itemId,
         )?.expired,
       ).toBe(true);
+    });
+  });
+
+  describe('a weekday the agency does not run', () => {
+    // The standing arrangement: no crew on that night, but somebody still
+    // carries the phone, so the duty supervisor seat is filled as usual.
+    it('generates the night out of service with only the duty sup placed', async () => {
+      const far = addDays(nyNow().dateStr, 120);
+      const weekday = weekdayOf(far);
+      const sup = await prisma.member.create({
+        data: {
+          firstName: 'Sup',
+          lastName: `Test${stamp}`,
+          email: `oos-sup-${stamp}@example.com`,
+          active: true,
+        },
+      });
+      const cc = await prisma.member.create({
+        data: {
+          firstName: 'Chief',
+          lastName: `Test${stamp}`,
+          email: `oos-cc-${stamp}@example.com`,
+          active: true,
+        },
+      });
+      await prisma.defaultCrewTemplate.createMany({
+        data: [
+          { weekday, position: 'DUTY_SUP', memberId: sup.id },
+          { weekday, position: 'CC', memberId: cc.id },
+        ],
+        skipDuplicates: true,
+      });
+      await prisma.defaultCrewOutOfService.create({
+        data: { weekday, reason: 'No crew on this night' },
+      });
+      await prisma.crew.deleteMany({ where: { date: toDbDate(far) } });
+
+      const service = app.get(CrewsService);
+      await service.ensureCrewsExist(far, 1);
+
+      const crew = await prisma.crew.findUniqueOrThrow({
+        where: { date: toDbDate(far) },
+        include: { slots: true },
+      });
+      expect(crew.outOfService).toBe(true);
+      expect(crew.outOfServiceReason).toBe('No crew on this night');
+
+      const seat = (position: string) =>
+        crew.slots.find((s) => s.position === position);
+      // The phone is still carried.
+      expect(seat('DUTY_SUP')?.memberId).toBe(sup.id);
+      // Nobody is put on a crew that is not going out.
+      expect(seat('CC')?.memberId).toBeNull();
+
+      await prisma.crew.deleteMany({ where: { date: toDbDate(far) } });
+      await prisma.defaultCrewOutOfService.deleteMany({ where: { weekday } });
+      await prisma.defaultCrewTemplate.deleteMany({ where: { weekday } });
+      await prisma.member.deleteMany({
+        where: { id: { in: [sup.id, cc.id] } },
+      });
+    });
+
+    it('places everybody as usual once the weekday is back in service', async () => {
+      const far = addDays(nyNow().dateStr, 121);
+      const weekday = weekdayOf(far);
+      const cc = await prisma.member.create({
+        data: {
+          firstName: 'Chief',
+          lastName: `Back${stamp}`,
+          email: `oos-back-${stamp}@example.com`,
+          active: true,
+        },
+      });
+      await prisma.defaultCrewTemplate.createMany({
+        data: [{ weekday, position: 'CC', memberId: cc.id }],
+        skipDuplicates: true,
+      });
+      await prisma.defaultCrewOutOfService.deleteMany({ where: { weekday } });
+      await prisma.crew.deleteMany({ where: { date: toDbDate(far) } });
+
+      await app.get(CrewsService).ensureCrewsExist(far, 1);
+      const crew = await prisma.crew.findUniqueOrThrow({
+        where: { date: toDbDate(far) },
+        include: { slots: true },
+      });
+      expect(crew.outOfService).toBe(false);
+      expect(crew.slots.find((s) => s.position === 'CC')?.memberId).toBe(cc.id);
+
+      await prisma.crew.deleteMany({ where: { date: toDbDate(far) } });
+      await prisma.defaultCrewTemplate.deleteMany({ where: { weekday } });
+      await prisma.member.delete({ where: { id: cc.id } });
     });
   });
 });

@@ -484,28 +484,48 @@ export class CrewsService {
     const absentOn = new Set(
       absences.map((a) => `${fromDbDate(a.date)}:${a.memberId}`),
     );
+    // Weekdays the agency does not run, as a standing arrangement.
+    const closed = new Map(
+      (await this.prisma.defaultCrewOutOfService.findMany()).map((row) => [
+        row.weekday,
+        row.reason,
+      ]),
+    );
 
     for (let i = 0; i < days; i++) {
       const dateStr = addDays(fromDate, i);
       if (have.has(dateStr)) continue;
       const weekday = weekdayOf(dateStr);
+      const outOfService = closed.has(weekday);
       await this.prisma.crew.create({
         data: {
           date: toDbDate(dateStr),
+          outOfService,
+          outOfServiceReason: closed.get(weekday) ?? null,
+          // Recorded as the standing arrangement it is, so the night reads as
+          // planned rather than as somebody having closed it on the day.
+          outOfServiceAt: outOfService ? new Date() : null,
           slots: {
             create: CREW_POSITIONS.map((position) => {
               const dflt = template.find(
                 (t) => t.weekday === weekday && t.position === position,
               );
+              // A night the agency does not run still has somebody carrying
+              // the phone, so the duty supervisor is placed as usual and the
+              // riding seats are left empty. Filling them would put four
+              // people on a crew that is not going out.
+              const staffed = !outOfService || position === 'DUTY_SUP';
               // Declared absences suppress default-template placement.
               const defaultMember =
-                dflt?.memberId && !absentOn.has(`${dateStr}:${dflt.memberId}`)
+                staffed &&
+                dflt?.memberId &&
+                !absentOn.has(`${dateStr}:${dflt.memberId}`)
                   ? dflt.memberId
                   : null;
               return {
                 position,
                 memberId: defaultMember,
-                placeholder: dflt?.placeholder ?? null,
+                placeholder: staffed ? (dflt?.placeholder ?? null) : null,
               };
             }),
           },
@@ -624,6 +644,13 @@ export class CrewsService {
     const absentOn = new Set(
       absences.map((a) => `${fromDbDate(a.date)}:${a.memberId}`),
     );
+    // Weekdays the agency does not run, as a standing arrangement.
+    const closed = new Map(
+      (await this.prisma.defaultCrewOutOfService.findMany()).map((row) => [
+        row.weekday,
+        row.reason,
+      ]),
+    );
 
     let changed = 0;
     for (const dateStr of dates) {
@@ -644,6 +671,15 @@ export class CrewsService {
         }
         // apply-defaults only fills what is empty; it never displaces anyone.
         if (slot.memberId !== null || slot.placeholder !== null) continue;
+        // A weekday the agency does not run gets its duty supervisor and
+        // nothing else, the same as a night generated from the template —
+        // applying the defaults should land where generating from them
+        // would. The night's own service status is left alone: somebody may
+        // have deliberately put this one back in service, and quietly
+        // reversing that is not what filling vacancies should do.
+        if (closed.has(weekdayOf(dateStr)) && slot.position !== 'DUTY_SUP') {
+          continue;
+        }
         const dflt = template.find(
           (t) =>
             t.weekday === weekdayOf(dateStr) && t.position === slot.position,
