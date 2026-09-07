@@ -244,8 +244,12 @@ export class CrewsService {
       if ((await this.graph.satisfies(held, 'D')) || held.has('P_D')) {
         positions.push('DRIVER');
       }
-      if (await this.graph.satisfies(held, 'A')) positions.push('ATTENDANT');
-      // The rider seat is the way in: open to any active member.
+      // Both rider seats are the way in, and they are the same seat twice:
+      // no credential stands in front of either. This has to agree with
+      // CrewEligibilityService, which decides the same question for members
+      // signing themselves up — when the two disagreed, an officer saw half
+      // the roster missing from one of two identically labelled dropdowns.
+      positions.push('ATTENDANT');
       positions.push('OBSERVER');
       if (
         (await this.graph.satisfies(held, 'DS')) ||

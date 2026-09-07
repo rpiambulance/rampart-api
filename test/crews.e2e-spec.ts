@@ -483,8 +483,9 @@ describe('Night crews engine (e2e)', () => {
       expect(byId.get(alice)).not.toContain('DRIVER');
       expect(byId.get(alice)).not.toContain('DUTY_SUP');
 
-      // Bob is an observer only: the rider seat is the way in.
-      expect(byId.get(bob)).toEqual(['OBSERVER']);
+      // Bob holds nothing: both rider seats are the way in, and neither asks
+      // for a credential. The seats a credential does gate stay shut.
+      expect(byId.get(bob)).toEqual(['ATTENDANT', 'OBSERVER']);
 
       // Charlie is probationary CC — schedulable, trainer rule applies on the night.
       expect(byId.get(charlie)).toContain('CC');
