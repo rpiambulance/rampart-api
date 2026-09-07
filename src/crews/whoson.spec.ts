@@ -130,7 +130,7 @@ describe('what night /whoson was asked about', () => {
     expect(whosOnDate('tonight', TODAY)).toBe(TODAY);
   });
 
-  it('understands yesterday, spelt out or not', () => {
+  it('understands yesterday, spelled out or not', () => {
     expect(whosOnDate('yesterday', TODAY)).toBe('2026-09-02');
     expect(whosOnDate('yest', TODAY)).toBe('2026-09-02');
   });

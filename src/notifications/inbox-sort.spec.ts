@@ -10,7 +10,7 @@ import {
  *
  * Two things worth pinning. A date order must be only a date order, with
  * nothing sorted ahead of it. And Postgres puts nulls last on an ascending
- * column, which is backwards for readAt — an unread message has none, and
+ * column, which is backward for readAt — an unread message has none, and
  * those are the rows meant to float.
  */
 describe('inbox ordering', () => {

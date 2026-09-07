@@ -19,7 +19,7 @@ model Member {
   id                 Int       @id @default(autoincrement())
   legacyId           Int?      @unique // members.id from the old MySQL portal
   keycloakSubject    String?   @unique
-  /// The legal first name: what is on the licence and the certification
+  /// The legal first name: what is on the license and the certification
   /// card, and what the agency is obliged to record. Only an officer changes
   /// it, because it is identity.
   firstName          String
@@ -173,7 +173,7 @@ model CertificationType {
   abbreviation          String
   issuingOrg            String?
   defaultValidityMonths Int? // null = non-expiring
-  /// What this type asks of whoever submits it. A driver's licence needs its
+  /// What this type asks of whoever submits it. A driver's license needs its
   /// number and its expiry; a one-off class needs neither, and asking anyway
   /// trains people to leave fields blank. Everything defaults to OPTIONAL,
   /// which is how every type behaved before this existed.
@@ -250,7 +250,7 @@ model MemberCertification {
   @@index([expiresAt])
 }
 
-/// Uploaded proof of a certification — licence cards, course certificates.
+/// Uploaded proof of a certification — license cards, course certificates.
 ///
 /// The id is a random UUID rather than a sequence: it addresses a file of
 /// somebody's personal paperwork, and a sequential one lets anyone who can
@@ -1595,7 +1595,7 @@ model ChecksheetSection {
 ///
 /// A seal is how a section is checked without opening it: read the number,
 /// confirm it matches, move on. The number is recorded rather than merely
-/// confirmed so a seal changing between checks is visible afterwards.
+/// confirmed so a seal changing between checks is visible afterward.
 model ChecksheetSectionEntry {
   id          Int     @id @default(autoincrement())
   runId       Int

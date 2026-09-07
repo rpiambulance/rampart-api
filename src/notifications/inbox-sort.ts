@@ -24,7 +24,7 @@ export function isInboxSort(value: unknown): value is InboxSort {
 }
 
 /**
- * Postgres sorts nulls last on an ascending column, which is backwards for
+ * Postgres sorts nulls last on an ascending column, which is backward for
  * the column that matters here: an unread message has a null readAt, and
  * those are the ones that belong at the top. Prisma spells that out per
  * field.

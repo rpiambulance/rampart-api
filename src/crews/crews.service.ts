@@ -600,7 +600,7 @@ export class CrewsService {
     position: CrewPosition,
     target: { memberId?: number | null; placeholder?: string | null },
   ) {
-    // Create the one night being assigned, empty. Materialising the whole
+    // Create the one night being assigned, empty. Materializing the whole
     // week from the default template would invent shifts on the other six
     // days — the same trap that made past weeks unsafe to page back through.
     const crew = await this.prisma.crew.upsert({

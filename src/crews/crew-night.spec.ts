@@ -40,7 +40,7 @@ describe('which crew night is on', () => {
     expect(currentCrewNight(est(15, '20:00'))).toBe('2026-01-15');
   });
 
-  it('crosses a month boundary backwards', () => {
+  it('crosses a month boundary backward', () => {
     expect(currentCrewNight(edt(1, '03:00'))).toBe('2026-07-31');
   });
 });

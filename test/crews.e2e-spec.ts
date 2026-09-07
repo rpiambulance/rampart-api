@@ -1202,7 +1202,7 @@ describe('Night crews engine (e2e)', () => {
         });
       });
 
-      it('stores an ordered ladder as neighbouring links only', async () => {
+      it('stores an ordered ladder as neighboring links only', async () => {
         const [low, mid, high] = rungs;
         const res = await request(app.getHttpServer())
           .put('/v1/certifications/ladder')
@@ -1932,7 +1932,7 @@ describe('Night crews engine (e2e)', () => {
     beforeAll(async () => {
       student = await createMember('Student', ['O', 'A']);
       // Somebody has to be able to issue the number, or the task has nobody
-      // to go to — which is itself the correct behaviour, just not the case
+      // to go to — which is itself the correct behavior, just not the case
       // under test here.
       const captain = await prisma.role.findUniqueOrThrow({
         where: { name: 'Captain' },
@@ -2147,7 +2147,7 @@ describe('Night crews engine (e2e)', () => {
       expect(task).toBeTruthy();
       expect(task!.actionUrl).toBe(`/evals/${created.body.id}`);
 
-      // Signing it off completes the acknowledgement.
+      // Signing it off completes the acknowledgment.
       await request(app.getHttpServer())
         .post(`/v1/evals/${created.body.id}/sign`)
         .set(as(bob))

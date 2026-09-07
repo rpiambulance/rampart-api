@@ -355,7 +355,7 @@ async function adoptExisting(prisma: PrismaClient, log: (m: string) => void) {
  * Creates reference data that has never been created before.
  *
  * Safe to call on every boot, and — unlike create-if-missing — safe to delete
- * from afterwards. The ledger records what has been provisioned rather than
+ * from afterward. The ledger records what has been provisioned rather than
  * inspecting what currently exists, so removing a certification type, an
  * event kind or a role in the console is respected instead of being undone by
  * the next deployment. Reference data added to these lists later still gets

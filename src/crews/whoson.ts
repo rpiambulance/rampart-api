@@ -157,7 +157,7 @@ export async function whosOnText(
 /**
  * What /whoson answers with.
  *
- * One night usually; two through the handover morning, labelled by what each
+ * One night usually; two through the handover morning, labeled by what each
  * one is to somebody reading at seven o'clock rather than by its date — "last
  * night" and "tonight" are how the question gets asked, and a pair of ISO
  * dates would leave the reader working out which was which.

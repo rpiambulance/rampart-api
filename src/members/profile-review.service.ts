@@ -111,7 +111,7 @@ export class ProfileReviewService {
    * Everybody who could actually answer.
    *
    * Inactive members are skipped rather than filtered out of the notification
-   * afterwards: someone who has left the agency should not be marked as
+   * afterward: someone who has left the agency should not be marked as
    * owing the agency a task, and should certainly not be emailed about it.
    */
   async requestFromEveryone(auth: AuthContext, note?: string) {

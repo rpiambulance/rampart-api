@@ -176,7 +176,7 @@ export class CrewEligibilityService {
     // Previously the first seat asked for an attendant credential and the
     // second steered credentialed attendants away from it. That steered
     // rather than guaranteed anything — once either seat was taken the other
-    // opened to anyone — while making two seats labelled "Rider" behave
+    // opened to anyone — while making two seats labeled "Rider" behave
     // differently for reasons the schedule never showed.
     if (position === 'OBSERVER' && !day.attendantFilled) {
       return { eligible: false, reason: 'Take the first rider seat' };

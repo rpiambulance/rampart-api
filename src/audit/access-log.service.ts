@@ -19,7 +19,7 @@ export interface AccessEntry {
  *
  * Writes are queued and flushed in batches rather than awaited inline. A row
  * per request is a lot of rows, and the point of the log is to have a record
- * afterwards — not to make every response wait on an insert, nor to fail a
+ * afterward — not to make every response wait on an insert, nor to fail a
  * request because the log could not be written.
  */
 @Injectable()

@@ -576,7 +576,7 @@ export class CertificationsService {
 
   /**
    * Saves a ladder: an ordered chain from highest to lowest, where each rung
-   * outranks the one below it. Only the neighbouring step is stored — the
+   * outranks the one below it. Only the neighboring step is stored — the
    * graph resolves the rest — so a four-rung ladder is three links, not six.
    *
    * Saving replaces the entire chain the rungs belong to, not merely the links
@@ -598,10 +598,10 @@ export class CertificationsService {
 
     // Everything transitively linked to any rung, in either direction.
     const edges = await this.prisma.certificationSupersession.findMany();
-    const neighbours = new Map<number, Set<number>>();
+    const neighbors = new Map<number, Set<number>>();
     const link = (a: number, b: number) => {
-      if (!neighbours.has(a)) neighbours.set(a, new Set());
-      neighbours.get(a)!.add(b);
+      if (!neighbors.has(a)) neighbors.set(a, new Set());
+      neighbors.get(a)!.add(b);
     };
     for (const edge of edges) {
       link(edge.higherTypeId, edge.lowerTypeId);
@@ -610,7 +610,7 @@ export class CertificationsService {
     const chain = new Set<number>(rungs);
     const queue = [...rungs];
     while (queue.length) {
-      for (const next of neighbours.get(queue.pop()!) ?? []) {
+      for (const next of neighbors.get(queue.pop()!) ?? []) {
         if (chain.has(next)) continue;
         chain.add(next);
         queue.push(next);
@@ -983,7 +983,7 @@ export class CertificationsService {
    * credentials:grant has looked at it and said so.
    *
    * Audited as one deliberate act: an automatic sweep and an officer
-   * overruling a safety limit should not read the same afterwards.
+   * overruling a safety limit should not read the same afterward.
    */
   async applySuspensions(auth: AuthContext) {
     const changes = await this.planSuspensions();

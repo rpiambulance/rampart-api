@@ -51,7 +51,7 @@ describe('invite codes', () => {
       /as many times/,
     );
     // Over the limit as well as at it — a race that let two through at once
-    // must not leave the code open afterwards.
+    // must not leave the code open afterward.
     expect(inviteProblem({ ...open, maxUses: 3, uses: 4 }, now)).toMatch(
       /as many times/,
     );

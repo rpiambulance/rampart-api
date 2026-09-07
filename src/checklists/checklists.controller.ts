@@ -47,7 +47,7 @@ function requireMember(auth: AuthContext): number {
  * Training checklists: lines signed off one at a time, over time, by whoever
  * holds the credential that line calls for.
  *
- * Signing is authorised by credential rather than by permission — the same
+ * Signing is authorized by credential rather than by permission — the same
  * rule as trainer clearances. A trainer's authority to say "I watched them do
  * this" comes from what they are qualified in, not from an administrative
  * grant, so nothing here is gated on a permission except withdrawing someone

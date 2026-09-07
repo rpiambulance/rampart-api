@@ -594,7 +594,7 @@ export class ChecksheetsService {
    * Opens a deficiency for anything already expired that has not got one.
    *
    * A completed check finds what had expired on the day it was done. A date
-   * passes on its own afterwards, and nothing was noticing: the expiry report
+   * passes on its own afterward, and nothing was noticing: the expiry report
    * computes from the date and showed the item, while the deficiency list —
    * which only ever learned at check time — said the asset was fine until
    * somebody happened to check it again. On a bag checked monthly that is

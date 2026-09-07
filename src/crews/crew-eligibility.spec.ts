@@ -54,7 +54,7 @@ describe('the two rider seats', () => {
   const service = new CrewEligibilityService(graph);
 
   // The fault reported: the first rider seat asked for a credential the
-  // second did not, while the schedule labelled both of them "Rider".
+  // second did not, while the schedule labeled both of them "Rider".
   it('asks nothing of the first seat that it does not ask of the second', async () => {
     const first = await service.check(ask('ATTENDANT'));
     expect(first).toEqual({ eligible: true, reason: '' });
@@ -74,7 +74,7 @@ describe('the two rider seats', () => {
   });
 
   // An officer can assign somebody straight into the second seat, which
-  // bypasses all of this. The first seat must still be offered afterwards.
+  // bypasses all of this. The first seat must still be offered afterward.
   it('still offers the first seat when only the second is filled', async () => {
     const first = await service.check(
       ask('ATTENDANT', { day: day({ observerFilled: true }) }),
@@ -83,7 +83,7 @@ describe('the two rider seats', () => {
   });
 
   // Holding the attendant credential used to decide which seat you were
-  // pushed towards. It decides nothing now.
+  // pushed toward. It decides nothing now.
   it('treats a credentialed attendant the same as anybody else', async () => {
     const held = new Set(['A']);
     expect(

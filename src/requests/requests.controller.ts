@@ -103,7 +103,7 @@ class AccountRequestDto {
    *
    * All optional: somebody asking to join should not be turned away over a
    * home phone number, and everything here can be edited once they are in.
-   * Asking now only saves the chasing afterwards.
+   * Asking now only saves the chasing afterward.
    */
   @IsOptional()
   @IsString()

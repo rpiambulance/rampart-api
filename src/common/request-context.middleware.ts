@@ -20,7 +20,7 @@ const IGNORED = [/^(\/v\d+)?\/health/, /^(\/v\d+)?\/docs/, /^\/favicon\.ico$/];
  * The logged path is the full URL, so without this the shared secret is
  * written in the clear on every call, into a table the console will happily
  * show. Redacted rather than dropped: which endpoint was called, and whether
- * it was authorised, is exactly what the log is for.
+ * it was authorized, is exactly what the log is for.
  */
 const SECRET_QUERY_PARAMS = /([?&](?:token|access_token|api_key)=)[^&]*/gi;
 

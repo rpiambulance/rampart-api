@@ -515,7 +515,7 @@ export class CredentialsService {
 
     const today = nyToday();
     for (const req of type.requirements) {
-      // Anything this requirement adds is tagged afterwards, so each branch
+      // Anything this requirement adds is tagged afterward, so each branch
       // stays about the requirement rather than about grouping.
       const before = items.length;
       const tag = () => {

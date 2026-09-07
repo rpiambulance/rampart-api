@@ -429,7 +429,7 @@ export class EventsService {
         },
       });
     }
-    // Approving publishes it; declining or cancelling takes it back out of
+    // Approving publishes it; declining or canceling takes it back out of
     // the calendar if it had already been published.
     await this.syncCalendar(updated);
     if ((action === 'APPROVE' || action === 'DENY') && event.coverageRequest) {

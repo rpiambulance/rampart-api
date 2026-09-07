@@ -159,7 +159,7 @@ describe('ongoing vs promotion requirements', () => {
     expect(updates).toEqual([{ id: 1, status: 'SUSPENDED' }]);
   });
 
-  it('honours a waiver, which is what grandfathering writes', async () => {
+  it('honors a waiver, which is what grandfathering writes', async () => {
     const { service, updates } = serviceWith({
       requirements: [ongoing],
       holders: [{ id: 1, memberId: 7, status: 'ACTIVE', holdsCert: false }],

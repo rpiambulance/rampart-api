@@ -79,7 +79,7 @@ function toItemData(item: TemplateItemInput, order: number) {
 /**
  * Writes a template's nodes: loose items and groups interleaved, each keeping
  * the position it was given. Callers that still send a flat item list get the
- * old behaviour — every item loose, in the order supplied.
+ * old behavior — every item loose, in the order supplied.
  */
 function toNodes(
   nodes: TemplateNodeInput[] | undefined,
@@ -421,7 +421,7 @@ export class EvalsService {
         data: {
           // The number goes up on every edit, including the ones made in
           // place. A form nobody has filled in yet is still a different form
-          // afterwards, and "v3" is how somebody holding a printout knows
+          // afterward, and "v3" is how somebody holding a printout knows
           // theirs is stale.
           version: nextVersion,
           signoffCredentialTypes: {

@@ -419,7 +419,7 @@ export class ChecklistsService {
    * Takes somebody off a checklist they should not have been started on.
    *
    * Refused once anything has been signed: that is a record of work somebody
-   * witnessed, and dropping the enrolment would orphan it.
+   * witnessed, and dropping the enrollment would orphan it.
    */
   async unstart(auth: AuthContext, templateId: number, memberId: number) {
     const template = await this.templateOrThrow(templateId);
