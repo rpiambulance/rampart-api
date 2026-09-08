@@ -7,12 +7,22 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import {
+  IsDateString,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { createHash } from 'crypto';
 import { Public } from '../auth/public.decorator';
 import { isDateOnly, nyDayEnd, nyDayStart } from '../common/dates';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { CurrentAuth } from '../auth/current-auth.decorator';
+import type { AuthContext } from '../auth/auth-context';
 import { HeadsupEvents } from '../headsup/headsup.events';
 import { WebhooksService } from '../webhooks/webhooks.service';
 
@@ -31,20 +41,72 @@ import { WebhooksService } from '../webhooks/webhooks.service';
  *   "Dispatched Units", "Response Areas", latitude, longitude,
  *   geocoded_place.
  */
+/** What a person can say about a call the feed never delivered. */
+class ManualDispatchDto {
+  /** When the call came in. Now, unless somebody is writing up an old one. */
+  @IsOptional()
+  @IsDateString()
+  receivedAt?: string;
+
+  @IsOptional()
+  @IsIn(['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Omega', 'Unknown'])
+  determinant?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  complaint?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  location?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  business?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  additionalInfo?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  crossStreets?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  units?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  responseAreas?: string;
+}
+
 @Controller({ version: '1' })
 export class DispatchesController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly webhooks: WebhooksService,
     private readonly headsup: HeadsupEvents,
+    private readonly audit: AuditService,
   ) {}
 
   private async validateIngestToken(raw?: string): Promise<void> {
     if (!raw?.startsWith('rpa_')) {
-      throw new UnauthorizedException('A dispatches:ingest API token is required');
+      throw new UnauthorizedException(
+        'A dispatches:ingest API token is required',
+      );
     }
     const tokenHash = createHash('sha256').update(raw).digest('hex');
-    const token = await this.prisma.apiToken.findUnique({ where: { tokenHash } });
+    const token = await this.prisma.apiToken.findUnique({
+      where: { tokenHash },
+    });
     const now = new Date();
     if (
       !token ||
@@ -91,6 +153,11 @@ export class DispatchesController {
         latitude: num(body['latitude']),
         longitude: num(body['longitude']),
         geocodedPlace: str(body['geocoded_place']),
+        // Required by Prisma's JSON input type. The lint rule disagrees —
+        // it reads the assertion as redundant — and `eslint --fix` has
+        // quietly removed it, which breaks the build and not a test. tsc is
+        // the authority here, so the rule is silenced rather than obeyed.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         raw: body as object,
       },
     });
@@ -115,6 +182,56 @@ export class DispatchesController {
     return { ok: true, id: dispatch.id };
   }
 
+  /**
+   * A dispatch entered by hand.
+   *
+   * Herald misses calls — a dead phone, a dropped message, a page that
+   * arrived as mojibake — and a missing one is not just a gap in the log:
+   * it is a call absent from the count on the board and from anything
+   * anybody reports off that log later.
+   *
+   * Deliberately quieter than an ingested one. The screens in the bay are
+   * not interrupted and the dispatch.received webhook does not fire, because
+   * both of those mean "this is happening now" and this almost never is —
+   * it is somebody writing up a call that already ended. The board's count
+   * does move, because the call did happen and the number is meant to say
+   * how many there have been.
+   */
+  @Post('dispatches')
+  @RequirePermissions(PERMISSIONS.DISPATCHES_WRITE)
+  async createManually(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: ManualDispatchDto,
+  ) {
+    const clean = (value?: string) => value?.trim() || null;
+    const enteredById = auth.kind === 'member' ? auth.memberId : null;
+    const dispatch = await this.prisma.dispatch.create({
+      data: {
+        receivedAt: body.receivedAt ? new Date(body.receivedAt) : new Date(),
+        determinant: clean(body.determinant),
+        complaint: clean(body.complaint),
+        location: clean(body.location),
+        business: clean(body.business),
+        additionalInfo: clean(body.additionalInfo),
+        crossStreets: clean(body.crossStreets),
+        units: clean(body.units),
+        responseAreas: clean(body.responseAreas),
+        enteredById,
+        // `raw` is the payload as received, and there wasn't one. Saying so
+        // is better than an empty object that reads like a failed ingest.
+        raw: { source: 'manual', enteredById },
+      },
+    });
+    await this.audit.log(auth, 'dispatches.create', 'Dispatch', dispatch.id, {
+      determinant: dispatch.determinant,
+      complaint: dispatch.complaint,
+      receivedAt: dispatch.receivedAt.toISOString(),
+    });
+    // The count on the board is the one thing that should move.
+    this.headsup.boardChanged();
+    return dispatch;
+  }
+
   @Get('dispatches')
   @RequirePermissions(PERMISSIONS.DISPATCHES_READ)
   list(
@@ -136,13 +253,34 @@ export class DispatchesController {
           ? {
               // The fields someone would actually search a call by.
               OR: [
-                { complaint: { contains: search, mode: 'insensitive' as const } },
-                { location: { contains: search, mode: 'insensitive' as const } },
-                { business: { contains: search, mode: 'insensitive' as const } },
-                { crossStreets: { contains: search, mode: 'insensitive' as const } },
+                {
+                  complaint: { contains: search, mode: 'insensitive' as const },
+                },
+                {
+                  location: { contains: search, mode: 'insensitive' as const },
+                },
+                {
+                  business: { contains: search, mode: 'insensitive' as const },
+                },
+                {
+                  crossStreets: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
                 { units: { contains: search, mode: 'insensitive' as const } },
-                { determinant: { contains: search, mode: 'insensitive' as const } },
-                { additionalInfo: { contains: search, mode: 'insensitive' as const } },
+                {
+                  determinant: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+                {
+                  additionalInfo: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
               ],
             }
           : {}),
@@ -154,6 +292,11 @@ export class DispatchesController {
               },
             }
           : {}),
+      },
+      include: {
+        enteredBy: {
+          select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
       },
       orderBy: { receivedAt: 'desc' },
       take: limit ? Math.min(Number(limit), 500) : 100,

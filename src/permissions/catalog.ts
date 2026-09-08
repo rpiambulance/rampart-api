@@ -43,6 +43,10 @@ export const PERMISSIONS = {
   VEHICLES_MANAGE: 'vehicles:manage',
   TOKENS_MANAGE: 'tokens:manage',
   DISPATCHES_INGEST: 'dispatches:ingest',
+  /** Enter a dispatch by hand — one Herald never delivered, or one that
+   *  arrived garbled. Separate from the machine token's ingest permission:
+   *  a person filling a gap is not the feed. */
+  DISPATCHES_WRITE: 'dispatches:write',
   /** Edit standby locations and their run-number counters. Issuing a number
    *  needs nothing: anyone standing by may need one. */
   RUN_NUMBERS_MANAGE: 'run-numbers:manage',

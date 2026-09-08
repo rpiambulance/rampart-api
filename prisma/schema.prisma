@@ -123,6 +123,7 @@ model Member {
   mishapsRemoved           DispatchMishap[]                 @relation("DispatchMishapRemover")
   headsupCounterResets     HeadsupCounterReset[]            @relation("HeadsupCounterResetter")
   defaultOutOfServiceSet   DefaultCrewOutOfService[]        @relation("DefaultOutOfServiceBy")
+  dispatchesEntered        Dispatch[]                       @relation("DispatchEnteredBy")
 }
 
 // ---------------------------------------------------------------------------
@@ -1239,6 +1240,13 @@ model Dispatch {
   longitude      Float?
   geocodedPlace  String?
   raw            Json // the full payload as received, for reprocessing
+  /// Set when somebody typed this in rather than Herald sending it — a call
+  /// the feed missed, or one that arrived unreadable. Null is the ordinary
+  /// case, so the log can say which entries are somebody's recollection and
+  /// which are what the pager actually said.
+  enteredById    Int?
+
+  enteredBy Member? @relation("DispatchEnteredBy", fields: [enteredById], references: [id])
 
   @@index([receivedAt])
 }

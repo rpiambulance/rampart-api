@@ -3138,4 +3138,98 @@ describe('Night crews engine (e2e)', () => {
       await prisma.member.delete({ where: { id: cc.id } });
     });
   });
+
+  describe('a dispatch entered by hand', () => {
+    // Herald misses calls. A missing one is a gap in the log and a call
+    // absent from the count on the board, so somebody has to be able to
+    // put it in.
+    it('records the call, who typed it, and when it came in', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/dispatches')
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:write')
+        .send({
+          receivedAt: '2026-09-06T02:14:00.000Z',
+          determinant: 'Delta',
+          complaint: `Cardiac arrest ${stamp}`,
+          location: '1999 Burdett Ave',
+          units: 'E59',
+        })
+        .expect(201);
+
+      const saved = await prisma.dispatch.findUniqueOrThrow({
+        where: { id: res.body.id },
+      });
+      expect(saved).toMatchObject({
+        determinant: 'Delta',
+        complaint: `Cardiac arrest ${stamp}`,
+        location: '1999 Burdett Ave',
+        units: 'E59',
+        enteredById: alice,
+      });
+      // Backdated as given, not stamped with now.
+      expect(saved.receivedAt.toISOString()).toBe('2026-09-06T02:14:00.000Z');
+      // An ingested dispatch keeps Herald's payload; this one says what it is.
+      expect(saved.raw).toMatchObject({ source: 'manual' });
+
+      await prisma.dispatch.delete({ where: { id: saved.id } });
+    });
+
+    it('defaults to now when no time is given', async () => {
+      const before = Date.now();
+      const res = await request(app.getHttpServer())
+        .post('/v1/dispatches')
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:write')
+        .send({ complaint: `Sick person ${stamp}` })
+        .expect(201);
+      const saved = await prisma.dispatch.findUniqueOrThrow({
+        where: { id: res.body.id },
+      });
+      expect(saved.receivedAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
+      await prisma.dispatch.delete({ where: { id: saved.id } });
+    });
+
+    it('counts on the board like any other call', async () => {
+      const link = await prisma.headsupLink.create({
+        data: { token: `disp${stamp}`.slice(0, 24) },
+      });
+      const before = await request(app.getHttpServer())
+        .get(`/v1/headsup/board?token=${link.token}`)
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/dispatches')
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:write')
+        .send({ complaint: `Counted ${stamp}` })
+        .expect(201);
+
+      const after = await request(app.getHttpServer())
+        .get(`/v1/headsup/board?token=${link.token}`)
+        .expect(200);
+      expect(after.body.calls).toBe(before.body.calls + 1);
+
+      await prisma.dispatch.delete({ where: { id: res.body.id } });
+      await prisma.headsupLink.delete({ where: { id: link.id } });
+    });
+
+    it('is closed to those without the permission', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/dispatches')
+        .set(as(bob))
+        .set('x-test-permissions', 'dispatches:read')
+        .send({ complaint: 'nope' })
+        .expect(403);
+    });
+
+    it('refuses a determinant that is not one', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/dispatches')
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:write')
+        .send({ determinant: 'Zulu', complaint: 'nope' })
+        .expect(400);
+    });
+  });
 });
