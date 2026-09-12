@@ -3232,4 +3232,308 @@ describe('Night crews engine (e2e)', () => {
         .expect(400);
     });
   });
+
+  describe('event medical standbys', () => {
+    let standbyId: number;
+    let eventId: number;
+    let venueId: number;
+    let locationId: number;
+    let runLocationId: number;
+
+    const sup = () => ({ ...as(alice), 'x-test-permissions': 'standbys:manage,standbys:read-all' });
+
+    beforeAll(async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const event = await prisma.event.create({
+        data: {
+          title: `Standby ${stamp}`,
+          startsAt: new Date(),
+          endsAt: new Date(Date.now() + 6 * 3600_000),
+          kindId: kind.id,
+          signups: { create: [{ memberId: alice }, { memberId: bob, position: 'ees' }] },
+        },
+      });
+      eventId = event.id;
+      const venue = await prisma.venue.create({
+        data: {
+          name: `Venue ${stamp}`,
+          locations: { create: [{ name: 'Gate 1', kind: 'Gate' }] },
+        },
+      });
+      venueId = venue.id;
+      locationId = (await prisma.venueLocation.findFirstOrThrow({ where: { venueId } })).id;
+      runLocationId = (
+        await prisma.runNumberLocation.upsert({
+          where: { abbr: 'T' },
+          create: { name: 'Troy', abbr: 'T' },
+          update: {},
+        })
+      ).id;
+    });
+
+    afterAll(async () => {
+      await prisma.standbyLog.deleteMany({ where: { eventId } });
+      await prisma.runNumber.deleteMany({ where: { eventId } });
+      await prisma.event.deleteMany({ where: { id: eventId } });
+      await prisma.venue.deleteMany({ where: { id: venueId } });
+    });
+
+    // The signups are a starting point. From there the standby keeps its own
+    // list, because people turn up who never signed up.
+    it('opens seeded from who signed up', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/standbys')
+        .set(sup())
+        .send({ eventId, venueId })
+        .expect(201);
+      standbyId = res.body.id;
+      const roles = (res.body.personnel as Array<{ role: string; fromSignup: boolean }>);
+      expect(roles).toHaveLength(2);
+      expect(roles.every((p) => p.fromSignup)).toBe(true);
+      // An explicit event-supervisor signup carries over as one; a crew
+      // position is a plan, not a role on the day.
+      expect(roles.filter((p) => p.role === 'EES')).toHaveLength(1);
+    });
+
+    it('is the same standby if opened twice', async () => {
+      const again = await request(app.getHttpServer())
+        .post('/v1/standbys')
+        .set(sup())
+        .send({ eventId })
+        .expect(201);
+      expect(again.body.id).toBe(standbyId);
+      expect(again.body.personnel).toHaveLength(2);
+    });
+
+    // The thing EventSignup structurally cannot express.
+    it('puts one person on two units at once', async () => {
+      const unitA = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/units`)
+        .set(sup())
+        .send({ name: `M-${stamp}`.slice(0, 20) })
+        .expect(201);
+      const unitB = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/units`)
+        .set(sup())
+        .send({ name: `G-${stamp}`.slice(0, 20) })
+        .expect(201);
+
+      const person = await prisma.standbyPersonnel.findFirstOrThrow({
+        where: { standbyId, memberId: alice },
+      });
+      for (const [unit, position] of [
+        [unitA.body.id, 'Crew Chief'],
+        [unitB.body.id, 'Attendant'],
+      ] as const) {
+        await request(app.getHttpServer())
+          .post(`/v1/standbys/${standbyId}/units/${unit}/crew`)
+          .set(sup())
+          .send({ personnelId: person.id, position })
+          .expect(201);
+      }
+      const live = await prisma.unitAssignment.count({
+        where: { personnelId: person.id, removedAt: null },
+      });
+      expect(live).toBe(2);
+    });
+
+    it('keeps one supervisor in charge', async () => {
+      const [a, b] = await prisma.standbyPersonnel.findMany({
+        where: { standbyId },
+        orderBy: { id: 'asc' },
+      });
+      for (const p of [a, b]) {
+        await request(app.getHttpServer())
+          .patch(`/v1/standbys/${standbyId}/personnel/${p.id}`)
+          .set(sup())
+          .send({ role: 'EES_IC' })
+          .expect(200);
+      }
+      const inCharge = await prisma.standbyPersonnel.findMany({
+        where: { standbyId, role: 'EES_IC', removedAt: null },
+      });
+      expect(inCharge).toHaveLength(1);
+      expect(inCharge[0].id).toBe(b.id);
+    });
+
+    // The run-number rule, end to end.
+    it('lets an ice pack close with no run number', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${opened.body.id}`)
+        .set(sup())
+        .send({ firstAidOnly: true, chiefComplaint: 'Blister', patientInitials: 'JD' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${opened.body.id}/close`)
+        .set(sup())
+        .expect(201);
+    });
+
+    it('refuses to close a transport without a run number, then a PRID', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({ locationId })
+        .expect(201);
+      const id = opened.body.id;
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({ category: 'MAJOR_ILLNESS', disposition: 'TRANSPORTED', patientInitials: 'AB' })
+        .expect(200);
+
+      const noRun = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
+        .set(sup())
+        .expect(400);
+      expect(JSON.stringify(noRun.body)).toContain('run number');
+
+      // Issued inline, from the same pool, tagged to the event.
+      const issued = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/run-number`)
+        .set({ ...sup(), 'x-test-permissions': 'standbys:manage,run-numbers:manage' })
+        .send({ locationId: runLocationId })
+        .expect(201);
+      expect(issued.body.eventId).toBe(eventId);
+
+      const noPrid = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
+        .set(sup())
+        .expect(400);
+      expect(JSON.stringify(noPrid.body)).toContain('PRID');
+
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({ prid: 'PR-1' })
+        .expect(200);
+      const closed = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
+        .set(sup())
+        .expect(201);
+      // The county number is worth saying and not worth blocking on.
+      expect(JSON.stringify(closed.body.advisories)).toContain('county');
+    });
+
+    it('will not hold anything longer than initials', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${opened.body.id}`)
+        .set(sup())
+        .send({ patientInitials: 'Jonathan Doe' })
+        .expect(400);
+    });
+
+    it('shows a crew member only what they wrote', async () => {
+      // Both of the seeded two are supervisors by now, and supervisors see
+      // the whole standby. This needs somebody who is only crew.
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/personnel`)
+        .set(sup())
+        .send({ memberId: charlie, role: 'CREW' })
+        .expect(201);
+
+      const mine = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/encounters`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(200);
+      expect(mine.body).toHaveLength(0);
+
+      const supervisor = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .expect(200);
+      expect(supervisor.body.length).toBeGreaterThan(0);
+    });
+
+    it('will not close the standby while an encounter is open', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      const refused = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/close`)
+        .set(sup())
+        .expect(400);
+      expect(refused.body.message).toContain('still open');
+    });
+
+    // A form that runs onto a second page is a form somebody has to explain
+    // at the filing window, so the page count is part of being correct.
+    it.each([
+      ['doh-2332', 1, 'portrait'],
+      ['doh-2342', 1, 'landscape'],
+      ['event', 1, 'portrait'],
+    ] as const)('renders %s as a %i-page %s PDF', async (form, pages, orientation) => {
+      const route =
+        form === 'event' ? 'export/event.pdf' : `export/${form}.pdf`;
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/${route}`)
+        .set(sup())
+        .expect(200)
+        .expect('Content-Type', 'application/pdf');
+      const pdf = res.body as Buffer;
+      expect(pdf.subarray(0, 4).toString()).toBe('%PDF');
+      const text = pdf.toString('latin1');
+      const count =
+        (text.match(/\/Type \/Page[^s]/g) ?? []).length;
+      expect(count).toBe(pages);
+      const box = /\/MediaBox\s*\[([^\]]*)\]/.exec(text)?.[1] ?? '';
+      const [, , w, h] = box.trim().split(/\s+/).map(Number);
+      expect(w > h ? 'landscape' : 'portrait').toBe(orientation);
+    });
+
+    it('refuses an export to somebody who cannot see the whole record', async () => {
+      await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/export/doh-2332.pdf`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(403);
+    });
+
+    it('lets a crew member export only what they wrote', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(201);
+      await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/encounters/${opened.body.id}/export.pdf`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(200);
+
+      const someoneElses = await prisma.encounter.findFirstOrThrow({
+        where: { standbyId, createdById: alice },
+      });
+      await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/encounters/${someoneElses.id}/export.pdf`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(403);
+    });
+
+    it('keeps a timeline of what happened', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const kinds = (res.body as Array<{ kind: string }>).map((e) => e.kind);
+      expect(kinds).toContain('standby.opened');
+      expect(kinds).toContain('unit.created');
+      expect(kinds).toContain('crew.assigned');
+      expect(kinds).toContain('encounter.opened');
+    });
+  });
 });

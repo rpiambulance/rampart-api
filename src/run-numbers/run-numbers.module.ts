@@ -5,5 +5,7 @@ import { RunNumbersService } from './run-numbers.service';
 @Module({
   controllers: [RunNumbersController],
   providers: [RunNumbersService],
+  // ems2 issues run numbers inline when an encounter needs one.
+  exports: [RunNumbersService],
 })
 export class RunNumbersModule {}

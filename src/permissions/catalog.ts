@@ -42,6 +42,15 @@ export const PERMISSIONS = {
   RADIOS_MANAGE: 'radios:manage',
   VEHICLES_MANAGE: 'vehicles:manage',
   TOKENS_MANAGE: 'tokens:manage',
+  /** Open and run an event standby: personnel, units, and the record as a
+   *  whole. Writing up an encounter needs nothing beyond being on the
+   *  standby — a crew chief should not need a permission to say what they
+   *  did. */
+  STANDBYS_MANAGE: 'standbys:manage',
+  /** Read every encounter from every standby. Supervisors working a standby
+   *  can already read that one's; this is for whoever answers for them
+   *  afterward. */
+  STANDBYS_READ_ALL: 'standbys:read-all',
   DISPATCHES_INGEST: 'dispatches:ingest',
   /** Enter a dispatch by hand — one Herald never delivered, or one that
    *  arrived garbled. Separate from the machine token's ingest permission:

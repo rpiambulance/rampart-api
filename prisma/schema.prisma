@@ -124,6 +124,14 @@ model Member {
   headsupCounterResets     HeadsupCounterReset[]            @relation("HeadsupCounterResetter")
   defaultOutOfServiceSet   DefaultCrewOutOfService[]        @relation("DefaultOutOfServiceBy")
   dispatchesEntered        Dispatch[]                       @relation("DispatchEnteredBy")
+  standbysClosed           StandbyLog[]                     @relation("StandbyClosedBy")
+  standbysCreated          StandbyLog[]                     @relation("StandbyCreatedBy")
+  standbyPersonnel         StandbyPersonnel[]               @relation("StandbyPersonnelMember")
+  standbyPersonnelAdded    StandbyPersonnel[]               @relation("StandbyPersonnelAddedBy")
+  standbyPersonnelRemoved  StandbyPersonnel[]               @relation("StandbyPersonnelRemovedBy")
+  standbyUnitsCreated      StandbyUnit[]                    @relation("StandbyUnitCreatedBy")
+  encountersCreated        Encounter[]                      @relation("EncounterCreatedBy")
+  standbyTimelineActions   StandbyTimelineEntry[]           @relation("StandbyTimelineActor")
 }
 
 // ---------------------------------------------------------------------------
@@ -1025,6 +1033,7 @@ model Event {
   signups               EventSignup[]
   availabilityResponses EventAvailability[]
   coverageRequest       CoverageRequest?
+  standby               StandbyLog?
 
   @@index([startsAt])
 }
@@ -1471,9 +1480,10 @@ model RunNumber {
   issuedById Int?
   issuedAt   DateTime @default(now())
 
-  location RunNumberLocation @relation(fields: [locationId], references: [id])
-  event    Event?            @relation(fields: [eventId], references: [id])
-  issuedBy Member?           @relation("RunNumberIssuer", fields: [issuedById], references: [id])
+  location   RunNumberLocation @relation(fields: [locationId], references: [id])
+  event      Event?            @relation(fields: [eventId], references: [id])
+  issuedBy   Member?           @relation("RunNumberIssuer", fields: [issuedById], references: [id])
+  encounters Encounter[]
 
   @@index([issuedAt])
   @@index([locationId, sequence])
@@ -1931,4 +1941,328 @@ model HeadsupCounterReset {
   resetBy Member? @relation("HeadsupCounterResetter", fields: [resetById], references: [id])
 
   @@index([counter, resetAt])
+}
+
+// ------------------------------------------------------------------- ems2
+// Event medical standbys: who worked one, what units ran, and what happened
+// to the people they treated.
+//
+// The event calendar says who signed up. A standby says who actually turned
+// up, which unit they ended up on, and what they did — three questions the
+// signup cannot answer, because EventSignup holds one row per member per
+// event and somebody may work two units in a role they never signed up for.
+
+/// A place standbys happen at, with the inside of it named.
+model Venue {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  address   String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  locations VenueLocation[]
+  standbys  StandbyLog[]
+}
+
+/// A named place inside a venue — a gate, a stand, an aid room.
+///
+/// Saved against the venue rather than the event, because the same gate is
+/// the same gate at every game, and a supervisor should not retype the
+/// building's geography every time.
+model VenueLocation {
+  id      Int     @id @default(autoincrement())
+  venueId Int
+  name    String
+  /// Loose grouping for the board: "Gate", "Stand", "Aid station".
+  kind    String?
+  order   Int     @default(0)
+  active  Boolean @default(true)
+
+  venue       Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  atUnits     StandbyUnit[] @relation("UnitCurrentLocation")
+  stagedUnits StandbyUnit[] @relation("UnitStagingLocation")
+  encounters  Encounter[]
+
+  @@unique([venueId, name])
+}
+
+/// The standing list of unit designators — M-1, Gator 2, Bike 1.
+model UnitDesignator {
+  id     Int     @id @default(autoincrement())
+  name   String  @unique
+  /// Ambulance, gator, bike team, foot team.
+  kind   String?
+  active Boolean @default(true)
+
+  units StandbyUnit[]
+}
+
+/// Where a patient can be taken. Configurable, because hospitals close.
+model Hospital {
+  id     Int     @id @default(autoincrement())
+  name   String  @unique
+  active Boolean @default(true)
+
+  encounters Encounter[]
+}
+
+/// One event, as it was actually worked.
+model StandbyLog {
+  id        Int     @id @default(autoincrement())
+  eventId   Int     @unique
+  venueId   Int?
+  /// Named here when the venue was made up on the day and not saved.
+  venueText String?
+
+  /// What happened, as opposed to what the calendar said would. An event
+  /// that ran late ran late, and the DOH report wants the real dates.
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  /// DOH-2332 asks for both, and they are not the same number: forty
+  /// thousand people came, eighteen thousand were there at once.
+  totalAttendance Int?
+  totalEstimated  Boolean @default(false)
+  peakAttendance  Int?
+  peakEstimated   Boolean @default(false)
+
+  /// The rest of what the state form asks for.
+  sponsorOperator    String?
+  unusualOccurrences String?
+  completedByName    String?
+  completedByTitle   String?
+  completedByPhone   String?
+  completedAt        DateTime?
+
+  /// Closed means the record is finished. Encounters can still be corrected
+  /// afterward — a closed standby is not a sealed one — but nothing new is
+  /// expected, and the exports are taken from here.
+  closedAt    DateTime?
+  closedById  Int?
+  createdAt   DateTime  @default(now())
+  createdById Int?
+  updatedAt   DateTime  @updatedAt
+
+  event      Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  venue      Venue?                 @relation(fields: [venueId], references: [id])
+  closedBy   Member?                @relation("StandbyClosedBy", fields: [closedById], references: [id])
+  createdBy  Member?                @relation("StandbyCreatedBy", fields: [createdById], references: [id])
+  personnel  StandbyPersonnel[]
+  units      StandbyUnit[]
+  encounters Encounter[]
+  timeline   StandbyTimelineEntry[]
+}
+
+/// What somebody is at this event, which is not what they are on a crew.
+enum StandbyRole {
+  /// The supervisor in charge. One per standby.
+  EES_IC
+  /// Another event supervisor.
+  EES
+  /// On a unit, or available to be.
+  CREW
+  /// There and working, but not on a unit — dispatch, logistics, an observer.
+  SUPPORT
+}
+
+/// Somebody who worked the event.
+///
+/// Seeded from the event's signups when the standby opens, and its own
+/// record from then on: people arrive who never signed up, people leave
+/// early, and people work roles they did not put their name down for.
+model StandbyPersonnel {
+  id         Int         @id @default(autoincrement())
+  standbyId  Int
+  memberId   Int
+  role       StandbyRole @default(CREW)
+  /// True when they came from the signup list rather than being added by
+  /// hand, so "who actually turned up" stays answerable afterward.
+  fromSignup Boolean     @default(false)
+
+  addedAt     DateTime  @default(now())
+  addedById   Int?
+  /// Left early, or never arrived. Kept rather than deleted, because when
+  /// somebody was on scene is part of the record.
+  removedAt   DateTime?
+  removedById Int?
+  note        String?
+
+  standby     StandbyLog       @relation(fields: [standbyId], references: [id], onDelete: Cascade)
+  member      Member           @relation("StandbyPersonnelMember", fields: [memberId], references: [id])
+  addedBy     Member?          @relation("StandbyPersonnelAddedBy", fields: [addedById], references: [id])
+  removedBy   Member?          @relation("StandbyPersonnelRemovedBy", fields: [removedById], references: [id])
+  assignments UnitAssignment[]
+
+  @@unique([standbyId, memberId])
+}
+
+enum UnitStatus {
+  AVAILABLE
+  ASSIGNED
+  AT_PATIENT
+  TRANSPORTING
+  OUT_OF_SERVICE
+}
+
+/// A unit running at this event.
+model StandbyUnit {
+  id           Int        @id @default(autoincrement())
+  standbyId    Int
+  designatorId Int?
+  /// The designator's name, or whatever was invented on the day.
+  name         String
+  kind         String?
+  status       UnitStatus @default(AVAILABLE)
+
+  /// Where it is, and where it sits when it is not anywhere in particular.
+  /// Either a saved venue location or free text, because a unit can be told
+  /// to stand at a corner nobody has named yet.
+  currentLocationId   Int?
+  currentLocationText String?
+  stagingLocationId   Int?
+  stagingLocationText String?
+
+  createdAt   DateTime  @default(now())
+  createdById Int?
+  /// Stood down. Kept, so its crew and its calls stay attributable.
+  retiredAt   DateTime?
+
+  standby         StandbyLog       @relation(fields: [standbyId], references: [id], onDelete: Cascade)
+  designator      UnitDesignator?  @relation(fields: [designatorId], references: [id])
+  currentLocation VenueLocation?   @relation("UnitCurrentLocation", fields: [currentLocationId], references: [id])
+  stagingLocation VenueLocation?   @relation("UnitStagingLocation", fields: [stagingLocationId], references: [id])
+  createdBy       Member?          @relation("StandbyUnitCreatedBy", fields: [createdById], references: [id])
+  assignments     UnitAssignment[]
+  encounters      Encounter[]
+
+  @@unique([standbyId, name])
+}
+
+/// Somebody on a unit.
+///
+/// Many-to-many on purpose: a transport driver is on the ambulance and still
+/// on their own unit, and the board has to show them in both places.
+model UnitAssignment {
+  id          Int       @id @default(autoincrement())
+  unitId      Int
+  personnelId Int
+  /// Crew chief, driver, attendant — free text, because a bike team's
+  /// positions are not an ambulance's.
+  position    String?
+  assignedAt  DateTime  @default(now())
+  removedAt   DateTime?
+
+  unit      StandbyUnit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  personnel StandbyPersonnel @relation(fields: [personnelId], references: [id], onDelete: Cascade)
+
+  @@index([unitId])
+  @@index([personnelId])
+}
+
+/// The four buckets DOH-2332 counts.
+enum EncounterCategory {
+  MINOR_INJURY
+  MAJOR_INJURY
+  MINOR_ILLNESS
+  MAJOR_ILLNESS
+}
+
+enum EncounterDisposition {
+  /// Refused medical attention.
+  RMA
+  TRANSPORTED
+  TURNOVER
+  TREATED_RELEASED
+  NO_PATIENT_FOUND
+  DECEASED
+}
+
+/// A patient interaction.
+///
+/// Holds initials and an age and nothing else about the person — no name, no
+/// date of birth, no address. The identifiers that matter are the run number,
+/// the county's number and the PRID, all of which point at records kept
+/// somewhere designed to hold them.
+model Encounter {
+  id        Int  @id @default(autoincrement())
+  standbyId Int
+  unitId    Int?
+  /// Numbered within the standby: the "Incident Number" on DOH-2342.
+  sequence  Int
+
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  /// At most. Four characters is room for initials and no room for a name.
+  patientInitials String?
+  patientAge      Int?
+  /// years or months, for the very young.
+  patientAgeUnit  String? @default("years")
+
+  category          EncounterCategory
+  /// Counted separately on DOH-2332, and independent of disposition: a
+  /// patient can die during a transport.
+  died              Boolean           @default(false)
+  /// DOH-2332 asks how many showed signs of intoxication or substance
+  /// abuse. It is not the same question as the category.
+  intoxicationSigns Boolean           @default(false)
+
+  chiefComplaint String?
+  treatment      String?
+  narrative      String?
+
+  disposition    EncounterDisposition
+  hospitalId     Int?
+  /// Who it was handed to, when the disposition is a turnover.
+  turnoverAgency String?
+
+  /// An ice pack and a bandaid. The one case that needs no run number, and
+  /// a deliberate tick rather than a blank field nobody filled in.
+  firstAidOnly    Boolean @default(false)
+  runNumberId     Int?
+  /// Issued by the county, for transports and turnovers.
+  countyRunNumber String?
+  /// Patient record identifier, from whatever wrote the actual care report.
+  prid            String?
+
+  locationId   Int?
+  locationText String?
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  standby   StandbyLog     @relation(fields: [standbyId], references: [id], onDelete: Cascade)
+  unit      StandbyUnit?   @relation(fields: [unitId], references: [id])
+  hospital  Hospital?      @relation(fields: [hospitalId], references: [id])
+  runNumber RunNumber?     @relation(fields: [runNumberId], references: [id])
+  location  VenueLocation? @relation(fields: [locationId], references: [id])
+  createdBy Member?        @relation("EncounterCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([standbyId, sequence])
+  @@index([standbyId])
+}
+
+/// What happened, in order.
+///
+/// Append-only. A unit's location is the latest move rather than a column
+/// somebody overwrote, which means the after-action timeline is a record of
+/// the event rather than a snapshot of how it ended.
+model StandbyTimelineEntry {
+  id          BigInt   @id @default(autoincrement())
+  standbyId   Int
+  at          DateTime @default(now())
+  /// unit.created, unit.moved, crew.assigned, encounter.opened, ...
+  kind        String
+  unitId      Int?
+  encounterId Int?
+  memberId    Int?
+  actorId     Int?
+  detail      Json?
+
+  standby StandbyLog @relation(fields: [standbyId], references: [id], onDelete: Cascade)
+  actor   Member?    @relation("StandbyTimelineActor", fields: [actorId], references: [id])
+
+  @@index([standbyId, at])
 }

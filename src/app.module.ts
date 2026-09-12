@@ -24,6 +24,10 @@ import { DialertController } from './integrations/dialert.controller';
 import { ChecksheetsController } from './checksheets/checksheets.controller';
 import { ChecksheetsJobs } from './checksheets/checksheets.jobs';
 import { ChecksheetsService } from './checksheets/checksheets.service';
+import { Ems2Controller } from './ems2/ems2.controller';
+import { Ems2ConfigController } from './ems2/ems2-config.controller';
+import { Ems2Service } from './ems2/ems2.service';
+import { Ems2ExportService } from './ems2/ems2-export.service';
 import { HeadsupController } from './headsup/headsup.controller';
 import { HeadsupEvents } from './headsup/headsup.events';
 import { HeadsupService } from './headsup/headsup.service';
@@ -81,6 +85,8 @@ import { TrainingsModule } from './trainings/trainings.module';
     CoverageController,
     DialertController,
     ResourcesController,
+    Ems2Controller,
+    Ems2ConfigController,
     HeadsupController,
     RequestsController,
     ChecksheetsController,
@@ -103,6 +109,8 @@ import { TrainingsModule } from './trainings/trainings.module';
     PermissionsGuard,
     BootstrapService,
     ChecksheetsService,
+    Ems2Service,
+    Ems2ExportService,
     HeadsupService,
     HeadsupEvents,
     RequestsService,
