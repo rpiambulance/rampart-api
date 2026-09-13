@@ -7,7 +7,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { displayName } from '../common/name';
 import { PrismaService } from '../prisma/prisma.service';
 import { Ems2Service } from './ems2.service';
-import { formCounts } from './standby-logic';
+import { formCounts, inPatientList, onDohForms } from './standby-logic';
 import {
   doh2332,
   doh2342,
@@ -111,7 +111,7 @@ export class Ems2ExportService {
       venue: standby.venue?.name ?? standby.venueText,
     };
 
-    const rows: IncidentRow[] = encounters.map((e) => ({
+    const asRow = (e: (typeof encounters)[number]): IncidentRow => ({
       sequence: e.sequence,
       at: e.openedAt,
       initials: e.patientInitials,
@@ -124,13 +124,22 @@ export class Ems2ExportService {
       disposition: e.disposition,
       transported: e.disposition === 'TRANSPORTED',
       comments: e.narrative,
-    }));
+      voidedAs: e.voidedAs,
+      voidNote: e.voidNote,
+    });
 
     return {
       standby,
       encounters,
       forForm,
-      rows,
+      // The state's forms are a count of people who were treated. Nothing
+      // voided was a person who was treated.
+      rows: encounters.filter(onDohForms).map(asRow),
+      // The agency's own list keeps the unfounded call — a unit went, and
+      // the report is what somebody answers questions from a year later.
+      // A row created by mistake is not something that happened, and lives
+      // only in the timeline underneath.
+      listed: encounters.filter(inPatientList).map(asRow),
       counts: formCounts(encounters),
     };
   }
@@ -148,7 +157,7 @@ export class Ems2ExportService {
 
   async eventPdf(auth: AuthContext, standbyId: number, detailed: boolean) {
     await this.requireWholeRecord(auth, standbyId);
-    const { standby, forForm, rows, counts } = await this.gather(
+    const { standby, forForm, listed, counts } = await this.gather(
       auth,
       standbyId,
     );
@@ -190,7 +199,7 @@ export class Ems2ExportService {
                 .join(' '),
             ),
         })),
-        incidents: rows,
+        incidents: listed,
         timeline,
       }),
     );
@@ -242,6 +251,8 @@ export class Ems2ExportService {
           disposition: encounter.disposition,
           transported: encounter.disposition === 'TRANSPORTED',
           comments: encounter.narrative,
+          voidedAs: encounter.voidedAs,
+          voidNote: encounter.voidNote,
         },
         unit: encounter.unit?.name ?? null,
         location: encounter.location?.name ?? encounter.locationText,

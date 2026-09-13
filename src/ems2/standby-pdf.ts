@@ -409,6 +409,9 @@ export interface IncidentRow {
   disposition: string;
   transported: boolean;
   comments: string | null;
+  /** Set when this was not a patient encounter after all. */
+  voidedAs?: 'UNFOUNDED' | 'CREATED_IN_ERROR' | null;
+  voidNote?: string | null;
 }
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -425,6 +428,12 @@ const DISPOSITION_LABEL: Record<string, string> = {
   TREATED_RELEASED: 'Treated & released',
   NO_PATIENT_FOUND: 'No patient found',
   DECEASED: 'Deceased',
+};
+
+/** What a voided row says instead of a patient. */
+const VOID_LABEL: Record<string, string> = {
+  UNFOUNDED: 'Unfounded — no patient found',
+  CREATED_IN_ERROR: 'Created in error',
 };
 
 export function categoryLabel(key: string): string {
@@ -829,16 +838,20 @@ export function eventReport(data: EventReportData): Doc {
       doc.fillColor('#000');
       y += 13;
       doc.text(
-        [
-          row.initials ? `Patient ${row.initials}` : null,
-          categoryLabel(row.category),
-          row.chiefComplaint,
-          dispositionLabel(row.disposition),
-          row.prid ? `PRID ${row.prid}` : null,
-          row.countyRunNumber ? `County ${row.countyRunNumber}` : null,
-        ]
-          .filter(Boolean)
-          .join('  ·  '),
+        row.voidedAs
+          ? [VOID_LABEL[row.voidedAs] ?? 'Voided', row.voidNote]
+              .filter(Boolean)
+              .join('  ·  ')
+          : [
+              row.initials ? `Patient ${row.initials}` : null,
+              categoryLabel(row.category),
+              row.chiefComplaint,
+              dispositionLabel(row.disposition),
+              row.prid ? `PRID ${row.prid}` : null,
+              row.countyRunNumber ? `County ${row.countyRunNumber}` : null,
+            ]
+              .filter(Boolean)
+              .join('  ·  '),
         PAGE.margin,
         y,
         { width: 516 },
@@ -919,6 +932,25 @@ export function encounterReport(data: EncounterReportData): Doc {
       .fillColor('#000')
       .text(value || '—', x, rowY + 10, { width: 164 });
   };
+
+  // Said at the top, because everything under it is about a patient this
+  // encounter turned out not to have.
+  if (row.voidedAs) {
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .text(VOID_LABEL[row.voidedAs] ?? 'Voided', PAGE.margin, y);
+    doc.font('Helvetica');
+    if (row.voidNote) {
+      doc
+        .fontSize(9)
+        .fillColor('#444')
+        .text(row.voidNote, PAGE.margin, y + 14);
+      doc.fillColor('#000');
+      y += 14;
+    }
+    y += 22;
+  }
 
   y = sectionTitle(doc, 'Encounter', y);
   pair('Incident number', row.runNumber ?? `#${row.sequence}`, 0, y);

@@ -51,6 +51,11 @@ const STATUS_LABEL: Record<string, string> = {
   OUT_OF_SERVICE: 'Out of service',
 };
 
+const VOID_LABEL: Record<string, string> = {
+  UNFOUNDED: 'unfounded',
+  CREATED_IN_ERROR: 'created in error',
+};
+
 const CATEGORY_LABEL: Record<string, string> = {
   MINOR_INJURY: 'minor injury',
   MAJOR_INJURY: 'major injury',
@@ -268,6 +273,20 @@ function sentence(entry: TimelineEntryShape, names: TimelineNames): string {
       return tail
         ? `${encounterOf(entry, names)} deleted — ${tail}`
         : `${encounterOf(entry, names)} deleted`;
+    }
+    case 'encounter.voided': {
+      const as = label(VOID_LABEL, detail.as);
+      const note = str(detail.note);
+      const line = as
+        ? `${encounterOf(entry, names)} marked ${as}`
+        : `${encounterOf(entry, names)} voided`;
+      return note ? `${line} — ${note}` : line;
+    }
+    case 'encounter.unvoided': {
+      const from = label(VOID_LABEL, detail.from);
+      return from
+        ? `${encounterOf(entry, names)} is a patient encounter again (was ${from})`
+        : `${encounterOf(entry, names)} is a patient encounter again`;
     }
     case 'encounter.reopened':
       return `${encounterOf(entry, names)} reopened`;

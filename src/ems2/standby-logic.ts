@@ -1,6 +1,7 @@
 import type {
   EncounterCategory,
   EncounterDisposition,
+  EncounterVoid,
   StandbyRole,
 } from '../generated/prisma/enums';
 
@@ -13,6 +14,8 @@ import type {
 const HANDED_OVER: EncounterDisposition[] = ['TRANSPORTED', 'TURNOVER'];
 
 export interface EncounterShape {
+  /** Set when this turned out not to be a patient encounter at all. */
+  voidedAs?: EncounterVoid | null;
   category: EncounterCategory;
   disposition: EncounterDisposition;
   firstAidOnly: boolean;
@@ -38,6 +41,16 @@ export interface Problem {
  */
 export function encounterProblems(encounter: EncounterShape): Problem[] {
   const problems: Problem[] = [];
+
+  // A voided encounter is not a patient record and is not held to one: no
+  // run number for a patient who was never found, no PRID for a care report
+  // nobody wrote. The one rule that still applies is the hard limit on what
+  // may be stored about a person, checked below.
+  if (encounter.voidedAs) {
+    return (encounter.patientInitials ?? '').trim().length > 4
+      ? [{ field: 'patientInitials', message: 'Initials only — no names.' }]
+      : [];
+  }
 
   // The rule you asked for: everything past an ice pack gets a run number,
   // and the exemption is a deliberate tick rather than a blank nobody filled.
@@ -122,6 +135,29 @@ export function advisoryProblems(encounter: EncounterShape): Problem[] {
 }
 
 /**
+ * Where a voided encounter is still shown.
+ *
+ * Three audiences, and they are not owed the same thing. The state's forms
+ * are a count of people treated, so nothing voided reaches them. The event
+ * report's patient list is what the agency answers questions from, so an
+ * unfounded call belongs there — it happened, a unit went, there was no
+ * patient. A row created by mistake is not an event that happened at all,
+ * so it survives only in the timeline, where everything that was done is
+ * recorded whether it turned out to mean anything or not.
+ */
+export function onDohForms(encounter: {
+  voidedAs?: EncounterVoid | null;
+}): boolean {
+  return !encounter.voidedAs;
+}
+
+export function inPatientList(encounter: {
+  voidedAs?: EncounterVoid | null;
+}): boolean {
+  return encounter.voidedAs !== 'CREATED_IN_ERROR';
+}
+
+/**
  * The counts DOH-2332 asks for, derived from the log.
  *
  * Derived and never typed: a filed form that disagrees with the records it
@@ -143,7 +179,7 @@ export function formCounts(
   encounters: Array<
     Pick<
       EncounterShape,
-      'category' | 'disposition' | 'died' | 'intoxicationSigns'
+      'category' | 'disposition' | 'died' | 'intoxicationSigns' | 'voidedAs'
     >
   >,
 ): FormCounts {
@@ -158,6 +194,10 @@ export function formCounts(
     transports: 0,
   };
   for (const e of encounters) {
+    // Nobody was treated, so nothing is counted. The form asks how many
+    // people were seen, and a voided encounter is the answer "none of
+    // these" to that question.
+    if (!onDohForms(e)) continue;
     counts.totalTreated += 1;
     if (e.category === 'MINOR_INJURY') counts.minorInjury += 1;
     if (e.category === 'MAJOR_INJURY') counts.majorInjury += 1;

@@ -23,6 +23,7 @@ import { describeTimelineEntry, type TimelineNames } from './timeline-text';
 import type {
   EncounterCategory,
   EncounterDisposition,
+  EncounterVoid,
   StandbyRole,
   UnitStatus,
 } from '../generated/prisma/enums';
@@ -75,6 +76,20 @@ const STANDBY_INCLUDE = {
     orderBy: { id: 'asc' },
   },
 } as const;
+
+/** What is never kept about a patient who was never there. */
+const PATIENT_FIELDS = [
+  'patientInitials',
+  'patientAge',
+  'patientAgeUnit',
+  'died',
+  'intoxicationSigns',
+  'chiefComplaint',
+  'treatment',
+  'prid',
+  'hospitalId',
+  'turnoverAgency',
+] as const;
 
 @Injectable()
 export class Ems2Service {
@@ -187,6 +202,10 @@ export class Ems2Service {
             disposition: true,
             died: true,
             intoxicationSigns: true,
+            // Counted as nobody. Selected rather than assumed, because a
+            // column left out here reads as "not voided" and quietly puts
+            // an unfounded call back on the board's totals.
+            voidedAs: true,
           },
         }),
       ),
@@ -757,6 +776,12 @@ export class Ems2Service {
     }>,
   ) {
     const current = await this.mineOrVisible(auth, standbyId, encounterId);
+    // There is no patient on a voided encounter, whatever a form still has
+    // in it. The narrative survives: "searched the north lawn, nobody
+    // there" is the reason it was voided, not patient care.
+    if (current.voidedAs) {
+      for (const field of PATIENT_FIELDS) delete data[field];
+    }
     const merged = { ...current, ...data } as EncounterShape;
     const blocking = blockingProblems(merged);
     // Only checked on the way to closed: a half-filled encounter is the
@@ -856,6 +881,91 @@ export class Ems2Service {
       'standby.encounter.reopen',
       'Encounter',
       encounterId,
+    );
+    return { ...encounter, advisories: advisoryProblems(encounter) };
+  }
+
+  /**
+   * Marks an encounter as one that turned out not to be a patient encounter.
+   *
+   * Two things go wrong in different ways. An unfounded call happened — a
+   * unit went, somebody looked, there was nobody to treat — and the record
+   * should say so. A row created in error never happened at all.
+   *
+   * Available to whoever may write the encounter up rather than to an
+   * officer: this is the correction, and deleting is the thing that needs
+   * the permission. Marking it unfounded takes the patient fields with it,
+   * because an unfounded call has no patient and a form that still carries
+   * initials is a form somebody has to explain.
+   *
+   * Closes it as a side effect: there is nothing left to fill in, and an
+   * encounter left open holds the whole standby open.
+   */
+  async voidEncounter(
+    auth: AuthContext,
+    standbyId: number,
+    encounterId: number,
+    input: { as: EncounterVoid | null; note?: string | null },
+  ) {
+    await this.requireOnStandby(auth, standbyId);
+    const current = await this.mineOrVisible(auth, standbyId, encounterId);
+
+    if (!input.as) {
+      // Undoing it. What was cleared stays cleared — it was cleared on
+      // purpose — and whoever is putting it back types it in again.
+      const restored = await this.prisma.encounter.update({
+        where: { id: encounterId },
+        data: {
+          voidedAs: null,
+          voidedAt: null,
+          voidedById: null,
+          voidNote: null,
+          closedAt: null,
+        },
+      });
+      await this.log(standbyId, 'encounter.unvoided', auth, {
+        encounterId,
+        detail: { sequence: restored.sequence, from: current.voidedAs },
+      });
+      return { ...restored, advisories: advisoryProblems(restored) };
+    }
+
+    const encounter = await this.prisma.encounter.update({
+      where: { id: encounterId },
+      data: {
+        voidedAs: input.as,
+        voidedAt: new Date(),
+        voidedById: auth.kind === 'member' ? auth.memberId : null,
+        voidNote: input.note?.trim() || null,
+        closedAt: current.closedAt ?? new Date(),
+        // There was no patient. Nothing about one is kept, on either kind
+        // of void: a row created by mistake may have been typed into before
+        // anybody noticed.
+        patientInitials: null,
+        patientAge: null,
+        died: false,
+        intoxicationSigns: false,
+        chiefComplaint: null,
+        treatment: null,
+        prid: null,
+        hospitalId: null,
+        turnoverAgency: null,
+      },
+    });
+    await this.log(standbyId, 'encounter.voided', auth, {
+      encounterId,
+      detail: {
+        sequence: encounter.sequence,
+        as: input.as,
+        note: encounter.voidNote,
+      },
+    });
+    await this.audit.log(
+      auth,
+      'standby.encounter.void',
+      'Encounter',
+      encounterId,
+      { as: input.as, note: encounter.voidNote },
     );
     return { ...encounter, advisories: advisoryProblems(encounter) };
   }

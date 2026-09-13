@@ -3327,6 +3327,7 @@ describe('Night crews engine (e2e)', () => {
     let venueId: number;
     let locationId: number;
     let runLocationId: number;
+    let voidedEncounterId: number;
 
     const sup = () => ({ ...as(alice), 'x-test-permissions': 'standbys:manage,standbys:read-all' });
     // Throwing a standby away is a separate permission from running one.
@@ -3560,6 +3561,162 @@ describe('Night crews engine (e2e)', () => {
         .set(sup())
         .expect(400);
       expect(refused.body.message).toContain('still open');
+    });
+
+    // Two things that turn out not to be patient encounters, and they are
+    // not owed the same visibility.
+    it('keeps a voided encounter off the state forms and out of the counts', async () => {
+      const before = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}`)
+        .set(sup())
+        .expect(200);
+      const treatedBefore = before.body.counts.totalTreated as number;
+
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      const id = opened.body.id as number;
+      // Typed into before anybody realised there was nobody there.
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({ patientInitials: 'ZZ', chiefComplaint: 'Reported down' })
+        .expect(200);
+
+      const voided = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/void`)
+        .set(sup())
+        .send({ as: 'UNFOUNDED', note: 'Searched the north lawn, nobody there' })
+        .expect(201);
+      // No patient, so nothing about one is kept.
+      expect(voided.body.patientInitials).toBeNull();
+      expect(voided.body.chiefComplaint).toBeNull();
+      // And nothing left to fill in, so it is finished.
+      expect(voided.body.closedAt).not.toBeNull();
+
+      const after = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}`)
+        .set(sup())
+        .expect(200);
+      expect(after.body.counts.totalTreated).toBe(treatedBefore);
+
+      // A patch cannot put the patient back while it is voided.
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({ patientInitials: 'ZZ' })
+        .expect(200);
+      const stillVoid = await prisma.encounter.findUniqueOrThrow({
+        where: { id },
+      });
+      expect(stillVoid.patientInitials).toBeNull();
+
+      voidedEncounterId = id;
+    });
+
+    it('will not hold a voided encounter to the run-number rule', async () => {
+      // It was closed by the void itself; reopening and closing again is
+      // the path that runs the rules.
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${voidedEncounterId}/reopen`)
+        .set(sup())
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${voidedEncounterId}/close`)
+        .set(sup())
+        .expect(201);
+    });
+
+    it('shows an unfounded call in the detailed report but not on DOH-2342', async () => {
+      const pdfText = async (route: string) => {
+        const res = await request(app.getHttpServer())
+          .get(`/v1/standbys/${standbyId}/${route}`)
+          .set(sup())
+          .expect(200);
+        const pdf = res.body as Buffer;
+        const streams = [...pdf.toString('latin1').matchAll(/stream\r?\n/g)]
+          .map((match) => {
+            const start = (match.index ?? 0) + match[0].length;
+            const end = pdf.indexOf('endstream', start, 'latin1');
+            try {
+              return inflateSync(pdf.subarray(start, end)).toString('latin1');
+            } catch {
+              return '';
+            }
+          })
+          .join('\n');
+        return [...streams.matchAll(/<([0-9a-fA-F]+)>/g)]
+          .map((match) => Buffer.from(match[1], 'hex').toString('latin1'))
+          .join('');
+      };
+
+      const detailed = await pdfText('export/event.pdf?detail=1');
+      expect(detailed).toContain('Unfounded');
+      expect(detailed).toContain('north lawn');
+
+      const log2342 = await pdfText('export/doh-2342.pdf');
+      expect(log2342).not.toContain('Unfounded');
+      expect(log2342).not.toContain('north lawn');
+    });
+
+    // A row that should not exist is not something that happened, so it is
+    // not in the list of what happened to people — only in the record of
+    // everything that was done.
+    it('keeps one created in error out of the patient list, and in the timeline', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      const id = opened.body.id as number;
+      const sequence = opened.body.sequence as number;
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/void`)
+        .set(sup())
+        .send({ as: 'CREATED_IN_ERROR' })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/export/event.pdf?detail=1`)
+        .set(sup())
+        .expect(200);
+      const pdf = res.body as Buffer;
+      const streams = [...pdf.toString('latin1').matchAll(/stream\r?\n/g)]
+        .map((match) => {
+          const start = (match.index ?? 0) + match[0].length;
+          const end = pdf.indexOf('endstream', start, 'latin1');
+          try {
+            return inflateSync(pdf.subarray(start, end)).toString('latin1');
+          } catch {
+            return '';
+          }
+        })
+        .join('\n');
+      const text = [...streams.matchAll(/<([0-9a-fA-F]+)>/g)]
+        .map((match) => Buffer.from(match[1], 'hex').toString('latin1'))
+        .join('');
+      expect(text).not.toContain('Created in error');
+      // The timeline underneath still says it was opened and voided.
+      expect(text).toContain(`Encounter #${sequence} marked created in error`);
+    });
+
+    it('lets the mark come off again', async () => {
+      const restored = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${voidedEncounterId}/void`)
+        .set(sup())
+        .send({ as: null })
+        .expect(201);
+      expect(restored.body.voidedAs).toBeNull();
+      expect(restored.body.closedAt).toBeNull();
+      // Put back the way it was found, so the run-number test above still
+      // describes the standby the later tests inherit.
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${voidedEncounterId}/void`)
+        .set(sup())
+        .send({ as: 'UNFOUNDED' })
+        .expect(201);
     });
 
     // The duplicate, or the one opened on the wrong standby. Held on the

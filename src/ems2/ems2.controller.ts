@@ -159,6 +159,15 @@ class IssueRunNumberDto {
   @IsInt() locationId!: number;
 }
 
+class VoidEncounterDto {
+  /** Null takes the mark off again. */
+  @IsOptional()
+  @IsIn(['UNFOUNDED', 'CREATED_IN_ERROR', null])
+  as?: 'UNFOUNDED' | 'CREATED_IN_ERROR' | null;
+
+  @IsOptional() @IsString() @MaxLength(300) note?: string | null;
+}
+
 /**
  * Event medical standbys.
  *
@@ -407,6 +416,24 @@ export class Ems2Controller {
     @Param('encounterId', ParseIntPipe) encounterId: number,
   ) {
     return this.ems2.closeEncounter(auth, id, encounterId);
+  }
+
+  /**
+   * Mark an encounter as one that turned out not to be one, or take the
+   * mark off again. Needs only to be on the standby: this is the
+   * correction, and deleting is the thing that needs a permission.
+   */
+  @Post(':id/encounters/:encounterId/void')
+  voidEncounter(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+    @Body() body: VoidEncounterDto,
+  ) {
+    return this.ems2.voidEncounter(auth, id, encounterId, {
+      as: body.as ?? null,
+      note: body.note,
+    });
   }
 
   /**

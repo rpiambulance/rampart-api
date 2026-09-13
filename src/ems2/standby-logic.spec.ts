@@ -4,6 +4,8 @@ import {
   encounterProblems,
   formCounts,
   inChargeConflict,
+  inPatientList,
+  onDohForms,
   mayReadAllEncounters,
   type EncounterShape,
 } from './standby-logic';
@@ -242,5 +244,62 @@ describe('one supervisor in charge', () => {
     expect(
       inChargeConflict([{ id: 1, role: 'EES_IC', removedAt: null }], 1),
     ).toEqual([]);
+  });
+});
+
+describe('voided encounters', () => {
+  const base = {
+    category: 'MINOR_INJURY' as const,
+    disposition: 'TREATED_RELEASED' as const,
+    died: false,
+    intoxicationSigns: false,
+    firstAidOnly: false,
+  };
+
+  // Three audiences, and they are not owed the same thing.
+  it('keeps everything voided off the state’s forms', () => {
+    expect(onDohForms({ voidedAs: null })).toBe(true);
+    expect(onDohForms({ voidedAs: 'UNFOUNDED' })).toBe(false);
+    expect(onDohForms({ voidedAs: 'CREATED_IN_ERROR' })).toBe(false);
+  });
+
+  it('keeps an unfounded call in the agency’s own list, but not a mistake', () => {
+    expect(inPatientList({ voidedAs: null })).toBe(true);
+    expect(inPatientList({ voidedAs: 'UNFOUNDED' })).toBe(true);
+    expect(inPatientList({ voidedAs: 'CREATED_IN_ERROR' })).toBe(false);
+  });
+
+  it('counts nobody from a voided encounter', () => {
+    const counts = formCounts([
+      { ...base, voidedAs: null },
+      {
+        ...base,
+        category: 'MAJOR_INJURY',
+        disposition: 'TRANSPORTED',
+        voidedAs: 'UNFOUNDED',
+      },
+      { ...base, voidedAs: 'CREATED_IN_ERROR' },
+    ]);
+    expect(counts.totalTreated).toBe(1);
+    expect(counts.minorInjury).toBe(1);
+    expect(counts.majorInjury).toBe(0);
+    expect(counts.transports).toBe(0);
+  });
+
+  // No run number for a patient who was never found, no PRID for a care
+  // report nobody wrote.
+  it('holds a voided encounter to none of the rules for a patient', () => {
+    expect(blockingProblems({ ...base, voidedAs: 'UNFOUNDED' })).toEqual([]);
+    expect(blockingProblems({ ...base })).not.toEqual([]);
+  });
+
+  it('still refuses a name on one', () => {
+    expect(
+      blockingProblems({
+        ...base,
+        voidedAs: 'UNFOUNDED',
+        patientInitials: 'Jonathan Doe',
+      }).map((p) => p.field),
+    ).toEqual(['patientInitials']);
   });
 });

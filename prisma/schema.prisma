@@ -131,6 +131,7 @@ model Member {
   standbyPersonnelRemoved  StandbyPersonnel[]               @relation("StandbyPersonnelRemovedBy")
   standbyUnitsCreated      StandbyUnit[]                    @relation("StandbyUnitCreatedBy")
   encountersCreated        Encounter[]                      @relation("EncounterCreatedBy")
+  encountersVoided         Encounter[]                      @relation("EncounterVoidedBy")
   standbyTimelineActions   StandbyTimelineEntry[]           @relation("StandbyTimelineActor")
 }
 
@@ -2168,6 +2169,17 @@ enum EncounterCategory {
   MAJOR_ILLNESS
 }
 
+/// Why an encounter is on the record but not a patient.
+enum EncounterVoid {
+  /// The call was real and the patient was not: nobody found, nothing to
+  /// treat. It happened, so the log keeps it; there was no patient, so the
+  /// state's forms never see it.
+  UNFOUNDED
+  /// The row should not exist — a duplicate, or a tap on the wrong button.
+  /// Kept only where the record of everything that was done is kept.
+  CREATED_IN_ERROR
+}
+
 enum EncounterDisposition {
   /// Refused medical attention.
   RMA
@@ -2229,6 +2241,15 @@ model Encounter {
   locationId   Int?
   locationText String?
 
+  /// Set when this encounter turned out not to be one. Softer than deleting
+  /// it, which loses the fact that it ever happened, and available to
+  /// whoever is working the standby rather than only to an officer.
+  voidedAs   EncounterVoid?
+  voidedAt   DateTime?
+  voidedById Int?
+  /// What made it unfounded, or what the mistake was. Not patient care.
+  voidNote   String?
+
   createdById Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -2239,6 +2260,7 @@ model Encounter {
   runNumber RunNumber?     @relation(fields: [runNumberId], references: [id])
   location  VenueLocation? @relation(fields: [locationId], references: [id])
   createdBy Member?        @relation("EncounterCreatedBy", fields: [createdById], references: [id])
+  voidedBy  Member?        @relation("EncounterVoidedBy", fields: [voidedById], references: [id])
 
   @@unique([standbyId, sequence])
   @@index([standbyId])

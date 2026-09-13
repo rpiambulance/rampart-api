@@ -144,6 +144,45 @@ describe('describeTimelineEntry', () => {
     ).toBe('Encounter #4 deleted');
   });
 
+  it('says how an encounter was voided, and why', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.voided', {
+          encounterId: 100,
+          detail: {
+            sequence: 3,
+            as: 'UNFOUNDED',
+            note: 'Searched the north lawn, nobody there',
+          },
+        }),
+        names,
+      ),
+    ).toBe(
+      'Encounter #3 marked unfounded — Searched the north lawn, nobody there',
+    );
+    expect(
+      describeTimelineEntry(
+        entry('encounter.voided', {
+          encounterId: 100,
+          detail: { sequence: 3, as: 'CREATED_IN_ERROR' },
+        }),
+        names,
+      ),
+    ).toBe('Encounter #3 marked created in error');
+  });
+
+  it('describes taking the mark off again', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.unvoided', {
+          encounterId: 100,
+          detail: { sequence: 3, from: 'UNFOUNDED' },
+        }),
+        names,
+      ),
+    ).toBe('Encounter #3 is a patient encounter again (was unfounded)');
+  });
+
   it('describes reopening one', () => {
     expect(
       describeTimelineEntry(
