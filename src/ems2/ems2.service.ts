@@ -349,9 +349,12 @@ export class Ems2Service {
    * Discards a standby that turned out not to be one.
    *
    * Opened against the wrong event, or an ad-hoc event created by mistake.
-   * Refused once there are encounters on it, for the same reason deleting
-   * the event is: they are the record of who was treated, and a tidy-up is
-   * not a reason to lose it.
+   * Refused once there are encounters on it: they are the record of who was
+   * treated, and a tidy-up is not a reason to lose it.
+   *
+   * This is the only way a standby is destroyed. Deleting the event it
+   * hangs off would cascade it away, so an event with a standby refuses to
+   * be deleted until this has happened first.
    *
    * The event is left alone. It may well be a real event somebody still
    * wants on the calendar — only the standby opened against it goes.

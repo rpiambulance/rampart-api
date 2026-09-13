@@ -264,23 +264,29 @@ export class EventsService {
   }
 
   async remove(auth: AuthContext, eventId: number) {
-    // An event's standby is cascaded away with it, and a standby carries the
-    // encounters — who was treated, and what was done. Those are the record
-    // the DOH reports are filed off, so an event carrying any is not
-    // something to delete while tidying the calendar.
+    // An event's standby is cascaded away with it by the schema, and a
+    // standby is the record of who was treated and what was done. Tidying
+    // the calendar must not be a way to destroy one — not even an empty
+    // one, whose units and personnel are still a record somebody made.
     //
-    // An empty standby is let through: opening one against the wrong event,
-    // or creating an ad-hoc event by mistake, should not be a trap with no
-    // way out.
-    const encounters = await this.prisma.encounter.count({
-      where: { standby: { eventId } },
+    // So the standby is what blocks, rather than the encounters on it, and
+    // the way past it is to discard the standby first, which is its own
+    // permission and its own decision.
+    const standby = await this.prisma.standbyLog.findUnique({
+      where: { eventId },
+      select: { id: true, _count: { select: { encounters: true } } },
     });
-    if (encounters) {
+    if (standby) {
+      const encounters = standby._count.encounters;
       throw new BadRequestException(
-        `This event has a standby with ${encounters} patient ` +
-          `encounter${encounters === 1 ? '' : 's'} recorded against it. ` +
-          'Deleting the event would take those with it. Export what you need ' +
-          'and ask an administrator if it really has to go.',
+        'This event has a standby opened against it' +
+          (encounters
+            ? `, with ${encounters} patient encounter${
+                encounters === 1 ? '' : 's'
+              } recorded`
+            : '') +
+          '. Deleting the event would take the standby with it. Discard the ' +
+          'standby first, which needs standbys:delete.',
       );
     }
     const event = await this.prisma.event.delete({ where: { id: eventId } });

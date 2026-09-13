@@ -93,8 +93,19 @@ class SignupDto {
 }
 
 class WorkflowDto {
-  @IsIn(['REQUEST_AVAILABILITY', 'SUBMIT_FOR_APPROVAL', 'APPROVE', 'DENY', 'CANCEL'])
-  action!: 'REQUEST_AVAILABILITY' | 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'DENY' | 'CANCEL';
+  @IsIn([
+    'REQUEST_AVAILABILITY',
+    'SUBMIT_FOR_APPROVAL',
+    'APPROVE',
+    'DENY',
+    'CANCEL',
+  ])
+  action!:
+    | 'REQUEST_AVAILABILITY'
+    | 'SUBMIT_FOR_APPROVAL'
+    | 'APPROVE'
+    | 'DENY'
+    | 'CANCEL';
 
   @IsOptional()
   @IsString()
@@ -195,7 +206,10 @@ export class EventsController {
 
   @Patch('tiers/:id')
   @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
-  updateTier(@Param('id', ParseIntPipe) id: number, @Body() body: PatchTierDto) {
+  updateTier(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: PatchTierDto,
+  ) {
     return this.events.updateTier(id, body);
   }
 
@@ -207,7 +221,10 @@ export class EventsController {
 
   @Patch('kinds/:id')
   @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
-  updateKind(@Param('id', ParseIntPipe) id: number, @Body() body: PatchKindDto) {
+  updateKind(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: PatchKindDto,
+  ) {
     return this.events.updateKind(id, body);
   }
 
@@ -245,9 +262,17 @@ export class EventsController {
     return this.events.setLocked(auth, id, !!body.locked);
   }
 
+  /**
+   * Delete an event. Nothing on a standby can be lost this way: an event
+   * with one opened against it is refused, and discarding that is its own
+   * permission.
+   */
   @Delete(':id')
-  @RequirePermissions(PERMISSIONS.EVENTS_DELETE)
-  remove(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
+  remove(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.events.remove(auth, id);
   }
 
@@ -310,7 +335,10 @@ export class EventsController {
   }
 
   @Delete(':id/signup')
-  drop(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  drop(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.events.drop(requireMember(auth), id);
   }
 

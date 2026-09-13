@@ -31,17 +31,16 @@ export const PERMISSIONS = {
   SCHEDULE_DUTY_SUP: 'schedule:crews:duty-sup',
   SCHEDULE_CREWS_MANAGE_DEFAULTS: 'schedule:crews:manage-defaults',
   SCHEDULE_SETTINGS: 'schedule:settings',
+  /** Make, edit and remove events on the calendar. Deleting is part of
+   *  keeping it: nothing on a standby can be lost that way, because an
+   *  event with a standby opened against it refuses to be deleted at all
+   *  until the standby is discarded, which is standbys:delete. */
   EVENTS_CREATE: 'events:create',
   EVENTS_ASSIGN_OTHERS: 'events:assign-others',
   EVENTS_LOCK: 'events:lock',
   EVENTS_APPROVE: 'events:approve',
   /** Turn a request down. Anyone who may approve may also decline. */
   EVENTS_DECLINE: 'events:decline',
-  /** Delete an event outright. Held apart from creating one, the way
-   *  deleting an evaluation is: making a thing and destroying it are not the
-   *  same judgement, and an event carries signups, run numbers and possibly
-   *  a whole standby. */
-  EVENTS_DELETE: 'events:delete',
   TRAININGS_MANAGE: 'trainings:manage',
   FUEL_WRITE: 'fuel:write',
   RADIOS_MANAGE: 'radios:manage',

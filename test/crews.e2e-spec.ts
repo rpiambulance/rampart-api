@@ -4019,33 +4019,21 @@ describe('Night crews engine (e2e)', () => {
       await prisma.event.delete({ where: { id: spare.id } });
     });
 
-    // Deleting an event cascades its standby away, and a standby carries the
-    // encounters. Tidying the calendar must not be a way to lose them.
-    it('refuses to delete an event whose standby has encounters', async () => {
+    // Deleting an event cascades its standby away. Keeping the calendar
+    // tidy is not a way to destroy the record of a standby, so the standby
+    // itself is what refuses — not the encounters on it.
+    it('refuses to delete an event that has a standby', async () => {
       const refused = await request(app.getHttpServer())
         .delete(`/v1/events/${eventId}`)
         .set(sup())
-        .set('x-test-permissions', 'events:delete')
-        .expect(400);
-      expect(refused.body.message).toContain('encounter');
-      // Still there, with everything on it.
-      expect(
-        await prisma.standbyLog.count({ where: { eventId } }),
-      ).toBe(1);
-    });
-
-    // Making an event and destroying one are not the same judgement.
-    it('will not let somebody who can only create events delete one', async () => {
-      await request(app.getHttpServer())
-        .delete(`/v1/events/${eventId}`)
-        .set(sup())
         .set('x-test-permissions', 'events:create')
-        .expect(403);
+        .expect(400);
+      expect(refused.body.message).toContain('standbys:delete');
+      // Still there, with everything on it.
+      expect(await prisma.standbyLog.count({ where: { eventId } })).toBe(1);
     });
 
-    // An ad-hoc event created by mistake opens an empty standby. That has to
-    // be removable, or the mistake is permanent.
-    it('lets an event go when its standby has nothing on it', async () => {
+    it('refuses even when the standby has nothing on it', async () => {
       const kind = await prisma.eventKind.findFirstOrThrow();
       const spare = await prisma.event.create({
         data: {
@@ -4055,7 +4043,7 @@ describe('Night crews engine (e2e)', () => {
           kindId: kind.id,
         },
       });
-      await request(app.getHttpServer())
+      const opened = await request(app.getHttpServer())
         .post('/v1/standbys')
         .set(sup())
         .send({ eventId: spare.id })
@@ -4064,9 +4052,21 @@ describe('Night crews engine (e2e)', () => {
       await request(app.getHttpServer())
         .delete(`/v1/events/${spare.id}`)
         .set(sup())
-        .set('x-test-permissions', 'events:delete')
+        .set('x-test-permissions', 'events:create')
+        .expect(400);
+
+      // Discard the standby, which is its own permission, and the event
+      // goes the way any other event goes.
+      await request(app.getHttpServer())
+        .delete(`/v1/standbys/${opened.body.id}`)
+        .set(canDelete())
         .expect(200);
-      expect(await prisma.standbyLog.count({ where: { eventId: spare.id } })).toBe(0);
+      await request(app.getHttpServer())
+        .delete(`/v1/events/${spare.id}`)
+        .set(sup())
+        .set('x-test-permissions', 'events:create')
+        .expect(200);
+      expect(await prisma.event.count({ where: { id: spare.id } })).toBe(0);
     });
 
     it('keeps a timeline of what happened', async () => {
