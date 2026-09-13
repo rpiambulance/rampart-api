@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ForbiddenException,
   Delete,
   Get,
   Param,
@@ -171,10 +170,12 @@ class VoidEncounterDto {
 /**
  * Event medical standbys.
  *
- * Running one needs standbys:manage. Writing up an encounter needs only
- * being on the standby — a crew chief should not need a permission to say
- * what they did — and reading somebody else's needs being a supervisor on
- * it, or the read-all permission.
+ * Running one needs standbys:manage, including opening one for something
+ * that was never on the calendar. Writing up an encounter needs only being
+ * on the standby — a crew chief should not need a permission to say what
+ * they did — and reading somebody else's needs being a supervisor on it, or
+ * the read-all permission. Throwing either a standby or an encounter away
+ * is the one thing held apart, on standbys:delete.
  */
 @Controller({ path: 'standbys', version: '1' })
 export class Ems2Controller {
@@ -225,13 +226,11 @@ export class Ems2Controller {
         'Name an event from the calendar, or give the details of one that is not on it.',
       );
     }
-    // Making an event is a separate thing from running a standby, so it asks
-    // for the permission that makes events.
-    if (!auth.permissions?.has(PERMISSIONS.EVENTS_CREATE)) {
-      throw new ForbiddenException(
-        'Creating an event that is not on the calendar needs events:create.',
-      );
-    }
+    // Nothing further is asked for. What this makes is not a calendar
+    // event — it is hidden, and exists so the standby has something to tag
+    // run numbers to — so events:create would be a barrier in front of the
+    // one case that cannot wait: something is happening now, and whoever is
+    // running it needs the board open.
     return this.ems2.open(auth, { event: body.event, venueId: body.venueId });
   }
 

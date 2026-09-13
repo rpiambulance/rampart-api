@@ -3398,7 +3398,10 @@ describe('Night crews engine (e2e)', () => {
       const started = new Date(Date.now() - 2 * 3600_000);
       const opened = await request(app.getHttpServer())
         .post('/v1/standbys')
-        .set({ ...sup(), 'x-test-permissions': 'standbys:manage,events:create' })
+        // Running a standby is the whole permission. What this makes is not
+        // a calendar event, and the case it exists for is the one that
+        // cannot wait for somebody with events:create to be found.
+        .set({ ...sup(), 'x-test-permissions': 'standbys:manage' })
         .send({
           event: {
             title: `Unplanned 5K ${stamp}`,
