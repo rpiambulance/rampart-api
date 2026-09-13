@@ -18,27 +18,6 @@ import {
   type StandbyForForm,
 } from './standby-pdf';
 
-/** Words for a timeline entry, so the report reads as prose rather than keys. */
-const TIMELINE_WORDS: Record<string, string> = {
-  'standby.opened': 'Standby opened',
-  'standby.closed': 'Standby closed',
-  'standby.reopened': 'Standby reopened',
-  'personnel.added': 'Added to the standby',
-  'personnel.returned': 'Returned to the standby',
-  'personnel.removed': 'Left the standby',
-  'personnel.role': 'Role changed',
-  'personnel.stood-down': 'Stood down from in charge',
-  'unit.created': 'Unit put in service',
-  'unit.retired': 'Unit stood down',
-  'unit.moved': 'Unit moved',
-  'unit.status': 'Unit status changed',
-  'crew.assigned': 'Assigned to a unit',
-  'crew.unassigned': 'Taken off a unit',
-  'encounter.opened': 'Encounter opened',
-  'encounter.closed': 'Encounter closed',
-  'encounter.run-number': 'Run number issued',
-};
-
 @Injectable()
 export class Ems2ExportService {
   constructor(
@@ -175,15 +154,12 @@ export class Ems2ExportService {
     );
 
     const timeline = detailed
-      ? (await this.ems2.timeline(standbyId)).map((entry) => ({
+      ? (await this.ems2.timeline(auth, standbyId)).map((entry) => ({
           at: entry.at,
           kind: entry.kind,
-          detail: [
-            TIMELINE_WORDS[entry.kind] ?? entry.kind,
-            entry.actor ? `— ${displayName(entry.actor)}` : null,
-          ]
-            .filter(Boolean)
-            .join(' '),
+          detail: entry.actor
+            ? `${entry.text} — ${displayName(entry.actor)}`
+            : entry.text,
         }))
       : [];
 

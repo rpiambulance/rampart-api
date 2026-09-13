@@ -15,9 +15,54 @@ export type Doc = PDFKit.PDFDocument;
 const PAGE = { size: 'LETTER' as const, margin: 48 };
 const RULE = '#000000';
 
-export function newDoc(title: string): Doc {
-  const doc = new PDFDocument({ ...PAGE, info: { Title: title } });
+/**
+ * Characters the built-in fonts cannot draw, and what to draw instead.
+ *
+ * These documents use the standard PDF fonts, which are WinAnsi: a
+ * character outside it does not come out as a box, it silently truncates
+ * the rest of the line. An arrow in a timeline entry took the whole
+ * sentence with it. Anything typed by a crew goes through here too, because
+ * a phone keyboard will produce an ellipsis or an emoji sooner or later.
+ */
+const SUBSTITUTES: Array<[RegExp, string]> = [
+  [/[\u2018\u2019\u201b]/g, "'"],
+  [/[\u201c\u201d]/g, '"'],
+  [/\u2192/g, '->'],
+  [/\u2190/g, '<-'],
+  [/\u2026/g, '...'],
+  [/[\u2022\u25cf]/g, '*'],
+  [/\u00a0/g, ' '],
+];
+
+export function winAnsi(text: string): string {
+  const swapped = SUBSTITUTES.reduce(
+    (value, [pattern, with_]) => value.replace(pattern, with_),
+    text,
+  );
+  // Whatever is left that WinAnsi has no room for. Dropped rather than
+  // replaced with a box, which reads as damage on a filed form.
+  // eslint-disable-next-line no-control-regex
+  return swapped.replace(/[^\u0000-\u00ff\u20ac\u2013\u2014\u2020\u2021]/g, '');
+}
+
+/**
+ * A document with its text sanitised on the way out.
+ *
+ * Wrapped once here rather than at the fifty-odd places these forms write a
+ * string, because the one that gets forgotten is the one a crew types into.
+ */
+type TextFn = Doc['text'];
+
+function prepare(doc: Doc): Doc {
+  const original: TextFn = doc.text.bind(doc) as TextFn;
+  const wrapped: TextFn = (text, ...rest) =>
+    original(typeof text === 'string' ? winAnsi(text) : text, ...rest);
+  doc.text = wrapped;
   return doc;
+}
+
+export function newDoc(title: string): Doc {
+  return prepare(new PDFDocument({ ...PAGE, info: { Title: title } }));
 }
 
 /** Collects a document into a buffer, since these are served over HTTP. */
@@ -400,12 +445,14 @@ export function dispositionLabel(key: string): string {
 export function doh2342(standby: StandbyForForm, rows: IncidentRow[]): Doc {
   // Landscape: ten columns do not fit across an upright letter page, and the
   // paper form is wide for exactly that reason.
-  const doc = new PDFDocument({
-    size: 'LETTER',
-    layout: 'landscape',
-    margin: PAGE.margin,
-    info: { Title: `DOH-2342 — ${standby.eventTitle}` },
-  });
+  const doc = prepare(
+    new PDFDocument({
+      size: 'LETTER',
+      layout: 'landscape',
+      margin: PAGE.margin,
+      info: { Title: `DOH-2342 — ${standby.eventTitle}` },
+    }),
+  );
   const right = 792 - PAGE.margin;
   // Landscape letter is 612 tall. The heading and the header fields take
   // about 172 of it and the footer wants 20, which leaves room for these.

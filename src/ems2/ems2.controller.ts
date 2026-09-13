@@ -232,8 +232,11 @@ export class Ems2Controller {
   }
 
   @Get(':id/timeline')
-  timeline(@Param('id', ParseIntPipe) id: number) {
-    return this.ems2.timeline(id);
+  timeline(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.ems2.timeline(auth, id);
   }
 
   @Patch(':id')
@@ -398,6 +401,15 @@ export class Ems2Controller {
     @Param('encounterId', ParseIntPipe) encounterId: number,
   ) {
     return this.ems2.closeEncounter(auth, id, encounterId);
+  }
+
+  @Post(':id/encounters/:encounterId/reopen')
+  reopenEncounter(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+  ) {
+    return this.ems2.reopenEncounter(auth, id, encounterId);
   }
 
   @Post(':id/encounters/:encounterId/run-number')

@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { nyDayStart, nyNow } from '../common/dates';
+import { displayName } from '../common/name';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { RunNumbersService } from '../run-numbers/run-numbers.service';
@@ -18,6 +19,7 @@ import {
   mayReadAllEncounters,
   type EncounterShape,
 } from './standby-logic';
+import { describeTimelineEntry, type TimelineNames } from './timeline-text';
 import type {
   EncounterCategory,
   EncounterDisposition,
@@ -296,7 +298,13 @@ export class Ems2Service {
         endedAt: undefined,
       },
     });
-    await this.log(id, 'standby.closed', auth);
+    const [encounters, personnel] = await Promise.all([
+      this.prisma.encounter.count({ where: { standbyId: id } }),
+      this.prisma.standbyPersonnel.count({ where: { standbyId: id } }),
+    ]);
+    await this.log(id, 'standby.closed', auth, {
+      detail: { encounters, personnel },
+    });
     await this.audit.log(auth, 'standby.close', 'StandbyLog', id);
     return standby;
   }
@@ -423,7 +431,7 @@ export class Ems2Service {
   ) {
     const all = await this.prisma.standbyPersonnel.findMany({
       where: { standbyId },
-      select: { id: true, role: true, removedAt: true },
+      select: { id: true, memberId: true, role: true, removedAt: true },
     });
     const displaced = inChargeConflict(all, promoting);
     if (!displaced.length) return;
@@ -432,7 +440,12 @@ export class Ems2Service {
       data: { role: 'EES' },
     });
     await this.log(standbyId, 'personnel.stood-down', auth, {
-      detail: { personnelIds: displaced },
+      detail: {
+        personnelIds: displaced,
+        memberIds: all
+          .filter((person) => displaced.includes(person.id))
+          .map((person) => person.memberId),
+      },
     });
   }
 
@@ -455,6 +468,7 @@ export class Ems2Service {
     });
     await this.log(standbyId, 'personnel.removed', auth, {
       memberId: person.memberId,
+      detail: { role: person.role },
     });
     return person;
   }
@@ -518,17 +532,27 @@ export class Ems2Service {
     if (data.status && data.status !== before.status) {
       await this.log(standbyId, 'unit.status', auth, {
         unitId,
-        detail: { from: before.status, to: data.status },
+        detail: { name: unit.name, from: before.status, to: data.status },
       });
     }
     const movedTo =
       data.currentLocationId !== undefined ||
       data.currentLocationText !== undefined;
     if (movedTo) {
+      // The place is named in the entry, not only pointed at: a location
+      // renamed or retired next season should not rewrite last season's log.
+      const location = unit.currentLocationId
+        ? await this.prisma.venueLocation.findUnique({
+            where: { id: unit.currentLocationId },
+            select: { name: true },
+          })
+        : null;
       await this.log(standbyId, 'unit.moved', auth, {
         unitId,
         detail: {
+          name: unit.name,
           locationId: unit.currentLocationId,
+          locationName: location?.name ?? null,
           locationText: unit.currentLocationText,
         },
       });
@@ -545,7 +569,10 @@ export class Ems2Service {
       where: { unitId, removedAt: null },
       data: { removedAt: new Date() },
     });
-    await this.log(standbyId, 'unit.retired', auth, { unitId });
+    await this.log(standbyId, 'unit.retired', auth, {
+      unitId,
+      detail: { name: unit.name },
+    });
     return unit;
   }
 
@@ -585,10 +612,14 @@ export class Ems2Service {
         position: input.position?.trim() || null,
       },
     });
+    const unit = await this.prisma.standbyUnit.findUnique({
+      where: { id: unitId },
+      select: { name: true },
+    });
     await this.log(standbyId, 'crew.assigned', auth, {
       unitId,
       memberId: person.memberId,
-      detail: { position: assignment.position },
+      detail: { name: unit?.name, position: assignment.position },
     });
     return assignment;
   }
@@ -599,9 +630,14 @@ export class Ems2Service {
       data: { removedAt: new Date() },
       include: { personnel: true },
     });
+    const unit = await this.prisma.standbyUnit.findUnique({
+      where: { id: assignment.unitId },
+      select: { name: true },
+    });
     await this.log(standbyId, 'crew.unassigned', auth, {
       unitId: assignment.unitId,
       memberId: assignment.personnel.memberId,
+      detail: { name: unit?.name, position: assignment.position },
     });
     return assignment;
   }
@@ -684,6 +720,11 @@ export class Ems2Service {
     await this.log(standbyId, 'encounter.opened', auth, {
       encounterId: encounter.id,
       unitId: input.unitId,
+      detail: {
+        sequence: encounter.sequence,
+        locationId: encounter.locationId,
+        locationText: encounter.locationText,
+      },
     });
     return encounter;
   }
@@ -750,7 +791,14 @@ export class Ems2Service {
       where: { id: encounterId },
       data: { closedAt: new Date() },
     });
-    await this.log(standbyId, 'encounter.closed', auth, { encounterId });
+    await this.log(standbyId, 'encounter.closed', auth, {
+      encounterId,
+      detail: {
+        sequence: encounter.sequence,
+        category: encounter.category,
+        disposition: encounter.disposition,
+      },
+    });
     await this.audit.log(
       auth,
       'standby.encounter.close',
@@ -765,6 +813,50 @@ export class Ems2Service {
       ...encounter,
       advisories: advisoryProblems(current),
     };
+  }
+
+  /**
+   * Opens a closed encounter again.
+   *
+   * Something was wrong or something was missed, and the alternative is a
+   * second encounter for one patient, which is worse for the record than an
+   * edit is. Refused on a closed standby: the standby was closed on the
+   * promise that nothing on it was still open, so that has to be undone
+   * first and deliberately.
+   */
+  async reopenEncounter(
+    auth: AuthContext,
+    standbyId: number,
+    encounterId: number,
+  ) {
+    const current = await this.mineOrVisible(auth, standbyId, encounterId);
+    if (!current.closedAt) return current;
+
+    const standby = await this.prisma.standbyLog.findUniqueOrThrow({
+      where: { id: standbyId },
+      select: { closedAt: true },
+    });
+    if (standby.closedAt) {
+      throw new BadRequestException(
+        'This standby is closed. Reopen the standby first.',
+      );
+    }
+
+    const encounter = await this.prisma.encounter.update({
+      where: { id: encounterId },
+      data: { closedAt: null },
+    });
+    await this.log(standbyId, 'encounter.reopened', auth, {
+      encounterId,
+      detail: { sequence: encounter.sequence },
+    });
+    await this.audit.log(
+      auth,
+      'standby.encounter.reopen',
+      'Encounter',
+      encounterId,
+    );
+    return { ...encounter, advisories: advisoryProblems(encounter) };
   }
 
   /**
@@ -795,7 +887,7 @@ export class Ems2Service {
     });
     await this.log(standbyId, 'encounter.run-number', auth, {
       encounterId,
-      detail: { number: issued.number },
+      detail: { sequence: encounter.sequence, number: issued.number },
     });
     return issued;
   }
@@ -832,25 +924,113 @@ export class Ems2Service {
     return encounter;
   }
 
-  async timeline(standbyId: number) {
-    const entries = await this.prisma.standbyTimelineEntry.findMany({
-      where: { standbyId },
-      orderBy: { at: 'asc' },
-      include: {
-        actor: {
-          select: {
-            id: true,
-            firstName: true,
-            preferredFirstName: true,
-            lastName: true,
+  /**
+   * What happened on a standby, in order, already written out as sentences.
+   *
+   * The text is built here rather than in the board or the report so that
+   * the two cannot describe the same row differently. Rows written before a
+   * kind learned to record its own detail still read correctly: the names
+   * are resolved from the standby as it stands now, and `detail` wins where
+   * it has something to say.
+   *
+   * A row about an encounter the caller may not read says that it happened
+   * and nothing more. What is on the timeline follows the same rule as the
+   * board: an encounter is the crew chief's and the supervisors', and the
+   * complaint is not something to learn from a log line instead.
+   */
+  async timeline(auth: AuthContext, standbyId: number) {
+    const [entries, units, personnel, encounters, locations] =
+      await Promise.all([
+        this.prisma.standbyTimelineEntry.findMany({
+          where: { standbyId },
+          orderBy: { at: 'asc' },
+          include: {
+            actor: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
           },
-        },
-      },
-    });
+        }),
+        this.prisma.standbyUnit.findMany({
+          where: { standbyId },
+          select: { id: true, name: true },
+        }),
+        this.prisma.standbyPersonnel.findMany({
+          where: { standbyId },
+          select: {
+            memberId: true,
+            member: {
+              select: {
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
+          },
+        }),
+        this.prisma.encounter.findMany({
+          where: { standbyId },
+          select: { id: true, sequence: true },
+        }),
+        this.prisma.venueLocation.findMany({
+          select: { id: true, name: true },
+        }),
+      ]);
+
+    const unitNames = new Map(units.map((unit) => [unit.id, unit.name]));
+    const memberNames = new Map(
+      personnel.map((person) => [person.memberId, displayName(person.member)]),
+    );
+    const sequences = new Map(
+      encounters.map((encounter) => [encounter.id, encounter.sequence]),
+    );
+    const locationNames = new Map(
+      locations.map((location) => [location.id, location.name]),
+    );
+    const viewer = await this.viewerOf(auth, standbyId);
+    const readable = viewer.mayReadAll
+      ? null
+      : new Set(
+          (
+            await this.prisma.encounter.findMany({
+              where: { standbyId, createdById: viewer.memberId ?? -1 },
+              select: { id: true },
+            })
+          ).map((encounter) => encounter.id),
+        );
+
+    const names: TimelineNames = {
+      unit: (id) => unitNames.get(id),
+      member: (id) => memberNames.get(id),
+      encounter: (id) => sequences.get(id),
+      location: (id) => locationNames.get(id),
+    };
+
     // The id is a BigInt, which JSON cannot carry. Stringified here rather
     // than narrowed to a number: the timeline is the one table that grows
     // per action rather than per thing.
-    return entries.map((entry) => ({ ...entry, id: String(entry.id) }));
+    return entries.map((entry) => {
+      const hidden =
+        entry.encounterId != null &&
+        readable != null &&
+        !readable.has(entry.encounterId);
+      const shown = hidden
+        ? {
+            ...entry,
+            detail: { sequence: sequences.get(entry.encounterId as number) },
+          }
+        : entry;
+      return {
+        ...entry,
+        id: String(entry.id),
+        detail: shown.detail,
+        text: describeTimelineEntry(shown, names),
+      };
+    });
   }
 
   /** One line in the record of what happened. */

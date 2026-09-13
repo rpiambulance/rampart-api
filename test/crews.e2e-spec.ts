@@ -1,3 +1,4 @@
+import { inflateSync } from 'node:zlib';
 import 'dotenv/config';
 import {
   CanActivate,
@@ -3494,6 +3495,38 @@ describe('Night crews engine (e2e)', () => {
       expect(w > h ? 'landscape' : 'portrait').toBe(orientation);
     });
 
+    // The detailed report is the one somebody reads months later, so the
+    // timeline in it has to say what happened rather than name the kind of
+    // thing that happened.
+    it('prints a timeline that reads as sentences', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/export/event.pdf?detail=1`)
+        .set(sup())
+        .expect(200);
+      const pdf = res.body as Buffer;
+      // pdfkit deflates its content streams; the words are in there.
+      const streams = [...pdf.toString('latin1').matchAll(/stream\r?\n/g)]
+        .map((match) => {
+          const start = (match.index ?? 0) + match[0].length;
+          const end = pdf.indexOf('endstream', start, 'latin1');
+          try {
+            return inflateSync(pdf.subarray(start, end)).toString('latin1');
+          } catch {
+            return '';
+          }
+        })
+        .join('\n');
+      // The words are drawn as hex glyph runs, one per positioned piece.
+      const text = [...streams.matchAll(/<([0-9a-fA-F]+)>/g)]
+        .map((match) => Buffer.from(match[1], 'hex').toString('latin1'))
+        .join('');
+      // PDF text is drawn glyph run by glyph run, so look for the words
+      // rather than the whole line.
+      expect(text).toContain('Standby opened');
+      expect(text).toContain('is now ');
+      expect(text).toContain('Crew Chief');
+    });
+
     it('refuses an export to somebody who cannot see the whole record', async () => {
       await request(app.getHttpServer())
         .get(`/v1/standbys/${standbyId}/export/doh-2332.pdf`)
@@ -3617,11 +3650,86 @@ describe('Night crews engine (e2e)', () => {
         .get(`/v1/standbys/${standbyId}/timeline`)
         .set(sup())
         .expect(200);
-      const kinds = (res.body as Array<{ kind: string }>).map((e) => e.kind);
+      const entries = res.body as Array<{ kind: string; text: string }>;
+      const kinds = entries.map((e) => e.kind);
       expect(kinds).toContain('standby.opened');
       expect(kinds).toContain('unit.created');
       expect(kinds).toContain('crew.assigned');
       expect(kinds).toContain('encounter.opened');
+
+      // Every line says what it was about. "Unit status changed" with
+      // nothing after it is not a record of anything.
+      const assigned = entries.find((e) => e.kind === 'crew.assigned');
+      expect(assigned?.text).toContain('Crew Chief');
+      expect(assigned?.text).toContain(`M-${stamp}`.slice(0, 20));
+      const runNumber = entries.find((e) => e.kind === 'encounter.run-number');
+      expect(runNumber?.text).toMatch(/Run number .+ issued for encounter #\d/);
+      const closed = entries.filter((e) => e.kind === 'encounter.closed');
+      expect(closed.map((e) => e.text)).toContainEqual(
+        expect.stringContaining('major illness, transported'),
+      );
+    });
+
+    // A crew member reads the timeline of the standby they are working, and
+    // it must not tell them what was wrong with somebody else's patient.
+    it('does not spell out an encounter the reader may not read', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(200);
+      const entries = res.body as Array<{ kind: string; text: string }>;
+      const closed = entries.filter((e) => e.kind === 'encounter.closed');
+      expect(closed.length).toBeGreaterThan(0);
+      for (const entry of closed) {
+        expect(entry.text).toMatch(/^Encounter #\d+ closed$/);
+      }
+      // The operational half is still there: who was where, on what.
+      expect(entries.some((e) => e.kind === 'unit.created')).toBe(true);
+    });
+
+    // Something was missed. The alternative to reopening is a second
+    // encounter for one patient, which is worse for the record.
+    it('reopens a closed encounter', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      const id = opened.body.id as number;
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({ firstAidOnly: true, chiefComplaint: 'Blister', patientInitials: 'KL' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
+        .set(sup())
+        .expect(201);
+
+      const reopened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/reopen`)
+        .set(sup())
+        .expect(201);
+      expect(reopened.body.closedAt).toBeNull();
+
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({ chiefComplaint: 'Blister, left heel' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
+        .set(sup())
+        .expect(201);
+
+      const timeline = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const entries = timeline.body as Array<{ kind: string; text: string }>;
+      const entry = entries.find((e) => e.kind === 'encounter.reopened');
+      expect(entry?.text).toMatch(/^Encounter #\d+ reopened$/);
     });
   });
 });
