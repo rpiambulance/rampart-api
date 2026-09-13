@@ -3234,6 +3234,93 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // A role is held two ways, and only one of them is a decision somebody
+  // made. The page that hands out permissions has to show both.
+  describe('roles conferred by a credential', () => {
+    let roleId: number;
+    let typeId: number;
+    let holder: number;
+    let suspended: number;
+
+    beforeAll(async () => {
+      // Its own credential type rather than EES, which the fixtures already
+      // hand out: linking a role to it would grant permissions to members
+      // the other tests assume have none.
+      const type = await prisma.credentialType.create({
+        data: { key: `TC${stamp}`.slice(0, 16), name: `Test Cred ${stamp}` },
+      });
+      typeId = type.id;
+      const role = await prisma.role.create({
+        data: {
+          name: `Standby Officer ${stamp}`,
+          permissions: { create: [{ permission: 'standbys:manage' }] },
+          credentialLinks: { create: [{ credentialTypeId: type.id }] },
+        },
+      });
+      roleId = role.id;
+      holder = await createMember('Holder', []);
+      suspended = await createMember('Susp', []);
+      await prisma.memberCredential.createMany({
+        data: [
+          { memberId: holder, typeId: type.id },
+          { memberId: suspended, typeId: type.id, status: 'SUSPENDED' },
+        ],
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.memberCredential.deleteMany({ where: { typeId } });
+      await prisma.role.deleteMany({ where: { id: roleId } });
+      await prisma.credentialType.deleteMany({ where: { id: typeId } });
+    });
+
+    it('lists who holds a role by credential, and says which one', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/roles')
+        .set(as(alice))
+        .expect(200);
+      const role = (
+        res.body as Array<{
+          id: number;
+          credentialLinks: Array<{ credentialType: { name: string } }>;
+          conferred: Array<{
+            member: { id: number };
+            credentialType: { key: string };
+          }>;
+        }>
+      ).find((row) => row.id === roleId);
+      expect(role?.credentialLinks.map((l) => l.credentialType.name)).toEqual([
+        `Test Cred ${stamp}`,
+      ]);
+      expect(role?.conferred.map((c) => c.member.id)).toEqual([holder]);
+      // Suspension takes the permissions away, so it takes the name off
+      // this list too, or the list is a lie about who can do the thing.
+      expect(role?.conferred.map((c) => c.member.id)).not.toContain(suspended);
+      expect(role?.conferred[0].credentialType.key).toBe(
+        `TC${stamp}`.slice(0, 16),
+      );
+    });
+
+    it('leaves out a member who is no longer active', async () => {
+      await prisma.member.update({
+        where: { id: holder },
+        data: { active: false },
+      });
+      const res = await request(app.getHttpServer())
+        .get('/v1/roles')
+        .set(as(alice))
+        .expect(200);
+      const role = (
+        res.body as Array<{ id: number; conferred: unknown[] }>
+      ).find((row) => row.id === roleId);
+      expect(role?.conferred).toHaveLength(0);
+      await prisma.member.update({
+        where: { id: holder },
+        data: { active: true },
+      });
+    });
+  });
+
   describe('event medical standbys', () => {
     let standbyId: number;
     let eventId: number;
@@ -3242,6 +3329,11 @@ describe('Night crews engine (e2e)', () => {
     let runLocationId: number;
 
     const sup = () => ({ ...as(alice), 'x-test-permissions': 'standbys:manage,standbys:read-all' });
+    // Throwing a standby away is a separate permission from running one.
+    const canDelete = () => ({
+      ...as(alice),
+      'x-test-permissions': 'standbys:manage,standbys:read-all,standbys:delete',
+    });
 
     beforeAll(async () => {
       const kind = await prisma.eventKind.findFirstOrThrow();
@@ -3559,10 +3651,20 @@ describe('Night crews engine (e2e)', () => {
 
     // A standby opened against the wrong event has to be removable, or the
     // mistake is permanent. Once there are encounters on it, it is not.
+    // An event supervisor holds standbys:manage for the day they are
+    // working. Nothing about running a standby is destroying one.
+    it('will not let somebody who only runs standbys throw one away', async () => {
+      await request(app.getHttpServer())
+        .delete(`/v1/standbys/${standbyId}`)
+        .set(sup())
+        .expect(403);
+      expect(await prisma.standbyLog.count({ where: { id: standbyId } })).toBe(1);
+    });
+
     it('refuses to discard a standby that has encounters', async () => {
       const refused = await request(app.getHttpServer())
         .delete(`/v1/standbys/${standbyId}`)
-        .set(sup())
+        .set(canDelete())
         .expect(400);
       expect(refused.body.message).toContain('encounter');
       expect(await prisma.standbyLog.count({ where: { id: standbyId } })).toBe(1);
@@ -3586,7 +3688,7 @@ describe('Night crews engine (e2e)', () => {
 
       await request(app.getHttpServer())
         .delete(`/v1/standbys/${opened.body.id}`)
-        .set(sup())
+        .set(canDelete())
         .expect(200);
 
       expect(await prisma.standbyLog.count({ where: { id: opened.body.id } })).toBe(0);

@@ -663,6 +663,7 @@ export class Ems2Service {
         hasReadAllPermission,
       }),
       mayManage: auth.permissions?.has(PERMISSIONS.STANDBYS_MANAGE) ?? false,
+      mayDelete: auth.permissions?.has(PERMISSIONS.STANDBYS_DELETE) ?? false,
     };
   }
 

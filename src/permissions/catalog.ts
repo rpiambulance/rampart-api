@@ -52,6 +52,12 @@ export const PERMISSIONS = {
    *  standby — a crew chief should not need a permission to say what they
    *  did. */
   STANDBYS_MANAGE: 'standbys:manage',
+  /** Throw away a standby opened by mistake — the wrong event, or an
+   *  ad-hoc one created in error. Held apart from running one, the way
+   *  deleting an event is: an event supervisor runs the standby they are
+   *  working, and destroying the record of it is not part of running it.
+   *  Refused outright once there are encounters on it. */
+  STANDBYS_DELETE: 'standbys:delete',
   /** Read every encounter from every standby. A supervisor already sees the
    *  encounters on a standby they are working; this is for whoever answers
    *  for one they did not. */

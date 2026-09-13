@@ -258,9 +258,15 @@ export class Ems2Controller {
     return this.ems2.close(auth, id);
   }
 
-  /** Throw away a standby opened by mistake. Refused once it has encounters. */
+  /**
+   * Throw away a standby opened by mistake. Refused once it has encounters.
+   *
+   * Its own permission rather than the one that runs a standby: whoever is
+   * supervising the event holds standbys:manage for the day, and nothing
+   * about running a standby involves destroying one.
+   */
   @Delete(':id')
-  @RequirePermissions(PERMISSIONS.STANDBYS_MANAGE)
+  @RequirePermissions(PERMISSIONS.STANDBYS_DELETE)
   discard(
     @CurrentAuth() auth: AuthContext,
     @Param('id', ParseIntPipe) id: number,

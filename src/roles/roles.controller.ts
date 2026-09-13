@@ -52,6 +52,17 @@ class AssignDto {
   endDate?: string;
 }
 
+/** Somebody who holds a role because of a credential rather than a decision. */
+interface ConferredHolder {
+  member: {
+    id: number;
+    firstName: string;
+    preferredFirstName: string | null;
+    lastName: string;
+  };
+  credentialType: { id: number; name: string; key: string };
+}
+
 @Controller({ path: 'roles', version: '1' })
 export class RolesController {
   constructor(
@@ -64,26 +75,97 @@ export class RolesController {
     return ALL_PERMISSIONS;
   }
 
+  /**
+   * The roles, with both ways somebody comes to hold one.
+   *
+   * An assignment is a decision an officer made and can undo here. A
+   * credential link is a standing rule — hold the credential, hold the role
+   * — and the people it covers change without anybody touching this page.
+   * Shown together because "who has this permission" has to be answerable
+   * in one place; a role whose assignment list is empty while a credential
+   * quietly confers it on thirty people is how a permission gets granted by
+   * accident.
+   */
   @Get()
-  list() {
-    return this.prisma.role.findMany({
-      include: {
-        permissions: true,
-        members: {
-          include: {
-            member: {
-              select: {
-                id: true,
-                firstName: true,
-                preferredFirstName: true,
-                lastName: true,
+  async list() {
+    const [roles, conferred] = await Promise.all([
+      this.prisma.role.findMany({
+        include: {
+          permissions: true,
+          members: {
+            include: {
+              member: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  preferredFirstName: true,
+                  lastName: true,
+                },
               },
             },
           },
+          credentialLinks: {
+            include: {
+              credentialType: { select: { id: true, name: true, key: true } },
+            },
+          },
         },
-      },
-      orderBy: { name: 'asc' },
-    });
+        orderBy: { name: 'asc' },
+      }),
+      // The same rule the auth guard applies: an ACTIVE credential held by
+      // an active member. A suspended credential confers nothing, and this
+      // list must not say otherwise.
+      this.prisma.memberCredential.findMany({
+        where: {
+          status: 'ACTIVE',
+          member: { active: true },
+          type: { linkedRoles: { some: {} } },
+        },
+        select: {
+          member: {
+            select: {
+              id: true,
+              firstName: true,
+              preferredFirstName: true,
+              lastName: true,
+            },
+          },
+          type: {
+            select: {
+              id: true,
+              name: true,
+              key: true,
+              linkedRoles: { select: { roleId: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const byRole = new Map<number, ConferredHolder[]>();
+    for (const held of conferred) {
+      for (const link of held.type.linkedRoles) {
+        const holders = byRole.get(link.roleId) ?? [];
+        holders.push({
+          member: held.member,
+          credentialType: {
+            id: held.type.id,
+            name: held.type.name,
+            key: held.type.key,
+          },
+        });
+        byRole.set(link.roleId, holders);
+      }
+    }
+
+    return roles.map((role) => ({
+      ...role,
+      conferred: (byRole.get(role.id) ?? []).sort(
+        (a, b) =>
+          a.member.lastName.localeCompare(b.member.lastName) ||
+          a.member.firstName.localeCompare(b.member.firstName),
+      ),
+    }));
   }
 
   @Post()
