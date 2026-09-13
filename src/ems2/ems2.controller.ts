@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Delete,
   Get,
   Param,
@@ -11,6 +13,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -20,6 +23,7 @@ import {
   IsString,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -60,8 +64,21 @@ const DISPOSITIONS = [
   'DECEASED',
 ] as const;
 
+/** An event that is not on the calendar, made as the standby is opened. */
+class AdHocEventDto {
+  @IsString() @MaxLength(200) title!: string;
+  @IsDateString() startsAt!: string;
+  @IsDateString() endsAt!: string;
+  @IsInt() kindId!: number;
+}
+
 class OpenStandbyDto {
-  @IsInt() eventId!: number;
+  /** One or the other: an event from the calendar, or one made here. */
+  @IsOptional() @IsInt() eventId?: number;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AdHocEventDto)
+  event?: AdHocEventDto;
   @IsOptional() @IsInt() venueId?: number;
 }
 
@@ -163,10 +180,50 @@ export class Ems2Controller {
     return this.ems2.list(Number(limit) || 50);
   }
 
+  /**
+   * The standby for an event, if it has one.
+   *
+   * Answers the event page's question — offer to open one, or link to the
+   * one that exists — without it having to fetch the whole list and search.
+   */
+  @Get('for-event/:eventId')
+  @RequirePermissions(PERMISSIONS.STANDBYS_MANAGE)
+  forEvent(@Param('eventId', ParseIntPipe) eventId: number) {
+    return this.prisma.standbyLog.findUnique({
+      where: { eventId },
+      select: { id: true, closedAt: true },
+    });
+  }
+
+  /** Events a standby could still be opened for: future, and without one. */
+  @Get('openable')
+  @RequirePermissions(PERMISSIONS.STANDBYS_MANAGE)
+  openable() {
+    return this.ems2.openableEvents();
+  }
+
   @Post()
   @RequirePermissions(PERMISSIONS.STANDBYS_MANAGE)
   open(@CurrentAuth() auth: AuthContext, @Body() body: OpenStandbyDto) {
-    return this.ems2.open(auth, body.eventId, body.venueId);
+    if (body.eventId) {
+      return this.ems2.open(auth, {
+        eventId: body.eventId,
+        venueId: body.venueId,
+      });
+    }
+    if (!body.event) {
+      throw new BadRequestException(
+        'Name an event from the calendar, or give the details of one that is not on it.',
+      );
+    }
+    // Making an event is a separate thing from running a standby, so it asks
+    // for the permission that makes events.
+    if (!auth.permissions?.has(PERMISSIONS.EVENTS_CREATE)) {
+      throw new ForbiddenException(
+        'Creating an event that is not on the calendar needs events:create.',
+      );
+    }
+    return this.ems2.open(auth, { event: body.event, venueId: body.venueId });
   }
 
   @Get(':id')

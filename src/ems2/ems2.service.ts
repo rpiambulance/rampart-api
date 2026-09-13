@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
+import { nyDayStart, nyNow } from '../common/dates';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { RunNumbersService } from '../run-numbers/run-numbers.service';
@@ -90,7 +91,38 @@ export class Ems2Service {
    * keeps its own list, because people arrive who never signed up and work
    * roles they never put their name to.
    */
-  async open(auth: AuthContext, eventId: number, venueId?: number) {
+  async open(
+    auth: AuthContext,
+    input:
+      | { eventId: number; venueId?: number }
+      | {
+          event: {
+            title: string;
+            startsAt: string;
+            endsAt: string;
+            kindId: number;
+          };
+          venueId?: number;
+        },
+  ) {
+    // Something happened that nobody put on the calendar. The event is made
+    // here rather than the standby being allowed to float free of one:
+    // run numbers tag to an event, and both exports read its title and kind.
+    const eventId =
+      'eventId' in input
+        ? input.eventId
+        : (
+            await this.prisma.event.create({
+              data: {
+                title: input.event.title.trim(),
+                startsAt: new Date(input.event.startsAt),
+                endsAt: new Date(input.event.endsAt),
+                kindId: input.event.kindId,
+              },
+            })
+          ).id;
+    const venueId = input.venueId;
+
     const existing = await this.prisma.standbyLog.findUnique({
       where: { eventId },
     });
@@ -157,6 +189,35 @@ export class Ems2Service {
         }),
       ),
     };
+  }
+
+  /**
+   * Events a standby could still be opened for.
+   *
+   * Future ones only, and only those without a standby already. Asked of the
+   * database rather than worked out by comparing two lists in the browser:
+   * the standby list is capped, so an event with an older standby would
+   * otherwise be offered again.
+   */
+  openableEvents(limit = 50) {
+    return this.prisma.event.findMany({
+      where: {
+        hidden: false,
+        // From the start of today, so an event already under way is still
+        // offered — which is when somebody usually remembers to open one.
+        startsAt: { gte: nyDayStart(nyNow().dateStr) },
+        standby: { is: null },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: Math.min(limit, 200),
+      select: {
+        id: true,
+        title: true,
+        startsAt: true,
+        endsAt: true,
+        kind: { select: { name: true } },
+      },
+    });
   }
 
   list(limit = 50) {
