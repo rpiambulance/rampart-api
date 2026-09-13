@@ -117,6 +117,33 @@ describe('describeTimelineEntry', () => {
     ).toBe('Encounter #3 closed — minor injury, RMA');
   });
 
+  it('says what a deleted encounter was, and that its number stands', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.deleted', {
+          detail: {
+            sequence: 4,
+            category: 'MINOR_INJURY',
+            disposition: 'RMA',
+            runNumber: 'T26-0412',
+          },
+        }),
+        names,
+      ),
+    ).toBe(
+      'Encounter #4 deleted — minor injury, RMA; run number T26-0412 stands',
+    );
+  });
+
+  it('describes a deleted encounter that had no number', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.deleted', { detail: { sequence: 4 } }),
+        names,
+      ),
+    ).toBe('Encounter #4 deleted');
+  });
+
   it('describes reopening one', () => {
     expect(
       describeTimelineEntry(

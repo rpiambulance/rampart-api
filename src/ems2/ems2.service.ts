@@ -861,6 +861,53 @@ export class Ems2Service {
   }
 
   /**
+   * Destroys an encounter.
+   *
+   * For the duplicate, the one opened on the wrong standby, the one that
+   * turned out to be nobody. Not for a correction — an encounter can be
+   * reopened and edited, and that is what a mistake in the writing-up
+   * deserves. Held on standbys:delete rather than on being a supervisor:
+   * this is the only thing in ems2 that loses a patient record.
+   *
+   * The whole row goes to the audit log first, because after this there is
+   * nowhere else it survives. A run number that was issued for it stays
+   * issued: the county's sequence is not ours to renumber.
+   */
+  async deleteEncounter(
+    auth: AuthContext,
+    standbyId: number,
+    encounterId: number,
+  ) {
+    const encounter = await this.prisma.encounter.findUnique({
+      where: { id: encounterId },
+      include: { runNumber: { select: { number: true } } },
+    });
+    if (!encounter || encounter.standbyId !== standbyId) {
+      throw new NotFoundException('No such encounter');
+    }
+
+    await this.audit.log(
+      auth,
+      'standby.encounter.delete',
+      'Encounter',
+      encounterId,
+      encounter,
+    );
+    await this.log(standbyId, 'encounter.deleted', auth, {
+      // No encounterId: it points at a row that is about to stop existing,
+      // and the sequence is what the line needs to read correctly.
+      detail: {
+        sequence: encounter.sequence,
+        category: encounter.category,
+        disposition: encounter.disposition,
+        runNumber: encounter.runNumber?.number ?? null,
+      },
+    });
+    await this.prisma.encounter.delete({ where: { id: encounterId } });
+    return { ok: true, sequence: encounter.sequence };
+  }
+
+  /**
    * Issues a run number for an encounter, from the same pool as everything
    * else, tagged to the event so it reconciles with the run-number log.
    */
@@ -1015,16 +1062,17 @@ export class Ems2Service {
     // than narrowed to a number: the timeline is the one table that grows
     // per action rather than per thing.
     return entries.map((entry) => {
+      // Anything about an encounter, unless it is one this reader may read.
+      // A deleted encounter carries no id to check against, so it falls on
+      // the redacted side, which is the right way for it to fail.
       const hidden =
-        entry.encounterId != null &&
         readable != null &&
-        !readable.has(entry.encounterId);
-      const shown = hidden
-        ? {
-            ...entry,
-            detail: { sequence: sequences.get(entry.encounterId as number) },
-          }
-        : entry;
+        entry.kind.startsWith('encounter.') &&
+        !(entry.encounterId != null && readable.has(entry.encounterId));
+      const sequence =
+        (entry.detail as { sequence?: number } | null)?.sequence ??
+        (entry.encounterId != null ? sequences.get(entry.encounterId) : null);
+      const shown = hidden ? { ...entry, detail: { sequence } } : entry;
       return {
         ...entry,
         id: String(entry.id),

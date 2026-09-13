@@ -3562,6 +3562,50 @@ describe('Night crews engine (e2e)', () => {
       expect(refused.body.message).toContain('still open');
     });
 
+    // The duplicate, or the one opened on the wrong standby. Held on the
+    // same permission as throwing the standby away, and for the same
+    // reason: an event supervisor runs the standby, and this is the one
+    // thing on it that loses a record.
+    it('will not let a supervisor delete an encounter', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      await request(app.getHttpServer())
+        .delete(`/v1/standbys/${standbyId}/encounters/${opened.body.id}`)
+        .set(sup())
+        .expect(403);
+      expect(
+        await prisma.encounter.count({ where: { id: opened.body.id } }),
+      ).toBe(1);
+
+      // And with the permission it goes, leaving the record of what went.
+      await request(app.getHttpServer())
+        .delete(`/v1/standbys/${standbyId}/encounters/${opened.body.id}`)
+        .set(canDelete())
+        .expect(200);
+      expect(
+        await prisma.encounter.count({ where: { id: opened.body.id } }),
+      ).toBe(0);
+
+      const timeline = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const entries = timeline.body as Array<{ kind: string; text: string }>;
+      expect(entries.map((e) => e.kind)).toContain('encounter.deleted');
+      const audited = await prisma.auditLog.findFirst({
+        where: {
+          action: 'standby.encounter.delete',
+          entityId: String(opened.body.id),
+        },
+      });
+      // The row itself is in the audit log, because after this there is
+      // nowhere else it survives.
+      expect(JSON.stringify(audited?.diff)).toContain('sequence');
+    });
+
     // A form that runs onto a second page is a form somebody has to explain
     // at the filing window, so the page count is part of being correct.
     it.each([

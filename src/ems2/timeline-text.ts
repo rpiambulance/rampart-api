@@ -252,6 +252,23 @@ function sentence(entry: TimelineEntryShape, names: TimelineNames): string {
         ? `${encounterOf(entry, names)} closed — ${said}`
         : `${encounterOf(entry, names)} closed`;
     }
+    case 'encounter.deleted': {
+      const said = [
+        label(CATEGORY_LABEL, detail.category),
+        label(DISPOSITION_LABEL, detail.disposition),
+      ]
+        .filter(Boolean)
+        .join(', ');
+      const run = str(detail.runNumber);
+      // The number stays issued, so the line has to say which one is now
+      // attached to nothing.
+      const tail = [said, run ? `run number ${run} stands` : null]
+        .filter(Boolean)
+        .join('; ');
+      return tail
+        ? `${encounterOf(entry, names)} deleted — ${tail}`
+        : `${encounterOf(entry, names)} deleted`;
+    }
     case 'encounter.reopened':
       return `${encounterOf(entry, names)} reopened`;
     case 'encounter.run-number': {

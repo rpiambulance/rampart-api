@@ -409,6 +409,20 @@ export class Ems2Controller {
     return this.ems2.closeEncounter(auth, id, encounterId);
   }
 
+  /**
+   * Throw an encounter away. The duplicate, or the one opened on the wrong
+   * standby — never a correction, which is what reopening is for.
+   */
+  @Delete(':id/encounters/:encounterId')
+  @RequirePermissions(PERMISSIONS.STANDBYS_DELETE)
+  deleteEncounter(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+  ) {
+    return this.ems2.deleteEncounter(auth, id, encounterId);
+  }
+
   @Post(':id/encounters/:encounterId/reopen')
   reopenEncounter(
     @CurrentAuth() auth: AuthContext,
