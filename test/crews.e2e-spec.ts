@@ -3257,7 +3257,7 @@ describe('Night crews engine (e2e)', () => {
       const venue = await prisma.venue.create({
         data: {
           name: `Venue ${stamp}`,
-          locations: { create: [{ name: 'Gate 1', kind: 'Gate' }] },
+          locations: { create: [{ name: 'Gate 1' }] },
         },
       });
       venueId = venue.id;

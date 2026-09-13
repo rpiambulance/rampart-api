@@ -1974,8 +1974,9 @@ model VenueLocation {
   id      Int     @id @default(autoincrement())
   venueId Int
   name    String
-  /// Loose grouping for the board: "Gate", "Stand", "Aid station".
-  kind    String?
+  /// Where it sits in the list the pickers show. Arrangement is what a
+  /// venue's insides need; a second field naming the kind of place it is
+  /// was asked for on the setup page and read by nothing.
   order   Int     @default(0)
   active  Boolean @default(true)
 

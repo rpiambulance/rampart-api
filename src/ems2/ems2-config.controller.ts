@@ -30,7 +30,6 @@ class VenueDto {
 
 class VenueLocationDto {
   @IsString() @MaxLength(200) name!: string;
-  @IsOptional() @IsString() @MaxLength(60) kind?: string;
   @IsOptional() @IsInt() order?: number;
   @IsOptional() @IsBoolean() active?: boolean;
 }
@@ -103,12 +102,7 @@ export class Ems2ConfigController {
     @Body() body: VenueLocationDto,
   ) {
     return this.prisma.venueLocation.create({
-      data: {
-        venueId: id,
-        name: body.name.trim(),
-        kind: body.kind?.trim() || null,
-        order: body.order ?? 0,
-      },
+      data: { venueId: id, name: body.name.trim(), order: body.order ?? 0 },
     });
   }
 
@@ -121,7 +115,6 @@ export class Ems2ConfigController {
       where: { id },
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
-        ...(body.kind !== undefined ? { kind: body.kind?.trim() || null } : {}),
         ...(body.order !== undefined ? { order: body.order } : {}),
         ...(body.active !== undefined ? { active: body.active } : {}),
       },
