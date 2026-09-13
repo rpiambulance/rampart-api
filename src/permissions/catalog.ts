@@ -52,9 +52,9 @@ export const PERMISSIONS = {
    *  standby — a crew chief should not need a permission to say what they
    *  did. */
   STANDBYS_MANAGE: 'standbys:manage',
-  /** Read every encounter from every standby. Supervisors working a standby
-   *  can already read that one's; this is for whoever answers for them
-   *  afterward. */
+  /** Read every encounter from every standby. A supervisor already sees the
+   *  encounters on a standby they are working; this is for whoever answers
+   *  for one they did not. */
   STANDBYS_READ_ALL: 'standbys:read-all',
   DISPATCHES_INGEST: 'dispatches:ingest',
   /** Enter a dispatch by hand — one Herald never delivered, or one that

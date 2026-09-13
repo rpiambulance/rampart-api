@@ -311,6 +311,40 @@ export class Ems2Service {
     return standby;
   }
 
+  /**
+   * Discards a standby that turned out not to be one.
+   *
+   * Opened against the wrong event, or an ad-hoc event created by mistake.
+   * Refused once there are encounters on it, for the same reason deleting
+   * the event is: they are the record of who was treated, and a tidy-up is
+   * not a reason to lose it.
+   *
+   * The event is left alone. It may well be a real event somebody still
+   * wants on the calendar — only the standby opened against it goes.
+   */
+  async discard(auth: AuthContext, id: number) {
+    const encounters = await this.prisma.encounter.count({
+      where: { standbyId: id },
+    });
+    if (encounters) {
+      throw new BadRequestException(
+        `There ${encounters === 1 ? 'is' : 'are'} ${encounters} patient ` +
+          `encounter${encounters === 1 ? '' : 's'} on this standby. Those are ` +
+          'the record of who was treated, so it cannot be discarded.',
+      );
+    }
+    const standby = await this.prisma.standbyLog.findUnique({
+      where: { id },
+      select: { eventId: true },
+    });
+    if (!standby) throw new NotFoundException('No such standby');
+    await this.prisma.standbyLog.delete({ where: { id } });
+    await this.audit.log(auth, 'standby.discard', 'StandbyLog', id, {
+      eventId: standby.eventId,
+    });
+    return { ok: true, eventId: standby.eventId };
+  }
+
   // ---------------------------------------------------------------- people
 
   async addPersonnel(

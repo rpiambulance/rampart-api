@@ -3524,6 +3524,44 @@ describe('Night crews engine (e2e)', () => {
         .expect(403);
     });
 
+    // A standby opened against the wrong event has to be removable, or the
+    // mistake is permanent. Once there are encounters on it, it is not.
+    it('refuses to discard a standby that has encounters', async () => {
+      const refused = await request(app.getHttpServer())
+        .delete(`/v1/standbys/${standbyId}`)
+        .set(sup())
+        .expect(400);
+      expect(refused.body.message).toContain('encounter');
+      expect(await prisma.standbyLog.count({ where: { id: standbyId } })).toBe(1);
+    });
+
+    it('discards an empty one, and leaves the event alone', async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const spare = await prisma.event.create({
+        data: {
+          title: `Spare ${stamp}`,
+          startsAt: new Date(),
+          endsAt: new Date(Date.now() + 3600_000),
+          kindId: kind.id,
+        },
+      });
+      const opened = await request(app.getHttpServer())
+        .post('/v1/standbys')
+        .set(sup())
+        .send({ eventId: spare.id })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .delete(`/v1/standbys/${opened.body.id}`)
+        .set(sup())
+        .expect(200);
+
+      expect(await prisma.standbyLog.count({ where: { id: opened.body.id } })).toBe(0);
+      // The event is still there: it may be a real one somebody wants.
+      expect(await prisma.event.count({ where: { id: spare.id } })).toBe(1);
+      await prisma.event.delete({ where: { id: spare.id } });
+    });
+
     // Deleting an event cascades its standby away, and a standby carries the
     // encounters. Tidying the calendar must not be a way to lose them.
     it('refuses to delete an event whose standby has encounters', async () => {
