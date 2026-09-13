@@ -94,7 +94,6 @@ class RoleDto {
 class UnitDto {
   @IsOptional() @IsInt() designatorId?: number;
   @IsOptional() @IsString() @MaxLength(60) name?: string;
-  @IsOptional() @IsString() @MaxLength(60) kind?: string;
 }
 
 class UnitPatchDto {

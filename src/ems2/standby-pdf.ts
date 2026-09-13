@@ -565,7 +565,6 @@ export interface EventReportData {
   }>;
   units: Array<{
     name: string;
-    kind: string | null;
     crew: string[];
     location: string | null;
   }>;
@@ -705,14 +704,11 @@ export function eventReport(data: EventReportData): Doc {
   doc.fontSize(8.5);
   for (const unit of data.units) {
     y = room(doc, y, 16);
-    doc.font('Helvetica-Bold').text(unit.name, PAGE.margin, y, { width: 90 });
+    doc.font('Helvetica-Bold').text(unit.name, PAGE.margin, y, { width: 100 });
     doc
       .font('Helvetica')
-      .fillColor('#444')
-      .text(unit.kind ?? '', PAGE.margin + 92, y, { width: 70 });
-    doc
       .fillColor('#000')
-      .text(unit.crew.join(', ') || '—', PAGE.margin + 166, y, { width: 250 });
+      .text(unit.crew.join(', ') || '—', PAGE.margin + 106, y, { width: 310 });
     doc
       .fillColor('#444')
       .text(unit.location ?? '', PAGE.margin + 420, y, { width: 96 });

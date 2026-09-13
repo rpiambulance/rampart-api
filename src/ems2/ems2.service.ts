@@ -369,17 +369,15 @@ export class Ems2Service {
   async addUnit(
     auth: AuthContext,
     standbyId: number,
-    input: { designatorId?: number; name?: string; kind?: string },
+    input: { designatorId?: number; name?: string },
   ) {
     let name = input.name?.trim();
-    let kind = input.kind?.trim() || null;
     if (input.designatorId) {
       const designator = await this.prisma.unitDesignator.findUnique({
         where: { id: input.designatorId },
       });
       if (!designator) throw new NotFoundException('No such unit designator');
       name = designator.name;
-      kind = kind ?? designator.kind;
     }
     if (!name)
       throw new BadRequestException('A unit needs a designator or a name.');
@@ -389,7 +387,6 @@ export class Ems2Service {
         standbyId,
         designatorId: input.designatorId ?? null,
         name,
-        kind,
         createdById: auth.kind === 'member' ? auth.memberId : null,
       },
     });

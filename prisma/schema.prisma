@@ -1991,9 +1991,9 @@ model VenueLocation {
 /// The standing list of unit designators — M-1, Gator 2, Bike 1.
 model UnitDesignator {
   id     Int     @id @default(autoincrement())
+  /// The designator says what it is: M-1 is an ambulance, Gator 1 is a
+  /// gator. A second field naming the kind repeated the name back.
   name   String  @unique
-  /// Ambulance, gator, bike team, foot team.
-  kind   String?
   active Boolean @default(true)
 
   units StandbyUnit[]
@@ -2113,7 +2113,6 @@ model StandbyUnit {
   designatorId Int?
   /// The designator's name, or whatever was invented on the day.
   name         String
-  kind         String?
   status       UnitStatus @default(AVAILABLE)
 
   /// Where it is, and where it sits when it is not anywhere in particular.

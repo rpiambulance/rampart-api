@@ -36,7 +36,6 @@ class VenueLocationDto {
 
 class DesignatorDto {
   @IsString() @MaxLength(60) name!: string;
-  @IsOptional() @IsString() @MaxLength(60) kind?: string;
   @IsOptional() @IsBoolean() active?: boolean;
 }
 
@@ -133,7 +132,7 @@ export class Ems2ConfigController {
   @Post('designators')
   createDesignator(@Body() body: DesignatorDto) {
     return this.prisma.unitDesignator.create({
-      data: { name: body.name.trim(), kind: body.kind?.trim() || null },
+      data: { name: body.name.trim() },
     });
   }
 
@@ -146,7 +145,6 @@ export class Ems2ConfigController {
       where: { id },
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
-        ...(body.kind !== undefined ? { kind: body.kind?.trim() || null } : {}),
         ...(body.active !== undefined ? { active: body.active } : {}),
       },
     });

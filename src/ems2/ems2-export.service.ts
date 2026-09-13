@@ -202,7 +202,6 @@ export class Ems2ExportService {
         })),
         units: standby.units.map((u) => ({
           name: u.name,
-          kind: u.kind,
           location: u.currentLocation?.name ?? u.currentLocationText,
           crew: u.assignments
             .filter((a) => !a.removedAt)
