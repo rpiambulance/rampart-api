@@ -125,6 +125,12 @@ export class Ems2Service {
     // Something happened that nobody put on the calendar. The event is made
     // here rather than the standby being allowed to float free of one:
     // run numbers tag to an event, and both exports read its title and kind.
+    //
+    // Hidden, because it is not a calendar event and never was. Nobody was
+    // asked to sign up for it, it is over by the time it is recorded, and a
+    // calendar that fills up with things that already happened is one
+    // nobody reads. Hidden keeps it off the events list, out of the ICS
+    // feed and out of Google, while the record it exists for stays whole.
     const eventId =
       'eventId' in input
         ? input.eventId
@@ -135,6 +141,7 @@ export class Ems2Service {
                 startsAt: new Date(input.event.startsAt),
                 endsAt: new Date(input.event.endsAt),
                 kindId: input.event.kindId,
+                hidden: true,
               },
             })
           ).id;

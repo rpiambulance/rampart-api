@@ -3389,6 +3389,56 @@ describe('Night crews engine (e2e)', () => {
       expect(roles.filter((p) => p.role === 'EES')).toHaveLength(1);
     });
 
+    // Something nobody put on the calendar, recorded after the fact. It
+    // needs an event to hang off — run numbers tag to one, and both exports
+    // read its title — but it is not a calendar event and must not turn up
+    // as one.
+    it('records an event that is not on the calendar, and keeps it off', async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const started = new Date(Date.now() - 2 * 3600_000);
+      const opened = await request(app.getHttpServer())
+        .post('/v1/standbys')
+        .set({ ...sup(), 'x-test-permissions': 'standbys:manage,events:create' })
+        .send({
+          event: {
+            title: `Unplanned 5K ${stamp}`,
+            startsAt: started.toISOString(),
+            endsAt: new Date(started.getTime() + 3600_000).toISOString(),
+            kindId: kind.id,
+          },
+        })
+        .expect(201);
+      const adHocEventId = opened.body.eventId as number;
+
+      const event = await prisma.event.findUniqueOrThrow({
+        where: { id: adHocEventId },
+      });
+      expect(event.hidden).toBe(true);
+      // Never published anywhere either.
+      expect(event.gcalEventId).toBeNull();
+
+      const listed = await request(app.getHttpServer())
+        .get('/v1/events')
+        .set(as(alice))
+        .expect(200);
+      expect(
+        (listed.body as Array<{ id: number }>).map((e) => e.id),
+      ).not.toContain(adHocEventId);
+
+      // And it is not offered as an event to open a standby for, which it
+      // already has.
+      const openable = await request(app.getHttpServer())
+        .get('/v1/standbys/openable')
+        .set(sup())
+        .expect(200);
+      expect(
+        (openable.body as Array<{ id: number }>).map((e) => e.id),
+      ).not.toContain(adHocEventId);
+
+      await prisma.standbyLog.deleteMany({ where: { eventId: adHocEventId } });
+      await prisma.event.delete({ where: { id: adHocEventId } });
+    });
+
     it('is the same standby if opened twice', async () => {
       const again = await request(app.getHttpServer())
         .post('/v1/standbys')
