@@ -11,8 +11,9 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { AuthGuard } from '../src/auth/auth.guard';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { CredentialGraphService } from '../src/credentials/credential-graph.service';
+import { PermissionHoldersService } from '../src/permissions/permission-holders.service';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { ChoresService } from '../src/chores/chores.service';
 import { ChecksheetsService } from '../src/checksheets/checksheets.service';
 import { CrewsService } from '../src/crews/crews.service';
@@ -3239,8 +3240,10 @@ describe('Night crews engine (e2e)', () => {
   describe('roles conferred by a credential', () => {
     let roleId: number;
     let typeId: number;
+    let higherTypeId: number;
     let holder: number;
     let suspended: number;
+    let above: number;
 
     beforeAll(async () => {
       // Its own credential type rather than EES, which the fixtures already
@@ -3250,6 +3253,15 @@ describe('Night crews engine (e2e)', () => {
         data: { key: `TC${stamp}`.slice(0, 16), name: `Test Cred ${stamp}` },
       });
       typeId = type.id;
+      // A rung above it, the way the ladder is built everywhere else.
+      const higher = await prisma.credentialType.create({
+        data: {
+          key: `TX${stamp}`.slice(0, 16),
+          name: `Test Cred Senior ${stamp}`,
+          prerequisites: { create: [{ requiresTypeId: type.id }] },
+        },
+      });
+      higherTypeId = higher.id;
       const role = await prisma.role.create({
         data: {
           name: `Standby Officer ${stamp}`,
@@ -3258,20 +3270,34 @@ describe('Night crews engine (e2e)', () => {
         },
       });
       roleId = role.id;
+      // The ladder is read once and cached; these rungs are newer than it.
+      app.get(CredentialGraphService).invalidate();
+
       holder = await createMember('Holder', []);
       suspended = await createMember('Susp', []);
+      // Holds only the top rung, which is what an officer-granted or
+      // legacy-imported credential looks like.
+      above = await createMember('Above', []);
       await prisma.memberCredential.createMany({
         data: [
           { memberId: holder, typeId: type.id },
           { memberId: suspended, typeId: type.id, status: 'SUSPENDED' },
+          { memberId: above, typeId: higher.id },
         ],
       });
     });
 
     afterAll(async () => {
-      await prisma.memberCredential.deleteMany({ where: { typeId } });
+      await prisma.memberCredential.deleteMany({
+        where: { typeId: { in: [typeId, higherTypeId] } },
+      });
       await prisma.role.deleteMany({ where: { id: roleId } });
-      await prisma.credentialType.deleteMany({ where: { id: typeId } });
+      await prisma.credentialPrerequisite.deleteMany({
+        where: { credentialTypeId: higherTypeId },
+      });
+      await prisma.credentialType.deleteMany({
+        where: { id: { in: [typeId, higherTypeId] } },
+      });
     });
 
     it('lists who holds a role by credential, and says which one', async () => {
@@ -3286,19 +3312,58 @@ describe('Night crews engine (e2e)', () => {
           conferred: Array<{
             member: { id: number };
             credentialType: { key: string };
+            inherited: boolean;
           }>;
         }>
       ).find((row) => row.id === roleId);
       expect(role?.credentialLinks.map((l) => l.credentialType.name)).toEqual([
         `Test Cred ${stamp}`,
       ]);
-      expect(role?.conferred.map((c) => c.member.id)).toEqual([holder]);
+      const listed = role?.conferred.map((c) => c.member.id) ?? [];
+      expect(listed).toContain(holder);
+      expect(listed).toContain(above);
+      expect(listed).not.toContain(suspended);
+      // A Duty Supervisor outranks the whole ladder, which is the rule this
+      // system applies to every other question about a credential. It
+      // follows that a DS holds every role a credential confers.
+      const supervisors = await prisma.memberCredential.findMany({
+        where: {
+          status: 'ACTIVE',
+          member: { active: true },
+          type: { key: 'DS' },
+        },
+        select: { memberId: true },
+      });
+      for (const supervisor of supervisors) {
+        expect(listed).toContain(supervisor.memberId);
+      }
+      // Listed under what they actually hold, and marked as coming from
+      // above rather than from the link itself.
+      const inherited = role?.conferred.find((c) => c.member.id === above);
+      expect(inherited?.inherited).toBe(true);
+      expect(inherited?.credentialType.key).toBe(`TX${stamp}`.slice(0, 16));
+      expect(
+        role?.conferred.find((c) => c.member.id === holder)?.inherited,
+      ).toBe(false);
       // Suspension takes the permissions away, so it takes the name off
       // this list too, or the list is a lie about who can do the thing.
       expect(role?.conferred.map((c) => c.member.id)).not.toContain(suspended);
-      expect(role?.conferred[0].credentialType.key).toBe(
-        `TC${stamp}`.slice(0, 16),
-      );
+      // Listed under the credential they actually hold.
+      expect(
+        role?.conferred.find((c) => c.member.id === holder)?.credentialType.key,
+      ).toBe(`TC${stamp}`.slice(0, 16));
+    });
+
+    // The list is only worth reading if it agrees with what actually
+    // happens, so the inheritance is real: the permission, not just the
+    // name on a page. Asked of the service the rest of the system asks,
+    // since this suite replaces the guard itself.
+    it('counts the rung above as holding the permission', async () => {
+      const holders = app.get(PermissionHoldersService);
+      const ids = await holders.idsWith('standbys:manage');
+      expect([...ids]).toContain(holder);
+      expect([...ids]).toContain(above);
+      expect([...ids]).not.toContain(suspended);
     });
 
     it('leaves out a member who is no longer active', async () => {
@@ -3311,9 +3376,12 @@ describe('Night crews engine (e2e)', () => {
         .set(as(alice))
         .expect(200);
       const role = (
-        res.body as Array<{ id: number; conferred: unknown[] }>
+        res.body as Array<{
+          id: number;
+          conferred: Array<{ member: { id: number } }>;
+        }>
       ).find((row) => row.id === roleId);
-      expect(role?.conferred).toHaveLength(0);
+      expect(role?.conferred.map((c) => c.member.id)).not.toContain(holder);
       await prisma.member.update({
         where: { id: holder },
         data: { active: true },

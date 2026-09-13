@@ -27,6 +27,18 @@ export class CredentialGraphService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Forget the cached ladder.
+   *
+   * The ladder itself is seeded at boot and does not change while the app
+   * runs, so this exists for whatever does change it — a migration, a
+   * fixture — rather than being called on every write. Which roles a
+   * credential confers is read live and is not cached at all.
+   */
+  invalidate(): void {
+    this.cache = undefined;
+  }
+
   private async graph() {
     if (this.cache && Date.now() - this.cache.at < 60_000) return this.cache;
 
@@ -122,6 +134,42 @@ export class CredentialGraphService {
     if (!satisfying) return false;
     for (const key of heldKeys) if (satisfying.has(key)) return true;
     return false;
+  }
+
+  /**
+   * Everything a set of held credentials satisfies, itself included.
+   *
+   * The same "or above" the requirement checks use, asked the other way
+   * round. A Crew Chief satisfies P-CC, A-CC, A and O whether or not those
+   * rows were ever written — an admin-granted or legacy-imported credential
+   * often has only the top rung — and a Duty Supervisor satisfies the lot.
+   */
+  async keysSatisfiedBy(heldKeys: Set<string>): Promise<Set<string>> {
+    const { satisfiedBy } = await this.graph();
+    const out = new Set<string>();
+    for (const [required, satisfying] of satisfiedBy) {
+      for (const held of heldKeys) {
+        if (satisfying.has(held)) {
+          out.add(required);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The other direction: every credential that would satisfy one of these.
+   *
+   * For asking "who holds this?" rather than "does this person hold it?".
+   */
+  async keysSatisfying(requiredKeys: Iterable<string>): Promise<Set<string>> {
+    const { satisfiedBy } = await this.graph();
+    const out = new Set<string>();
+    for (const required of requiredKeys) {
+      for (const key of satisfiedBy.get(required) ?? []) out.add(key);
+    }
+    return out;
   }
 
   /** Does the set include a credential that outranks the whole ladder (DS)? */

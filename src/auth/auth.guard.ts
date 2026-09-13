@@ -11,6 +11,7 @@ import { Reflector } from '@nestjs/core';
 import { createHash } from 'crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { nyToday } from '../common/dates';
+import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { AuthContext } from './auth-context';
@@ -23,15 +24,7 @@ const MEMBER_AUTH_INCLUDE = {
   roles: { include: { role: { include: { permissions: true } } } },
   credentials: {
     where: { status: 'ACTIVE' as const },
-    include: {
-      type: {
-        include: {
-          linkedRoles: {
-            include: { role: { include: { permissions: true } } },
-          },
-        },
-      },
-    },
+    include: { type: { select: { key: true } } },
   },
 };
 
@@ -50,6 +43,7 @@ export class AuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
     private readonly reflector: Reflector,
     private readonly unlinked: UnlinkedLoginService,
+    private readonly graph: CredentialGraphService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -113,15 +107,7 @@ export class AuthGuard implements CanActivate {
         },
         credentials: {
           where: { status: 'ACTIVE' },
-          include: {
-            type: {
-              include: {
-                linkedRoles: {
-                  include: { role: { include: { permissions: true } } },
-                },
-              },
-            },
-          },
+          include: { type: { select: { key: true } } },
         },
       },
     });
@@ -203,11 +189,29 @@ export class AuthGuard implements CanActivate {
     }
     // Roles linked to ACTIVE credentials confer their permissions too
     // (additive; automatic suspension removes them).
-    for (const credential of member.credentials) {
-      for (const link of credential.type.linkedRoles) {
-        for (const p of link.role.permissions) {
-          permissions.add(p.permission);
-        }
+    //
+    // Read "or above", like every other question asked of a credential: a
+    // role linked to Crew Chief is held by a Crew Chief Trainer and by a
+    // Duty Supervisor, whether or not the rungs beneath them were ever
+    // written down. A credential granted by an officer, or imported from
+    // the legacy portal, often has only the top rung.
+    const heldKeys = new Set(
+      member.credentials.map((credential) => credential.type.key),
+    );
+    if (heldKeys.size) {
+      // The credentials held come first and stand on their own: the ladder
+      // is cached for a minute, and a credential type made in that minute
+      // must still confer what it is linked to rather than nothing.
+      const satisfied = new Set([
+        ...heldKeys,
+        ...(await this.graph.keysSatisfiedBy(heldKeys)),
+      ]);
+      const links = await this.prisma.credentialTypeRole.findMany({
+        where: { credentialType: { key: { in: [...satisfied] } } },
+        include: { role: { include: { permissions: true } } },
+      });
+      for (const link of links) {
+        for (const p of link.role.permissions) permissions.add(p.permission);
       }
     }
 

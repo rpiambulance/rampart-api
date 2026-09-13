@@ -21,6 +21,7 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import { AuditService } from '../audit/audit.service';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { ALL_PERMISSIONS, PERMISSIONS } from '../permissions/catalog';
+import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 class RoleDto {
@@ -60,7 +61,10 @@ interface ConferredHolder {
     preferredFirstName: string | null;
     lastName: string;
   };
+  /** What they actually hold, which may sit above the credential linked. */
   credentialType: { id: number; name: string; key: string };
+  /** True when they hold something above the link rather than the link. */
+  inherited: boolean;
 }
 
 @Controller({ path: 'roles', version: '1' })
@@ -68,6 +72,7 @@ export class RolesController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly graph: CredentialGraphService,
   ) {}
 
   @Get('permissions')
@@ -79,8 +84,9 @@ export class RolesController {
    * The roles, with both ways somebody comes to hold one.
    *
    * An assignment is a decision an officer made and can undo here. A
-   * credential link is a standing rule — hold the credential, hold the role
-   * — and the people it covers change without anybody touching this page.
+   * credential link is a standing rule — hold the credential or anything
+   * above it, hold the role — and the people it covers change without
+   * anybody touching this page.
    * Shown together because "who has this permission" has to be answerable
    * in one place; a role whose assignment list is empty while a credential
    * quietly confers it on thirty people is how a permission gets granted by
@@ -116,11 +122,7 @@ export class RolesController {
       // an active member. A suspended credential confers nothing, and this
       // list must not say otherwise.
       this.prisma.memberCredential.findMany({
-        where: {
-          status: 'ACTIVE',
-          member: { active: true },
-          type: { linkedRoles: { some: {} } },
-        },
+        where: { status: 'ACTIVE', member: { active: true } },
         select: {
           member: {
             select: {
@@ -130,37 +132,54 @@ export class RolesController {
               lastName: true,
             },
           },
-          type: {
-            select: {
-              id: true,
-              name: true,
-              key: true,
-              linkedRoles: { select: { roleId: true } },
-            },
-          },
+          type: { select: { id: true, name: true, key: true } },
         },
       }),
     ]);
 
-    const byRole = new Map<number, ConferredHolder[]>();
+    // Read "or above", the way the guard reads it and the way every other
+    // question about a credential is read here: a role linked to Crew Chief
+    // is held by a Crew Chief Trainer and by a Duty Supervisor, whose
+    // records often do not carry the rungs beneath them at all.
+    const satisfiedByKey = new Map<string, Set<string>>();
+    for (const key of new Set(conferred.map((held) => held.type.key))) {
+      satisfiedByKey.set(key, await this.graph.keysSatisfiedBy(new Set([key])));
+    }
+
+    // Keyed by member so somebody holding both the linked credential and
+    // one above it is listed once, under the one they hold that the link
+    // actually names.
+    const byRole = new Map<number, Map<number, ConferredHolder>>();
     for (const held of conferred) {
-      for (const link of held.type.linkedRoles) {
-        const holders = byRole.get(link.roleId) ?? [];
-        holders.push({
+      const satisfied = satisfiedByKey.get(held.type.key) ?? new Set();
+      for (const role of roles) {
+        const link = role.credentialLinks.find(
+          (candidate) =>
+            candidate.credentialType.key === held.type.key ||
+            satisfied.has(candidate.credentialType.key),
+        );
+        if (!link) continue;
+        const holders =
+          byRole.get(role.id) ?? new Map<number, ConferredHolder>();
+        const inherited = link.credentialType.key !== held.type.key;
+        const already = holders.get(held.member.id);
+        if (already && (!already.inherited || inherited)) continue;
+        holders.set(held.member.id, {
           member: held.member,
           credentialType: {
             id: held.type.id,
             name: held.type.name,
             key: held.type.key,
           },
+          inherited,
         });
-        byRole.set(link.roleId, holders);
+        byRole.set(role.id, holders);
       }
     }
 
     return roles.map((role) => ({
       ...role,
-      conferred: (byRole.get(role.id) ?? []).sort(
+      conferred: [...(byRole.get(role.id)?.values() ?? [])].sort(
         (a, b) =>
           a.member.lastName.localeCompare(b.member.lastName) ||
           a.member.firstName.localeCompare(b.member.firstName),
