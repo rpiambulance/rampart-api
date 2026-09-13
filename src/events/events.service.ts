@@ -264,6 +264,25 @@ export class EventsService {
   }
 
   async remove(auth: AuthContext, eventId: number) {
+    // An event's standby is cascaded away with it, and a standby carries the
+    // encounters — who was treated, and what was done. Those are the record
+    // the DOH reports are filed off, so an event carrying any is not
+    // something to delete while tidying the calendar.
+    //
+    // An empty standby is let through: opening one against the wrong event,
+    // or creating an ad-hoc event by mistake, should not be a trap with no
+    // way out.
+    const encounters = await this.prisma.encounter.count({
+      where: { standby: { eventId } },
+    });
+    if (encounters) {
+      throw new BadRequestException(
+        `This event has a standby with ${encounters} patient ` +
+          `encounter${encounters === 1 ? '' : 's'} recorded against it. ` +
+          'Deleting the event would take those with it. Export what you need ' +
+          'and ask an administrator if it really has to go.',
+      );
+    }
     const event = await this.prisma.event.delete({ where: { id: eventId } });
     if (event.gcalEventId) {
       await this.gcal.deleteEvent(event.gcalEventId);

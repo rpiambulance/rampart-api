@@ -246,7 +246,7 @@ export class EventsController {
   }
 
   @Delete(':id')
-  @RequirePermissions(PERMISSIONS.EVENTS_CREATE)
+  @RequirePermissions(PERMISSIONS.EVENTS_DELETE)
   remove(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
     return this.events.remove(auth, id);
   }

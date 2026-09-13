@@ -37,6 +37,11 @@ export const PERMISSIONS = {
   EVENTS_APPROVE: 'events:approve',
   /** Turn a request down. Anyone who may approve may also decline. */
   EVENTS_DECLINE: 'events:decline',
+  /** Delete an event outright. Held apart from creating one, the way
+   *  deleting an evaluation is: making a thing and destroying it are not the
+   *  same judgement, and an event carries signups, run numbers and possibly
+   *  a whole standby. */
+  EVENTS_DELETE: 'events:delete',
   TRAININGS_MANAGE: 'trainings:manage',
   FUEL_WRITE: 'fuel:write',
   RADIOS_MANAGE: 'radios:manage',

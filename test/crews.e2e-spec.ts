@@ -3524,6 +3524,56 @@ describe('Night crews engine (e2e)', () => {
         .expect(403);
     });
 
+    // Deleting an event cascades its standby away, and a standby carries the
+    // encounters. Tidying the calendar must not be a way to lose them.
+    it('refuses to delete an event whose standby has encounters', async () => {
+      const refused = await request(app.getHttpServer())
+        .delete(`/v1/events/${eventId}`)
+        .set(sup())
+        .set('x-test-permissions', 'events:delete')
+        .expect(400);
+      expect(refused.body.message).toContain('encounter');
+      // Still there, with everything on it.
+      expect(
+        await prisma.standbyLog.count({ where: { eventId } }),
+      ).toBe(1);
+    });
+
+    // Making an event and destroying one are not the same judgement.
+    it('will not let somebody who can only create events delete one', async () => {
+      await request(app.getHttpServer())
+        .delete(`/v1/events/${eventId}`)
+        .set(sup())
+        .set('x-test-permissions', 'events:create')
+        .expect(403);
+    });
+
+    // An ad-hoc event created by mistake opens an empty standby. That has to
+    // be removable, or the mistake is permanent.
+    it('lets an event go when its standby has nothing on it', async () => {
+      const kind = await prisma.eventKind.findFirstOrThrow();
+      const spare = await prisma.event.create({
+        data: {
+          title: `Mistake ${stamp}`,
+          startsAt: new Date(),
+          endsAt: new Date(Date.now() + 3600_000),
+          kindId: kind.id,
+        },
+      });
+      await request(app.getHttpServer())
+        .post('/v1/standbys')
+        .set(sup())
+        .send({ eventId: spare.id })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .delete(`/v1/events/${spare.id}`)
+        .set(sup())
+        .set('x-test-permissions', 'events:delete')
+        .expect(200);
+      expect(await prisma.standbyLog.count({ where: { eventId: spare.id } })).toBe(0);
+    });
+
     it('keeps a timeline of what happened', async () => {
       const res = await request(app.getHttpServer())
         .get(`/v1/standbys/${standbyId}/timeline`)
