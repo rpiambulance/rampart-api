@@ -163,6 +163,14 @@ class IssueRunNumberDto {
   @IsOptional() @IsInt() placeId?: number;
 }
 
+class NoteDto {
+  @IsString() @MaxLength(1000) text!: string;
+}
+
+class MarkDto {
+  @IsInt() actionId!: number;
+}
+
 class VoidEncounterDto {
   /** Null takes the mark off again. */
   @IsOptional()
@@ -423,6 +431,40 @@ export class Ems2Controller {
   }
 
   /**
+   * A note about the standby itself: what happened that was not a patient.
+   */
+  @Post(':id/notes')
+  addNote(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: NoteDto,
+  ) {
+    return this.ems2.addNote(auth, id, body.text);
+  }
+
+  /** A note about one encounter, which lands on it and on the timeline. */
+  @Post(':id/encounters/:encounterId/notes')
+  addEncounterNote(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+    @Body() body: NoteDto,
+  ) {
+    return this.ems2.addEncounterNote(auth, id, encounterId, body.text);
+  }
+
+  /** One of the buttons: on scene, moving to FAR. */
+  @Post(':id/encounters/:encounterId/mark')
+  markEncounter(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+    @Body() body: MarkDto,
+  ) {
+    return this.ems2.markEncounter(auth, id, encounterId, body.actionId);
+  }
+
+  /**
    * Mark an encounter as one that turned out not to be one, or take the
    * mark off again. Needs only to be on the standby: this is the
    * correction, and deleting is the thing that needs a permission.
@@ -538,33 +580,38 @@ export class Ems2Controller {
    */
   @Get('config/all')
   async config() {
-    const [places, designators, hospitals, members] = await Promise.all([
-      this.prisma.place.findMany({
-        where: { active: true },
-        include: {
-          spots: { where: { active: true }, orderBy: { order: 'asc' } },
-        },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.unitDesignator.findMany({
-        where: { active: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.hospital.findMany({
-        where: { active: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.member.findMany({
-        where: { active: true },
-        select: {
-          id: true,
-          firstName: true,
-          preferredFirstName: true,
-          lastName: true,
-        },
-        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-      }),
-    ]);
-    return { places, designators, hospitals, members };
+    const [places, designators, hospitals, actions, members] =
+      await Promise.all([
+        this.prisma.place.findMany({
+          where: { active: true },
+          include: {
+            spots: { where: { active: true }, orderBy: { order: 'asc' } },
+          },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.unitDesignator.findMany({
+          where: { active: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.hospital.findMany({
+          where: { active: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.encounterAction.findMany({
+          where: { active: true },
+          orderBy: [{ order: 'asc' }, { label: 'asc' }],
+        }),
+        this.prisma.member.findMany({
+          where: { active: true },
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+          orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+        }),
+      ]);
+    return { places, designators, hospitals, actions, members };
   }
 }

@@ -2114,6 +2114,19 @@ model UnitDesignator {
 }
 
 /// Where a patient can be taken. Configurable, because hospitals close.
+/// A button on an encounter that writes one line into the record.
+///
+/// "On scene", "Moving to FAR" — the things that happen often enough that
+/// typing them is the reason they go unrecorded. The label is the whole of
+/// it: pressing one marks the time and who pressed it, and nothing else
+/// about the encounter changes.
+model EncounterAction {
+  id     Int     @id @default(autoincrement())
+  label  String  @unique
+  order  Int     @default(0)
+  active Boolean @default(true)
+}
+
 model Hospital {
   id     Int     @id @default(autoincrement())
   name   String  @unique

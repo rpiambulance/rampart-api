@@ -183,6 +183,48 @@ describe('describeTimelineEntry', () => {
     ).toBe('Encounter #3 is a patient encounter again (was unfounded)');
   });
 
+  it('lets a note speak for itself', () => {
+    expect(
+      describeTimelineEntry(
+        entry('note', { detail: { text: 'Crowd building at the north gate' } }),
+      ),
+    ).toBe('Crowd building at the north gate');
+  });
+
+  it('hangs an encounter note off its encounter', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.note', {
+          encounterId: 100,
+          detail: { sequence: 3, text: 'Walked to the aid station' },
+        }),
+        names,
+      ),
+    ).toBe('Encounter #3 note — Walked to the aid station');
+  });
+
+  // What a reader who may not read the encounter sees: that a note exists.
+  it('says a note exists when its words are not theirs to read', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.note', { encounterId: 100, detail: { sequence: 3 } }),
+        names,
+      ),
+    ).toBe('Encounter #3 note');
+  });
+
+  it('marks an encounter with the words that were on the button', () => {
+    expect(
+      describeTimelineEntry(
+        entry('encounter.action', {
+          encounterId: 100,
+          detail: { sequence: 3, label: 'Moving to FAR' },
+        }),
+        names,
+      ),
+    ).toBe('Encounter #3 — Moving to FAR');
+  });
+
   it('describes reopening one', () => {
     expect(
       describeTimelineEntry(

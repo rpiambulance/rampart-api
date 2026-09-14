@@ -1087,6 +1087,74 @@ export class Ems2Service {
     return issued;
   }
 
+  // ------------------------------------------------------------------ notes
+
+  /**
+   * A line in the record that is not about a patient.
+   *
+   * The crowd moved, a gate closed, somebody went for a wheelchair. None of
+   * it is an encounter and all of it is what the standby was, and the
+   * alternative to a box for it is a supervisor's memory a week later.
+   *
+   * Needs only to be on the standby: writing down what happened is not a
+   * permission, it is the job.
+   */
+  async addNote(auth: AuthContext, standbyId: number, text: string) {
+    await this.requireOnStandby(auth, standbyId);
+    const said = text.trim();
+    if (!said) throw new BadRequestException('A note needs something in it.');
+    await this.log(standbyId, 'note', auth, { detail: { text: said } });
+    return { ok: true };
+  }
+
+  /**
+   * The same, about one encounter.
+   *
+   * Written once and read in both places — on the card with the encounter it
+   * belongs to, and in the timeline in the order everything happened.
+   */
+  async addEncounterNote(
+    auth: AuthContext,
+    standbyId: number,
+    encounterId: number,
+    text: string,
+  ) {
+    const encounter = await this.mineOrVisible(auth, standbyId, encounterId);
+    const said = text.trim();
+    if (!said) throw new BadRequestException('A note needs something in it.');
+    await this.log(standbyId, 'encounter.note', auth, {
+      encounterId,
+      detail: { sequence: encounter.sequence, text: said },
+    });
+    return { ok: true };
+  }
+
+  /**
+   * One of the buttons an officer set up: on scene, moving to FAR.
+   *
+   * The label is recorded rather than the id, so renaming a button next
+   * season does not rewrite what was pressed this one.
+   */
+  async markEncounter(
+    auth: AuthContext,
+    standbyId: number,
+    encounterId: number,
+    actionId: number,
+  ) {
+    const encounter = await this.mineOrVisible(auth, standbyId, encounterId);
+    const action = await this.prisma.encounterAction.findUnique({
+      where: { id: actionId },
+    });
+    if (!action || !action.active) {
+      throw new NotFoundException('No such action');
+    }
+    await this.log(standbyId, 'encounter.action', auth, {
+      encounterId,
+      detail: { sequence: encounter.sequence, label: action.label },
+    });
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------- the record
 
   private async requireOnStandby(auth: AuthContext, standbyId: number) {
@@ -1219,7 +1287,13 @@ export class Ems2Service {
       const sequence =
         (entry.detail as { sequence?: number } | null)?.sequence ??
         (entry.encounterId != null ? sequences.get(entry.encounterId) : null);
-      const shown = hidden ? { ...entry, detail: { sequence } } : entry;
+      // The label of a button an officer set up is an operational word —
+      // "on scene" — chosen from a fixed list rather than typed about a
+      // patient, so it survives redaction where a note's text does not.
+      const label = (entry.detail as { label?: string } | null)?.label;
+      const shown = hidden
+        ? { ...entry, detail: { sequence, ...(label ? { label } : {}) } }
+        : entry;
       return {
         ...entry,
         id: String(entry.id),

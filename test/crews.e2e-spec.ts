@@ -4527,6 +4527,135 @@ describe('Night crews engine (e2e)', () => {
       expect(await prisma.event.count({ where: { id: spare.id } })).toBe(0);
     });
 
+    // Most of a standby is not a patient: the crowd moved, a gate closed.
+    it('takes a note about the standby itself', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/notes`)
+        .set(sup())
+        .send({ text: `Crowd building at the north gate ${stamp}` })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/notes`)
+        .set(sup())
+        .send({ text: '   ' })
+        .expect(400);
+
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const entries = res.body as Array<{ kind: string; text: string }>;
+      const note = entries.find((e) => e.kind === 'note');
+      expect(note?.text).toContain('north gate');
+    });
+
+    it('notes and marks an encounter, and puts both on the timeline', async () => {
+      const action = await prisma.encounterAction.create({
+        data: { label: `Moving to FAR ${stamp}`.slice(0, 60) },
+      });
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      const id = opened.body.id as number;
+      const sequence = opened.body.sequence as number;
+
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/notes`)
+        .set(sup())
+        .send({ text: 'Walked to the aid station' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/mark`)
+        .set(sup())
+        .send({ actionId: action.id })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const entries = res.body as Array<{
+        kind: string;
+        text: string;
+        encounterId: number | null;
+      }>;
+      const note = entries.find((e) => e.kind === 'encounter.note');
+      expect(note?.encounterId).toBe(id);
+      expect(note?.text).toBe(
+        `Encounter #${sequence} note — Walked to the aid station`,
+      );
+      const marked = entries.find((e) => e.kind === 'encounter.action');
+      expect(marked?.text).toContain('Moving to FAR');
+
+      // A reader who may not read the encounter gets the button's words —
+      // an operational vocabulary — but not what somebody typed about it.
+      const crew = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(as(charlie))
+        .set('x-test-permissions', '')
+        .expect(200);
+      const theirs = crew.body as Array<{ kind: string; text: string }>;
+      expect(
+        theirs.find((e) => e.kind === 'encounter.note')?.text,
+      ).not.toContain('aid station');
+      expect(theirs.find((e) => e.kind === 'encounter.action')?.text).toContain(
+        'Moving to FAR',
+      );
+
+      await prisma.encounterAction.delete({ where: { id: action.id } });
+    });
+
+    // The buttons are set up by an officer; pressing one is not a
+    // permission, and the words are recorded rather than the id.
+    it('records the words that were on the button, not the button', async () => {
+      const action = await prisma.encounterAction.create({
+        data: { label: `On scene ${stamp}`.slice(0, 60) },
+      });
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${opened.body.id}/mark`)
+        .set(sup())
+        .send({ actionId: action.id })
+        .expect(201);
+
+      // Renamed afterwards, and what was pressed keeps its own words.
+      await prisma.encounterAction.update({
+        where: { id: action.id },
+        data: { label: `Something else ${stamp}`.slice(0, 60) },
+      });
+      const res = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const entries = res.body as Array<{
+        kind: string;
+        text: string;
+        encounterId: number | null;
+      }>;
+      const marked = entries.filter(
+        (e) => e.kind === 'encounter.action' && e.encounterId === opened.body.id,
+      );
+      expect(marked[0]?.text).toContain('On scene');
+
+      // A retired button cannot be pressed again.
+      await prisma.encounterAction.update({
+        where: { id: action.id },
+        data: { active: false },
+      });
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${opened.body.id}/mark`)
+        .set(sup())
+        .send({ actionId: action.id })
+        .expect(404);
+      await prisma.encounterAction.delete({ where: { id: action.id } });
+    });
+
     it('keeps a timeline of what happened', async () => {
       const res = await request(app.getHttpServer())
         .get(`/v1/standbys/${standbyId}/timeline`)

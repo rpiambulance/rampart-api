@@ -274,6 +274,23 @@ function sentence(entry: TimelineEntryShape, names: TimelineNames): string {
         ? `${encounterOf(entry, names)} deleted — ${tail}`
         : `${encounterOf(entry, names)} deleted`;
     }
+    // Somebody wrote it; it is already in their words.
+    case 'note':
+      return str(detail.text) ?? 'A note with nothing in it';
+    case 'encounter.note': {
+      const text = str(detail.text);
+      // Redacted for a reader who may not read this encounter, and then the
+      // line says a note exists rather than what it said.
+      return text
+        ? `${encounterOf(entry, names)} note — ${text}`
+        : `${encounterOf(entry, names)} note`;
+    }
+    case 'encounter.action': {
+      const label = str(detail.label);
+      return label
+        ? `${encounterOf(entry, names)} — ${label}`
+        : `${encounterOf(entry, names)} marked`;
+    }
     case 'encounter.voided': {
       const as = label(VOID_LABEL, detail.as);
       const note = str(detail.note);
