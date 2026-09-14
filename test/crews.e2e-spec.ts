@@ -3143,6 +3143,55 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // Being called the right thing is the member's to set and an officer's to
+  // fix: somebody who has not found the field, or whose name came in wrong
+  // from the legacy import, should not have to be the one who notices.
+  describe('preferred names', () => {
+    let subject: number;
+
+    beforeAll(async () => {
+      subject = await createMember('Preferred', []);
+    });
+
+    it('lets an officer set what somebody goes by', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/members/${subject}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .send({ preferredFirstName: 'Pip' })
+        .expect(200);
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { id: subject },
+      });
+      expect(member.preferredFirstName).toBe('Pip');
+      // The legal name is untouched: it is what the certification card says.
+      expect(member.firstName).toBe('Preferred');
+    });
+
+    it('needs members:write to do it', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/members/${subject}`)
+        .set(as(bob))
+        .set('x-test-permissions', '')
+        .send({ preferredFirstName: 'Nope' })
+        .expect(403);
+    });
+
+    it('clears it again when the box is emptied', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/members/${subject}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'members:write')
+        .send({ preferredFirstName: '' })
+        .expect(200);
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { id: subject },
+      });
+      // The absence of a preferred name, not an empty one.
+      expect(member.preferredFirstName).toBeNull();
+    });
+  });
+
   // One list of places, one set of routes that edit it — and the two fields
   // a run number is made of stay behind the run-number permission.
   describe('places', () => {

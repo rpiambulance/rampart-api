@@ -105,6 +105,18 @@ class CreateMemberDto {
   @IsString()
   firstName!: string;
 
+  /**
+   * What they would rather be called.
+   *
+   * Theirs to set, and an officer's to fix: a member who has not found the
+   * field, or whose name was imported wrong, should not have to be the one
+   * who notices. Everywhere the portal addresses somebody it uses this.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  preferredFirstName?: string;
+
   @IsString()
   lastName!: string;
 

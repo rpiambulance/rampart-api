@@ -346,6 +346,12 @@ export class MembersService {
         ...data,
         // Undefined means "leave alone"; both helpers preserve that.
         email: normalizeEmail(data.email),
+        // An emptied box means "they go by their own name", which is the
+        // absence of a preferred one rather than an empty one.
+        preferredFirstName:
+          data.preferredFirstName === undefined
+            ? undefined
+            : data.preferredFirstName.trim() || null,
         cellPhone: normalizePhone(data.cellPhone),
         homePhone: normalizePhone(data.homePhone),
         dob: data.dob ? new Date(data.dob) : undefined,
