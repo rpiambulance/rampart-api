@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Post,
-  Query,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   IsDateString,
@@ -14,8 +7,9 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { createHash } from 'crypto';
+import type { Request } from 'express';
 import { Public } from '../auth/public.decorator';
+import { requireIngestToken } from '../auth/ingest-token';
 import { isDateOnly, nyDayEnd, nyDayStart } from '../common/dates';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
@@ -99,39 +93,18 @@ export class DispatchesController {
     private readonly air: AirService,
   ) {}
 
-  private async validateIngestToken(raw?: string): Promise<void> {
-    if (!raw?.startsWith('rpa_')) {
-      throw new UnauthorizedException(
-        'A dispatches:ingest API token is required',
-      );
-    }
-    const tokenHash = createHash('sha256').update(raw).digest('hex');
-    const token = await this.prisma.apiToken.findUnique({
-      where: { tokenHash },
-    });
-    const now = new Date();
-    if (
-      !token ||
-      token.revokedAt ||
-      (token.expiresAt && token.expiresAt < now) ||
-      !token.permissions.includes(PERMISSIONS.DISPATCHES_INGEST)
-    ) {
-      throw new UnauthorizedException('Invalid ingest token');
-    }
-    await this.prisma.apiToken.update({
-      where: { id: token.id },
-      data: { lastUsedAt: now },
-    });
-  }
-
   @Public()
   @Throttle({ default: { limit: 120, ttl: 3_600_000 } })
   @Post('herald/dispatch')
   async ingest(
     @Body() body: Record<string, unknown>,
+    @Req() req: Request,
     @Query('token') queryToken?: string,
   ) {
-    await this.validateIngestToken(queryToken);
+    await requireIngestToken(this.prisma, PERMISSIONS.DISPATCHES_INGEST, {
+      query: queryToken,
+      request: req,
+    });
 
     const str = (v: unknown): string | null =>
       typeof v === 'string' && v.trim() ? v.trim() : null;
@@ -309,6 +282,16 @@ export class DispatchesController {
           select: {
             id: true,
             asked: true,
+            // What the scanner recorded, so the log can play the call back.
+            audio: {
+              orderBy: { receivedAt: 'asc' },
+              select: {
+                id: true,
+                receivedAt: true,
+                bytes: true,
+                slackPermalink: true,
+              },
+            },
             responses: {
               where: { responding: true },
               orderBy: { at: 'asc' },

@@ -3,6 +3,7 @@ import type { CalloutKind } from '../generated/prisma/enums';
 import { initialAndSurname } from '../common/name';
 import { toDbDate } from '../common/dates';
 import { HeadsupEvents } from '../headsup/headsup.events';
+import { StorageService } from '../storage/storage.service';
 import { SlackService } from '../notifications/slack.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -25,6 +26,16 @@ interface DispatchLine {
   units: string | null;
   receivedAt: Date;
 }
+
+/**
+ * How long after a call a recording can still be of it.
+ *
+ * Longer than the window that joins a page to a dispatch: those two are
+ * both struck at the moment the call goes out, while the recording cannot
+ * exist until the transmission has finished and the scanner has written the
+ * file out.
+ */
+const AUDIO_MATCH_WINDOW_MINUTES = 20;
 
 const RESPONSES_INCLUDE = {
   responses: {
@@ -64,6 +75,7 @@ export class AirService {
     private readonly prisma: PrismaService,
     private readonly slack: SlackService,
     private readonly headsup: HeadsupEvents,
+    private readonly storage: StorageService,
   ) {}
 
   // --------------------------------------------------------------- signals
@@ -96,6 +108,7 @@ export class AirService {
       pagedAt: now,
       dispatchId: dispatch?.id ?? null,
     });
+    await this.adoptOrphanAudio(callout.id, now);
     await this.render(callout.id);
     return callout;
   }
@@ -126,6 +139,7 @@ export class AirService {
       pagedAt: null,
       dispatchId: dispatch.id,
     });
+    await this.adoptOrphanAudio(callout.id, now);
     await this.render(callout.id);
     return callout;
   }
@@ -217,6 +231,129 @@ export class AirService {
       orderBy: { openedAt: 'desc' },
       include: RESPONSES_INCLUDE,
     });
+  }
+
+  // ------------------------------------------------------------------ audio
+
+  /**
+   * What the scanner recorded, stored here and handed to Slack.
+   *
+   * The page goes out when the tones drop and this arrives when the
+   * transmission ends, so it is always later — by seconds, or by minutes on
+   * a long dispatch. It attaches to the most recent callout within a window
+   * wide enough to cover that, and stands on its own when there is none:
+   * the recording is worth keeping whether or not anything else about the
+   * call reached us.
+   */
+  async audio(input: {
+    body: Buffer;
+    filename: string;
+    contentType: string;
+    now?: Date;
+  }) {
+    const now = input.now ?? new Date();
+    const callout = await this.calloutForAudio(now);
+    const key = `callout-audio/${now.toISOString().slice(0, 10)}/${
+      callout?.id ?? 'unattached'
+    }-${now.getTime()}-${input.filename.replace(/[^\w.-]/g, '_')}`;
+
+    await this.storage.put(key, input.body, input.contentType);
+    const stored = await this.prisma.calloutAudio.create({
+      data: {
+        calloutId: callout?.id ?? null,
+        key,
+        contentType: input.contentType,
+        bytes: input.body.byteLength,
+        filename: input.filename,
+        receivedAt: now,
+      },
+    });
+
+    await this.forward(stored.id, input.body);
+    return stored;
+  }
+
+  /**
+   * The call a recording belongs to.
+   *
+   * The newest callout inside the window, which is the best anybody can do:
+   * a recording carries no identifier, only the moment it was written.
+   */
+  private async calloutForAudio(now: Date) {
+    const since = new Date(now.getTime() - AUDIO_MATCH_WINDOW_MINUTES * 60_000);
+    return this.prisma.callout.findFirst({
+      where: { openedAt: { gte: since, lte: now } },
+      orderBy: { openedAt: 'desc' },
+      select: { id: true, slackChannel: true, slackTs: true },
+    });
+  }
+
+  /**
+   * A recording that arrived before anything opened a callout.
+   *
+   * Rare — the page is sent first and the audio written afterwards — but a
+   * page that failed to send leaves the recording orphaned, and the next
+   * thing to open a callout should pick it up rather than leaving a file
+   * attached to nothing.
+   */
+  private async adoptOrphanAudio(calloutId: number, openedAt: Date) {
+    const since = new Date(
+      openedAt.getTime() - AUDIO_MATCH_WINDOW_MINUTES * 60_000,
+    );
+    const orphans = await this.prisma.calloutAudio.findMany({
+      where: { calloutId: null, receivedAt: { gte: since, lte: openedAt } },
+      select: { id: true },
+    });
+    if (!orphans.length) return;
+    await this.prisma.calloutAudio.updateMany({
+      where: { id: { in: orphans.map((orphan) => orphan.id) } },
+      data: { calloutId },
+    });
+  }
+
+  /** Hands a stored recording to Slack, under the call it belongs to. */
+  private async forward(audioId: number, body: Buffer) {
+    const audio = await this.prisma.calloutAudio.findUnique({
+      where: { id: audioId },
+      include: { callout: true },
+    });
+    if (!audio) return;
+
+    const threadTs = audio.callout?.slackTs ?? null;
+    const channelKey =
+      audio.callout?.slackChannel &&
+      audio.callout.slackChannel === (await this.slack.channelId('responding'))
+        ? 'responding'
+        : 'dispatches';
+    const posted = await this.slack.uploadFile({
+      channelKey,
+      filename: audio.filename ?? `dispatch-${audio.id}.mp3`,
+      body,
+      title: 'Dispatch audio',
+      // Said only when it is arriving on its own, where it would otherwise
+      // be a file with no call attached to it.
+      comment: threadTs ? undefined : 'Dispatch audio from the scanner.',
+      threadTs,
+    });
+    if (posted) {
+      await this.prisma.calloutAudio.update({
+        where: { id: audio.id },
+        data: {
+          slackFileId: posted.fileId,
+          slackPermalink: posted.permalink,
+        },
+      });
+    } else {
+      this.logger.warn(`callout audio ${audio.id}: not handed to Slack`);
+    }
+  }
+
+  /** The stored bytes, for playing it back in the portal. */
+  async audioFile(id: number) {
+    const audio = await this.prisma.calloutAudio.findUnique({ where: { id } });
+    if (!audio) return null;
+    const object = await this.storage.get(audio.key);
+    return { audio, object };
   }
 
   // ----------------------------------------------------------------- innards
@@ -411,6 +548,32 @@ export class AirService {
     return blocks;
   }
 
+  /** The same call, stated once for the channel that keeps the record. */
+  private mirrorBlocks(callout: {
+    kind: CalloutKind;
+    pageText: string | null;
+    dispatch: {
+      determinant: string | null;
+      complaint: string | null;
+      location: string | null;
+      units: string | null;
+    } | null;
+  }): unknown[] {
+    const heading =
+      callout.kind === 'LONGTONE'
+        ? '*Rensselaer County longtone*'
+        : '*RPI Ambulance dispatched*';
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `${heading}\n${this.headline(callout)}`,
+        },
+      },
+    ];
+  }
+
   /**
    * Draws the callout in Slack: posts it the first time, edits it after.
    *
@@ -440,7 +603,14 @@ export class AirService {
         blocks,
       );
     } else {
-      const posted = await this.slack.postReturning('dispatches', text, blocks);
+      // The asking goes to the channel kept for it, which is how AIR was
+      // arranged: one channel people watch when they might turn out, and one
+      // that carries every call whether or not anybody is asked. Agencies
+      // that want a single channel leave the second unset.
+      const asking = (await this.slack.channelId('responding'))
+        ? 'responding'
+        : 'dispatches';
+      const posted = await this.slack.postReturning(asking, text, blocks);
       if (posted) {
         await this.prisma.callout.update({
           where: { id: callout.id },
@@ -448,6 +618,11 @@ export class AirService {
         });
       } else {
         this.logger.warn(`callout ${callout.id}: nothing posted to Slack`);
+      }
+      // A plain copy for the record, when the two are separate channels.
+      // Never edited afterwards: it is a log line, not a conversation.
+      if (asking === 'responding') {
+        await this.slack.post('dispatches', text, this.mirrorBlocks(callout));
       }
     }
 

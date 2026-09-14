@@ -69,6 +69,12 @@ export class SlackService {
     return !!(await this.settings()).botToken;
   }
 
+  /** The channel a purpose is pointed at, or null when nobody has set one. */
+  async channelId(channelKey: string): Promise<string | null> {
+    const config = await this.settings();
+    return config.channels[channelKey] ?? null;
+  }
+
   /**
    * Posts to a configured purpose. Returns false when Slack is not set up or
    * the post failed — callers treat Slack as a courtesy, never as the record.
@@ -302,6 +308,99 @@ export class SlackService {
     } catch (error) {
       this.logger.error(`slack ephemeral reply failed: ${String(error)}`);
       return false;
+    }
+  }
+
+  /**
+   * Hands Slack a file.
+   *
+   * Three calls, because the one-call upload Slack used to offer is gone:
+   * ask for somewhere to put it, put it there, then say what it belongs to.
+   * Threaded under a message when one is given, so a recording hangs off
+   * the call it is of rather than arriving in the channel on its own.
+   */
+  async uploadFile(input: {
+    channelKey: string;
+    filename: string;
+    body: Buffer;
+    title?: string;
+    comment?: string;
+    threadTs?: string | null;
+  }): Promise<{ fileId: string; permalink: string | null } | null> {
+    const config = await this.settings();
+    const channel = config.channels[input.channelKey];
+    if (!config.botToken || !channel) return null;
+    const auth = { Authorization: `Bearer ${config.botToken}` };
+
+    try {
+      const ticketRes = await fetch(
+        'https://slack.com/api/files.getUploadURLExternal',
+        {
+          method: 'POST',
+          headers: {
+            ...auth,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            filename: input.filename,
+            length: String(input.body.byteLength),
+          }),
+        },
+      );
+      const ticket = (await ticketRes.json()) as {
+        ok: boolean;
+        error?: string;
+        upload_url?: string;
+        file_id?: string;
+      };
+      if (!ticket.ok || !ticket.upload_url || !ticket.file_id) {
+        this.logger.error(`slack upload ticket failed: ${ticket.error}`);
+        return null;
+      }
+
+      const put = await fetch(ticket.upload_url, {
+        method: 'POST',
+        body: new Uint8Array(input.body),
+      });
+      if (!put.ok) {
+        this.logger.error(`slack upload failed: ${put.status}`);
+        return null;
+      }
+
+      const doneRes = await fetch(
+        'https://slack.com/api/files.completeUploadExternal',
+        {
+          method: 'POST',
+          headers: { ...auth, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            files: [
+              {
+                id: ticket.file_id,
+                ...(input.title ? { title: input.title } : {}),
+              },
+            ],
+            channel_id: channel,
+            ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+            ...(input.comment ? { initial_comment: input.comment } : {}),
+          }),
+        },
+      );
+      const done = (await doneRes.json()) as {
+        ok: boolean;
+        error?: string;
+        files?: Array<{ id?: string; permalink?: string }>;
+      };
+      if (!done.ok) {
+        this.logger.error(`slack upload completion failed: ${done.error}`);
+        return null;
+      }
+      return {
+        fileId: ticket.file_id,
+        permalink: done.files?.[0]?.permalink ?? null,
+      };
+    } catch (error) {
+      this.logger.error(`slack upload failed: ${String(error)}`);
+      return null;
     }
   }
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
 import 'dotenv/config';
 import {
@@ -3146,11 +3147,21 @@ describe('Night crews engine (e2e)', () => {
   // neither reliably arrives first.
   describe('am I responding', () => {
     let air: AirService;
-    const pageSecret = `page-secret-${stamp}`;
+    let pageToken: string;
 
-    beforeAll(() => {
+    beforeAll(async () => {
       air = app.get(AirService);
-      process.env.AIR_PAGE_SECRET = pageSecret;
+      // The pager authenticates the way Herald does: an ingest token, and
+      // nothing else will do.
+      pageToken = `rpa_air_${stamp}`;
+      await prisma.apiToken.create({
+        data: {
+          name: `Pager ${stamp}`,
+          tokenHash: createHash('sha256').update(pageToken).digest('hex'),
+          ownerId: alice,
+          permissions: ['dispatches:ingest'],
+        },
+      });
     });
 
     afterEach(async () => {
@@ -3160,32 +3171,55 @@ describe('Night crews engine (e2e)', () => {
     });
 
     afterAll(async () => {
-      delete process.env.AIR_PAGE_SECRET;
       await prisma.callout.deleteMany({});
+      await prisma.apiToken.deleteMany({ where: { name: `Pager ${stamp}` } });
     });
 
-    it('turns a page away without the secret', async () => {
+    // A page turns the whole membership out. Not from anybody who finds
+    // the URL.
+    it('turns a page away without a token', async () => {
       await request(app.getHttpServer())
         .post('/v1/air/page')
-        .send({ verification: 'wrong', dispatch: 'Anything at all' })
+        .send({ text: 'Anything at all' })
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/v1/air/page?token=rpa_not_a_token')
+        .send({ text: 'Anything at all' })
         .expect(401);
       expect(await prisma.callout.count()).toBe(0);
     });
 
-    // AIR's own payload, unchanged, so the pager needs no rewriting.
-    it('takes the page the old gateway sends', async () => {
+    it('takes a page on the token, in the query or a header', async () => {
       const res = await request(app.getHttpServer())
-        .post('/v1/air/page')
-        .send({
-          verification: pageSecret,
-          dispatch: `Sick person, 1999 Burdett Ave ${stamp}`,
-        })
+        .post(`/v1/air/page?token=${pageToken}`)
+        .send({ text: `Sick person, 1999 Burdett Ave ${stamp}` })
         .expect(201);
       const callout = await prisma.callout.findUniqueOrThrow({
         where: { id: res.body.id },
       });
       expect(callout.pageText).toContain('1999 Burdett Ave');
       expect(callout.dispatchId).toBeNull();
+      await prisma.callout.deleteMany({});
+
+      await request(app.getHttpServer())
+        .post('/v1/air/page')
+        .set('Authorization', `Bearer ${pageToken}`)
+        .send({ text: `Header page ${stamp}` })
+        .expect(201);
+    });
+
+    // The county still runs them, and they are ours to know about rather
+    // than ours to turn out for.
+    it('posts a longtone and asks nobody', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/v1/air/longtone?token=${pageToken}`)
+        .send({ text: `Longtone, structure fire ${stamp}` })
+        .expect(201);
+      expect(res.body.asked).toBe(false);
+      const callout = await prisma.callout.findUniqueOrThrow({
+        where: { id: res.body.id },
+      });
+      expect(callout.kind).toBe('LONGTONE');
     });
 
     it('joins the page and the dispatch, whichever came first', async () => {
@@ -3322,6 +3356,57 @@ describe('Night crews engine (e2e)', () => {
         where: { id: alice },
         data: { slackId: null },
       });
+    });
+
+    // The page goes out when the tones drop; the recording cannot exist
+    // until the transmission has finished. It is always later.
+    it('keeps the scanner audio and hangs it off the call', async () => {
+      const paged = await air.page(`Tones ${stamp}`);
+      const res = await request(app.getHttpServer())
+        .post(`/v1/air/audio?token=${pageToken}`)
+        .attach('file', Buffer.from(`fake mp3 ${stamp}`), 'dispatch.mp3')
+        .expect(201);
+      expect(res.body.calloutId).toBe(paged.id);
+
+      const stored = await prisma.calloutAudio.findUniqueOrThrow({
+        where: { id: res.body.id },
+      });
+      expect(stored.bytes).toBeGreaterThan(0);
+
+      // And it plays back out of the portal, not only out of Slack.
+      const played = await request(app.getHttpServer())
+        .get(`/v1/air/audio/${stored.id}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:read')
+        .expect(200);
+      expect(played.headers['content-type']).toContain('audio');
+      expect(played.body.toString()).toContain('fake mp3');
+
+      await prisma.calloutAudio.deleteMany({});
+    });
+
+    it('turns away audio without a token', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/air/audio')
+        .attach('file', Buffer.from('nope'), 'dispatch.mp3')
+        .expect(401);
+    });
+
+    // The page failed to send, or the tones were missed. The recording is
+    // still worth keeping, and the next thing to open a callout claims it.
+    it('adopts a recording that arrived before anything opened a call', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/v1/air/audio?token=${pageToken}`)
+        .attach('file', Buffer.from(`orphan ${stamp}`), 'orphan.mp3')
+        .expect(201);
+      expect(res.body.calloutId).toBeNull();
+
+      const callout = await air.page(`Late page ${stamp}`);
+      const adopted = await prisma.calloutAudio.findUniqueOrThrow({
+        where: { id: res.body.id },
+      });
+      expect(adopted.calloutId).toBe(callout.id);
+      await prisma.calloutAudio.deleteMany({});
     });
 
     it('never asks about a longtone', async () => {

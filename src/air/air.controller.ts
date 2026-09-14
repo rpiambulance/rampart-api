@@ -1,43 +1,49 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Post,
   Query,
-  UnauthorizedException,
+  Req,
+  Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
-import { createHash } from 'crypto';
+import type { Request, Response } from 'express';
+import { MAX_UPLOAD_BYTES } from '../storage/upload-limits';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { Public } from '../auth/public.decorator';
+import { requireIngestToken } from '../auth/ingest-token';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { AirService } from './air.service';
 
 /**
- * What the pager sends.
+ * What the pager sends: one line of text, which is all it knows.
  *
- * The field names are AIR's, because the thing sending them is a paging
- * gateway nobody here controls: `verification` is a shared string and
- * `dispatch` is the one line of text it knows. Kept exactly so the feed can
- * be pointed at this without being rewritten first.
+ * `dispatch` is the name AIR's gateway used for the same field, accepted so
+ * a sender pointed here mid-configuration still works rather than posting
+ * an empty page nobody notices.
  */
 class PageDto {
-  @IsOptional() @IsString() @MaxLength(200) verification?: string;
-  @IsOptional() @IsString() @MaxLength(2000) dispatch?: string;
-  /** What a sender we do control would send instead. */
   @IsOptional() @IsString() @MaxLength(2000) text?: string;
+  @IsOptional() @IsString() @MaxLength(2000) dispatch?: string;
 }
 
 /**
  * AIR: the page in, and the answers out.
  *
  * The page endpoint is public in the same sense Herald's is — no session,
- * authenticated by what it carries. Either an ingest API token, or the
- * shared verification string the old gateway sends.
+ * authenticated by the ingest token it carries, in the query string or an
+ * Authorization header. A page turns the membership out, so an unsigned one
+ * is not something to accept from anybody who finds the URL.
  */
 @Controller({ version: '1' })
 export class AirController {
@@ -46,52 +52,19 @@ export class AirController {
     private readonly prisma: PrismaService,
   ) {}
 
-  /**
-   * Whoever sent this has to prove it somehow.
-   *
-   * An ingest token is the way to do it now. The shared string is accepted
-   * because the gateway that sends it cannot be changed today, and a page
-   * that arrives unauthenticated is worse than one authenticated weakly:
-   * anybody could make the whole membership turn out.
-   */
-  private async authenticate(
-    token: string | undefined,
-    verification: string | undefined,
-  ): Promise<void> {
-    if (token?.startsWith('rpa_')) {
-      const tokenHash = createHash('sha256').update(token).digest('hex');
-      const found = await this.prisma.apiToken.findUnique({
-        where: { tokenHash },
-      });
-      const now = new Date();
-      if (
-        found &&
-        !found.revokedAt &&
-        (!found.expiresAt || found.expiresAt >= now) &&
-        found.permissions.includes(PERMISSIONS.DISPATCHES_INGEST)
-      ) {
-        await this.prisma.apiToken.update({
-          where: { id: found.id },
-          data: { lastUsedAt: now },
-        });
-        return;
-      }
-      throw new UnauthorizedException('Invalid ingest token');
-    }
-
-    const expected = process.env.AIR_PAGE_SECRET?.trim();
-    if (expected && verification && verification.trim() === expected) return;
-    throw new UnauthorizedException(
-      'A dispatches:ingest API token or the page secret is required',
-    );
-  }
-
   /** The tones dropped. */
   @Public()
   @Throttle({ default: { limit: 120, ttl: 3_600_000 } })
   @Post('air/page')
-  async page(@Body() body: PageDto, @Query('token') token?: string) {
-    await this.authenticate(token, body.verification);
+  async page(
+    @Body() body: PageDto,
+    @Req() req: Request,
+    @Query('token') token?: string,
+  ) {
+    await requireIngestToken(this.prisma, PERMISSIONS.DISPATCHES_INGEST, {
+      query: token,
+      request: req,
+    });
     const text = (body.text ?? body.dispatch ?? '').trim();
     if (!text) return { ok: false, reason: 'Nothing to post' };
     const callout = await this.air.page(text, 'DISPATCH');
@@ -102,12 +75,77 @@ export class AirController {
   @Public()
   @Throttle({ default: { limit: 120, ttl: 3_600_000 } })
   @Post('air/longtone')
-  async longtone(@Body() body: PageDto, @Query('token') token?: string) {
-    await this.authenticate(token, body.verification);
+  async longtone(
+    @Body() body: PageDto,
+    @Req() req: Request,
+    @Query('token') token?: string,
+  ) {
+    await requireIngestToken(this.prisma, PERMISSIONS.DISPATCHES_INGEST, {
+      query: token,
+      request: req,
+    });
     const text = (body.text ?? body.dispatch ?? '').trim();
     if (!text) return { ok: false, reason: 'Nothing to post' };
     const callout = await this.air.page(text, 'LONGTONE');
     return { ok: true, id: callout.id, asked: false };
+  }
+
+  /**
+   * The recording, from the scanner computer.
+   *
+   * It posted straight to Slack before this existed. Now it comes here, is
+   * kept, and is handed on — so the call has its audio in the log a year
+   * later, rather than only in a channel somebody has to scroll.
+   */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 3_600_000 } })
+  @Post('air/audio')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
+  async audio(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Req() req: Request,
+    @Query('token') token?: string,
+  ) {
+    await requireIngestToken(this.prisma, PERMISSIONS.DISPATCHES_INGEST, {
+      query: token,
+      request: req,
+    });
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('No audio was uploaded');
+    }
+    const stored = await this.air.audio({
+      body: file.buffer,
+      filename: file.originalname || 'dispatch.mp3',
+      contentType: file.mimetype || 'audio/mpeg',
+    });
+    return {
+      ok: true,
+      id: stored.id,
+      calloutId: stored.calloutId,
+      bytes: stored.bytes,
+    };
+  }
+
+  /** Playing it back in the portal. */
+  @Get('air/audio/:id')
+  @RequirePermissions(PERMISSIONS.DISPATCHES_READ)
+  async playAudio(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ): Promise<void> {
+    const found = await this.air.audioFile(id);
+    if (!found) throw new NotFoundException('No such recording');
+    res.setHeader('Content-Type', found.object.contentType);
+    res.setHeader('Content-Length', String(found.object.body.byteLength));
+    // Named so a download is recognisable, and inline so the portal's own
+    // player can just point at it.
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${found.audio.filename ?? `dispatch-${id}.mp3`}"`,
+    );
+    res.end(found.object.body);
   }
 
   /** What is being asked right now — the screen in the bay reads this. */

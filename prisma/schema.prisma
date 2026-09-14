@@ -1299,8 +1299,32 @@ model Callout {
 
   dispatch  Dispatch?         @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
   responses CalloutResponse[]
+  audio     CalloutAudio[]
 
   @@index([openedAt])
+}
+
+/// What the scanner recorded off the air, kept rather than only passed on.
+model CalloutAudio {
+  id         Int      @id @default(autoincrement())
+  /// Null when it arrived before anything opened a callout, or when nothing
+  /// ever did. The recording is worth keeping either way.
+  calloutId  Int?
+  receivedAt DateTime @default(now())
+
+  /// Where the bytes are, in whatever object store this deployment uses.
+  key         String
+  contentType String
+  bytes       Int
+  filename    String?
+
+  /// Slack's copy, once it has been handed over.
+  slackFileId    String?
+  slackPermalink String?
+
+  callout Callout? @relation(fields: [calloutId], references: [id], onDelete: SetNull)
+
+  @@index([receivedAt])
 }
 
 model CalloutResponse {

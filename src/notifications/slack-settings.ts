@@ -42,8 +42,18 @@ export const SLACK_CHANNELS: SlackChannel[] = [
     key: 'dispatches',
     label: 'Dispatches',
     description:
-      'Live call notifications, if you want them mirrored into Slack.',
+      'Live call notifications, if you want them mirrored into Slack. Where a ' +
+      'call is posted for the record, without asking anything of anybody.',
     envVar: 'SLACK_DISPATCH_CHANNEL',
+  },
+  {
+    key: 'responding',
+    label: 'Responding',
+    description:
+      'Where members are asked who is coming when a call drops, and where ' +
+      'the answers appear. Leave empty to ask in the dispatches channel ' +
+      'instead of a channel of its own.',
+    envVar: 'SLACK_RESPONDING_CHANNEL',
   },
 ];
 
