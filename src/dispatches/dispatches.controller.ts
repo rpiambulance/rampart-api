@@ -23,6 +23,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import type { AuthContext } from '../auth/auth-context';
+import { AirService } from '../air/air.service';
 import { HeadsupEvents } from '../headsup/headsup.events';
 import { WebhooksService } from '../webhooks/webhooks.service';
 
@@ -95,6 +96,7 @@ export class DispatchesController {
     private readonly webhooks: WebhooksService,
     private readonly headsup: HeadsupEvents,
     private readonly audit: AuditService,
+    private readonly air: AirService,
   ) {}
 
   private async validateIngestToken(raw?: string): Promise<void> {
@@ -179,6 +181,10 @@ export class DispatchesController {
       receivedAt: dispatch.receivedAt.toISOString(),
     });
     this.headsup.boardChanged();
+    // And to the membership, unless a crew is already out there. The page
+    // from the tones may have opened the asking already, in which case this
+    // joins it and the message in Slack rewrites itself with the detail.
+    await this.air.dispatched(dispatch);
     return { ok: true, id: dispatch.id };
   }
 
@@ -296,6 +302,30 @@ export class DispatchesController {
       include: {
         enteredBy: {
           select: { firstName: true, preferredFirstName: true, lastName: true },
+        },
+        // Who said they were coming, when anybody was asked. The dispatch is
+        // what the call was; this is what the agency did about it.
+        callout: {
+          select: {
+            id: true,
+            asked: true,
+            responses: {
+              where: { responding: true },
+              orderBy: { at: 'asc' },
+              select: {
+                at: true,
+                slackName: true,
+                member: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    preferredFirstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+          },
         },
       },
       orderBy: { receivedAt: 'desc' },

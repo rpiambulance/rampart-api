@@ -29,7 +29,6 @@ import { Ems2ConfigController } from './ems2/ems2-config.controller';
 import { Ems2Service } from './ems2/ems2.service';
 import { Ems2ExportService } from './ems2/ems2-export.service';
 import { HeadsupController } from './headsup/headsup.controller';
-import { HeadsupEvents } from './headsup/headsup.events';
 import { HeadsupService } from './headsup/headsup.service';
 import { RequestsController } from './requests/requests.controller';
 import { RequestsJobs } from './requests/requests.jobs';
@@ -40,6 +39,7 @@ import {
   LegacyMigrationController,
   LegacyMigrationRunner,
 } from './legacy/legacy-migration.controller';
+import { AirModule } from './air/air.module';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { CalendarController } from './calendar/calendar.controller';
 import { CertificationsModule } from './certifications/certifications.module';
@@ -78,6 +78,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     EvalsModule,
     PromotionsModule,
     TrainingsModule,
+    AirModule,
   ],
   controllers: [
     HealthController,
@@ -112,7 +113,6 @@ import { TrainingsModule } from './trainings/trainings.module';
     Ems2Service,
     Ems2ExportService,
     HeadsupService,
-    HeadsupEvents,
     RequestsService,
     RequestsJobs,
     ChecksheetsJobs,

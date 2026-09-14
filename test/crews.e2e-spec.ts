@@ -11,6 +11,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { AuthGuard } from '../src/auth/auth.guard';
+import { AirService } from '../src/air/air.service';
 import { CredentialGraphService } from '../src/credentials/credential-graph.service';
 import { PermissionHoldersService } from '../src/permissions/permission-holders.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -3138,6 +3139,204 @@ describe('Night crews engine (e2e)', () => {
       await prisma.crew.deleteMany({ where: { date: toDbDate(far) } });
       await prisma.defaultCrewTemplate.deleteMany({ where: { weekday } });
       await prisma.member.delete({ where: { id: cc.id } });
+    });
+  });
+
+  // AIR: the page asks who is coming, Herald says what the call is, and
+  // neither reliably arrives first.
+  describe('am I responding', () => {
+    let air: AirService;
+    const pageSecret = `page-secret-${stamp}`;
+
+    beforeAll(() => {
+      air = app.get(AirService);
+      process.env.AIR_PAGE_SECRET = pageSecret;
+    });
+
+    afterEach(async () => {
+      // Each of these is its own call; without this the match window would
+      // fold the next one into the last.
+      await prisma.callout.deleteMany({});
+    });
+
+    afterAll(async () => {
+      delete process.env.AIR_PAGE_SECRET;
+      await prisma.callout.deleteMany({});
+    });
+
+    it('turns a page away without the secret', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/air/page')
+        .send({ verification: 'wrong', dispatch: 'Anything at all' })
+        .expect(401);
+      expect(await prisma.callout.count()).toBe(0);
+    });
+
+    // AIR's own payload, unchanged, so the pager needs no rewriting.
+    it('takes the page the old gateway sends', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/air/page')
+        .send({
+          verification: pageSecret,
+          dispatch: `Sick person, 1999 Burdett Ave ${stamp}`,
+        })
+        .expect(201);
+      const callout = await prisma.callout.findUniqueOrThrow({
+        where: { id: res.body.id },
+      });
+      expect(callout.pageText).toContain('1999 Burdett Ave');
+      expect(callout.dispatchId).toBeNull();
+    });
+
+    it('joins the page and the dispatch, whichever came first', async () => {
+      const pageFirst = await air.page(`Page first ${stamp}`);
+      expect(pageFirst.dispatchId).toBeNull();
+      const dispatch = await prisma.dispatch.create({
+        data: { complaint: `Chest pain ${stamp}`, raw: { source: 'test' } },
+      });
+      const joined = await air.dispatched({
+        id: dispatch.id,
+        determinant: 'Charlie',
+        complaint: dispatch.complaint,
+        location: null,
+        units: null,
+        receivedAt: dispatch.receivedAt,
+      });
+      // One call, not two.
+      expect(joined.id).toBe(pageFirst.id);
+      expect(joined.dispatchId).toBe(dispatch.id);
+      expect(await prisma.callout.count()).toBe(1);
+      await prisma.dispatch.delete({ where: { id: dispatch.id } });
+    });
+
+    it('joins them in the other order too', async () => {
+      const dispatch = await prisma.dispatch.create({
+        data: { complaint: `Fall ${stamp}`, raw: { source: 'test' } },
+      });
+      const heraldFirst = await air.dispatched({
+        id: dispatch.id,
+        determinant: 'Bravo',
+        complaint: dispatch.complaint,
+        location: null,
+        units: null,
+        receivedAt: dispatch.receivedAt,
+      });
+      const paged = await air.page(`Late page ${stamp}`);
+      expect(paged.id).toBe(heraldFirst.id);
+      expect(paged.pageText).toContain('Late page');
+      expect(await prisma.callout.count()).toBe(1);
+      await prisma.dispatch.delete({ where: { id: dispatch.id } });
+    });
+
+    it('keeps two calls an hour apart apart', async () => {
+      const now = new Date();
+      await air.page(`First ${stamp}`, 'DISPATCH', now);
+      await air.page(
+        `Second ${stamp}`,
+        'DISPATCH',
+        new Date(now.getTime() + 60 * 60_000),
+      );
+      expect(await prisma.callout.count()).toBe(2);
+    });
+
+    // The rule the clock used to stand in for.
+    it('asks by day and not when a crew is on the road', async () => {
+      const byDay = await air.page(
+        `Daytime ${stamp}`,
+        'DISPATCH',
+        new Date('2026-09-13T17:00:00.000Z'), // 13:00 New York
+      );
+      expect(byDay.asked).toBe(true);
+      await prisma.callout.deleteMany({});
+
+      // A crew filed for tonight, with the two seats that can roll.
+      const night = toDbDate('2026-09-13');
+      const crew = await prisma.crew.upsert({
+        where: { date: night },
+        create: { date: night },
+        update: {},
+      });
+      await prisma.crewSlot.deleteMany({ where: { crewId: crew.id } });
+      await prisma.crewSlot.createMany({
+        data: [
+          { crewId: crew.id, position: 'CC', memberId: alice },
+          { crewId: crew.id, position: 'DRIVER', memberId: bob },
+        ],
+      });
+      const atNight = await air.page(
+        `Night ${stamp}`,
+        'DISPATCH',
+        new Date('2026-09-14T03:00:00.000Z'), // 23:00 New York
+      );
+      expect(atNight.asked).toBe(false);
+
+      await prisma.crewSlot.deleteMany({ where: { crewId: crew.id } });
+      await prisma.crew.delete({ where: { id: crew.id } });
+    });
+
+    it('records who answered, and lets them change their mind', async () => {
+      const callout = await air.page(
+        `Answers ${stamp}`,
+        'DISPATCH',
+        new Date('2026-09-13T17:00:00.000Z'),
+      );
+      await prisma.member.update({
+        where: { id: alice },
+        data: { slackId: `U${stamp}`.slice(0, 11) },
+      });
+
+      const yes = await air.respond({
+        calloutId: callout.id,
+        slackUserId: `U${stamp}`.slice(0, 11),
+        responding: true,
+        now: new Date(callout.openedAt.getTime() + 60_000),
+      });
+      expect(yes.ok).toBe(true);
+
+      const changed = await air.respond({
+        calloutId: callout.id,
+        slackUserId: `U${stamp}`.slice(0, 11),
+        responding: false,
+        now: new Date(callout.openedAt.getTime() + 120_000),
+      });
+      expect(changed.ok).toBe(true);
+
+      // One answer per person, attributed to the member behind the Slack id.
+      const responses = await prisma.calloutResponse.findMany({
+        where: { calloutId: callout.id },
+      });
+      expect(responses).toHaveLength(1);
+      expect(responses[0].responding).toBe(false);
+      expect(responses[0].memberId).toBe(alice);
+
+      // And after the window, the same kindness AIR showed.
+      const late = await air.respond({
+        calloutId: callout.id,
+        slackUserId: `U${stamp}`.slice(0, 11),
+        responding: true,
+        now: new Date(callout.openedAt.getTime() + 30 * 60_000),
+      });
+      expect(late.ok).toBe(false);
+      expect(late.reason).toContain('too long after');
+      await prisma.member.update({
+        where: { id: alice },
+        data: { slackId: null },
+      });
+    });
+
+    it('never asks about a longtone', async () => {
+      const callout = await air.page(
+        `Longtone ${stamp}`,
+        'LONGTONE',
+        new Date('2026-09-13T17:00:00.000Z'),
+      );
+      expect(callout.asked).toBe(false);
+      const refused = await air.respond({
+        calloutId: callout.id,
+        slackUserId: 'U-anyone',
+        responding: true,
+      });
+      expect(refused.ok).toBe(false);
     });
   });
 

@@ -132,6 +132,7 @@ model Member {
   standbyUnitsCreated      StandbyUnit[]                    @relation("StandbyUnitCreatedBy")
   encountersCreated        Encounter[]                      @relation("EncounterCreatedBy")
   encountersVoided         Encounter[]                      @relation("EncounterVoidedBy")
+  calloutResponses         CalloutResponse[]                @relation("CalloutResponder")
   standbyTimelineActions   StandbyTimelineEntry[]           @relation("StandbyTimelineActor")
 }
 
@@ -1256,9 +1257,71 @@ model Dispatch {
   /// which are what the pager actually said.
   enteredById    Int?
 
-  enteredBy Member? @relation("DispatchEnteredBy", fields: [enteredById], references: [id])
+  enteredBy Member?  @relation("DispatchEnteredBy", fields: [enteredById], references: [id])
+  callout   Callout?
 
   @@index([receivedAt])
+}
+
+/// AIR — "am I responding". A page and a dispatch are two signals for one
+/// call, and neither reliably arrives first, so whichever does opens the
+/// callout and the other joins it.
+enum CalloutKind {
+  DISPATCH
+  /// A county longtone. Posted for awareness; nobody is asked to respond.
+  LONGTONE
+}
+
+/// One call members were told about, and who said they were coming.
+model Callout {
+  id       Int         @id @default(autoincrement())
+  openedAt DateTime    @default(now())
+  kind     CalloutKind @default(DISPATCH)
+
+  /// The line the pager sent. Null on a callout Herald opened, until a page
+  /// arrives to join it — the page is the only thing that carries this text.
+  pageText   String?
+  pagedAt    DateTime?
+  /// Herald's record of the same call, when it has arrived. The dispatch is
+  /// the data; this is the asking. Neither owns the other.
+  dispatchId Int?      @unique
+
+  /// Whether anybody was asked. False when a crew was already on the road,
+  /// which is posted as a notice instead.
+  asked    Boolean  @default(false)
+  /// Presses after this are turned down, kindly. A response an hour later
+  /// is not information about who is going.
+  closesAt DateTime
+
+  /// Where the message is, so it can be edited in place as answers land.
+  slackChannel String?
+  slackTs      String?
+
+  dispatch  Dispatch?         @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
+  responses CalloutResponse[]
+
+  @@index([openedAt])
+}
+
+model CalloutResponse {
+  id          Int      @id @default(autoincrement())
+  calloutId   Int
+  /// Null when whoever pressed has no member record linked to their Slack
+  /// account. The press still counts — it is somebody saying they are
+  /// coming — it just cannot be attributed.
+  memberId    Int?
+  /// Who pressed, as Slack knows them, and the key for changing an answer.
+  slackUserId String
+  /// What Slack calls them, kept only for an unlinked presser.
+  slackName   String?
+  responding  Boolean
+  at          DateTime @default(now())
+
+  callout Callout @relation(fields: [calloutId], references: [id], onDelete: Cascade)
+  member  Member? @relation("CalloutResponder", fields: [memberId], references: [id])
+
+  @@unique([calloutId, slackUserId])
+  @@index([memberId])
 }
 
 // ---------------------------------------------------------------------------

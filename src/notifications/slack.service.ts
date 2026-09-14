@@ -168,7 +168,12 @@ export class SlackService {
     Array<{ key: string; channel: string; ok: boolean; detail: string }>
   > {
     const config = await this.settings();
-    const out: Array<{ key: string; channel: string; ok: boolean; detail: string }> = [];
+    const out: Array<{
+      key: string;
+      channel: string;
+      ok: boolean;
+      detail: string;
+    }> = [];
     if (!config.botToken) return out;
 
     for (const [key, channel] of Object.entries(config.channels)) {
@@ -181,7 +186,11 @@ export class SlackService {
         const data = (await res.json()) as {
           ok: boolean;
           error?: string;
-          channel?: { name?: string; is_private?: boolean; is_member?: boolean };
+          channel?: {
+            name?: string;
+            is_private?: boolean;
+            is_member?: boolean;
+          };
         };
         if (!data.ok) {
           out.push({
@@ -253,7 +262,9 @@ export class SlackService {
         // Same as postTo: join a public channel and try once more, and say
         // what to do about a private one.
         if (await this.joinChannel(channel)) {
-          return this.postReturning(channelKey, text, blocks, { retried: true });
+          return this.postReturning(channelKey, text, blocks, {
+            retried: true,
+          });
         }
         this.logger.error(
           `slack: not in ${channel} and could not join it. If it is private, ` +
@@ -269,6 +280,28 @@ export class SlackService {
     } catch (error) {
       this.logger.error(`slack post to ${channel} failed: ${String(error)}`);
       return null;
+    }
+  }
+
+  /**
+   * Answers one person, in the channel, visible only to them.
+   *
+   * Slack hands every interaction a response_url that accepts an ephemeral
+   * reply for thirty minutes without a token. Used for telling somebody
+   * their press came too late — which is between them and the bot, and not
+   * worth a line in a channel everybody else is reading.
+   */
+  async respondPrivately(responseUrl: string, text: string): Promise<boolean> {
+    try {
+      const res = await fetch(responseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ response_type: 'ephemeral', text }),
+      });
+      return res.ok;
+    } catch (error) {
+      this.logger.error(`slack ephemeral reply failed: ${String(error)}`);
+      return false;
     }
   }
 

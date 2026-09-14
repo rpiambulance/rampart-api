@@ -9,6 +9,22 @@ export type HeadsupEvent =
       complaint: string | null;
       location: string | null;
       receivedAt: string;
+    }
+  /**
+   * Who has said they are coming, redrawn every time somebody answers.
+   *
+   * Carries the roster rather than a "go and look" so the screen can fill in
+   * a name the moment it lands — the whole point of it being on a wall is
+   * that somebody walking past sees the answer without asking for it.
+   */
+  | {
+      kind: 'responders';
+      calloutId: number;
+      asked: boolean;
+      headline: string;
+      openedAt: string;
+      closesAt: string;
+      responders: Array<{ name: string; responding: boolean }>;
     };
 
 /**

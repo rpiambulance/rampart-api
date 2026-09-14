@@ -3,6 +3,7 @@ import { AccessLogService } from '../audit/access-log.service';
 import { AuditService } from '../audit/audit.service';
 import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { GoogleCalendarService } from '../integrations/google-calendar.service';
+import { HeadsupEvents } from '../headsup/headsup.events';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PermissionHoldersService } from '../permissions/permission-holders.service';
@@ -21,6 +22,7 @@ import { UnlinkedLoginService } from '../auth/unlinked-login.service';
     AuditService,
     CredentialGraphService,
     GoogleCalendarService,
+    HeadsupEvents,
     KeycloakAdminService,
     NotificationsService,
     PermissionHoldersService,
@@ -37,6 +39,7 @@ import { UnlinkedLoginService } from '../auth/unlinked-login.service';
     AuditService,
     CredentialGraphService,
     GoogleCalendarService,
+    HeadsupEvents,
     KeycloakAdminService,
     NotificationsService,
     PermissionHoldersService,

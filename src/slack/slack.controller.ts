@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { AirService } from '../air/air.service';
 import { Public } from '../auth/public.decorator';
 import { ChoresService } from '../chores/chores.service';
 import { whosOnReply } from '../crews/whoson';
@@ -31,6 +32,7 @@ interface SlashCommand {
 @Controller({ path: 'slack', version: '1' })
 export class SlackController {
   constructor(
+    private readonly air: AirService,
     private readonly chores: ChoresService,
     private readonly links: SlackLinkService,
     private readonly prisma: PrismaService,
@@ -124,7 +126,8 @@ export class SlackController {
     if (!raw) return;
 
     let payload: {
-      user?: { id?: string };
+      user?: { id?: string; name?: string };
+      response_url?: string;
       actions?: Array<{ action_id?: string; value?: string }>;
     };
     try {
@@ -135,6 +138,30 @@ export class SlackController {
 
     for (const action of payload.actions ?? []) {
       const id = action.action_id ?? '';
+
+      // air:yes:<callout> / air:no:<callout>. The callout is carried in the
+      // id so a press is unambiguous however many calls are on the channel.
+      if (id.startsWith('air:')) {
+        const [, answer, rawCallout] = id.split(':');
+        const calloutId = Number(rawCallout);
+        if (!Number.isInteger(calloutId) || !payload.user?.id) continue;
+        const result = await this.air.respond({
+          calloutId,
+          slackUserId: payload.user.id,
+          slackName: payload.user.name ?? null,
+          responding: answer === 'yes',
+        });
+        // Refused presses are answered privately: the channel does not need
+        // to hear that somebody replied to a call that has moved on.
+        if (!result.ok && result.reason && payload.response_url) {
+          await this.slack.respondPrivately(
+            payload.response_url,
+            result.reason,
+          );
+        }
+        continue;
+      }
+
       if (!id.startsWith('chore:')) continue;
       const occurrenceId = Number(id.slice('chore:'.length));
       if (!Number.isInteger(occurrenceId)) continue;
