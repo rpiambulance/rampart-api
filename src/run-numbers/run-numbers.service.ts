@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -271,59 +270,9 @@ export class RunNumbersService {
     return issued;
   }
 
-  async upsertLocation(
-    auth: AuthContext,
-    data: {
-      id?: number;
-      name: string;
-      abbr: string;
-      active?: boolean;
-      nextRun?: number;
-    },
-  ) {
-    const abbr = data.abbr.trim().toUpperCase();
-    if (!/^[A-Z0-9']{1,8}$/.test(abbr)) {
-      throw new BadRequestException(
-        'An abbreviation is up to eight letters or digits',
-      );
-    }
-    const clash = await this.prisma.place.findUnique({
-      where: { abbr },
-    });
-    if (clash && clash.id !== data.id) {
-      throw new ConflictException(`${abbr} is already in use`);
-    }
-
-    const location = data.id
-      ? await this.prisma.place.update({
-          where: { id: data.id },
-          data: {
-            name: data.name.trim(),
-            abbr,
-            ...(data.active === undefined ? {} : { active: data.active }),
-            ...(data.nextRun === undefined
-              ? {}
-              : { nextRun: Math.max(1, data.nextRun) }),
-          },
-        })
-      : await this.prisma.place.create({
-          data: {
-            name: data.name.trim(),
-            abbr,
-            active: data.active ?? true,
-            nextRun: Math.max(1, data.nextRun ?? 1),
-          },
-        });
-
-    await this.audit.log(
-      auth,
-      data.id ? 'run-number.location.update' : 'run-number.location.create',
-      'RunNumberLocation',
-      location.id,
-      { name: location.name, abbr: location.abbr, nextRun: location.nextRun },
-    );
-    return location;
-  }
+  // Editing a place — its name, its letter, the counter — lives with the
+  // places, because a place is not only a run-number counter. See
+  // PlacesService, which keeps the letter behind run-numbers:manage.
 
   async saveDivisions(auth: AuthContext, config: DivisionConfig) {
     // Through `unknown`: a plain `as object` is stripped by the lint rule for

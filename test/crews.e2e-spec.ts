@@ -3143,6 +3143,100 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // One list of places, one set of routes that edit it — and the two fields
+  // a run number is made of stay behind the run-number permission.
+  describe('places', () => {
+    let placeId: number;
+
+    afterAll(async () => {
+      await prisma.place.deleteMany({ where: { name: `Field House ${stamp}` } });
+      await prisma.place.deleteMany({ where: { abbr: `Z${stamp}`.slice(0, 8) } });
+    });
+
+    it('creates a place without touching run numbers', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/places')
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write')
+        .send({ name: `Field House ${stamp}`, address: 'Burdett Ave' })
+        .expect(201);
+      placeId = res.body.id;
+      expect(res.body.abbr).toBeNull();
+    });
+
+    it('will not let settings:write alone give a place a letter', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/places/${placeId}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write')
+        .send({ abbr: 'ZZ' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .patch(`/v1/places/${placeId}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write')
+        .send({ nextRun: 99 })
+        .expect(403);
+    });
+
+    it('takes the letter and the counter with run-numbers:manage', async () => {
+      const abbr = `Z${stamp}`.slice(0, 8);
+      const res = await request(app.getHttpServer())
+        .patch(`/v1/places/${placeId}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write,run-numbers:manage')
+        .send({ abbr, nextRun: 12 })
+        .expect(200);
+      expect(res.body.abbr).toBe(abbr.toUpperCase());
+      expect(res.body.nextRun).toBe(12);
+    });
+
+    it('refuses a letter already in use, and a place filing under itself', async () => {
+      await request(app.getHttpServer())
+        .patch(`/v1/places/${placeId}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write,run-numbers:manage')
+        .send({ abbr: 'T' })
+        .expect(409);
+      await request(app.getHttpServer())
+        .patch(`/v1/places/${placeId}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write')
+        .send({ parentId: placeId })
+        .expect(400);
+    });
+
+    it('names the spots inside it, and retires one', async () => {
+      const spot = await request(app.getHttpServer())
+        .post(`/v1/places/${placeId}/spots`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write')
+        .send({ name: 'North Stand' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .delete(`/v1/places/spots/${spot.body.id}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'settings:write')
+        .expect(200);
+      const retired = await prisma.placeSpot.findUniqueOrThrow({
+        where: { id: spot.body.id },
+      });
+      expect(retired.active).toBe(false);
+    });
+
+    // Reading is what every picker in the portal does.
+    it('lists places to anybody signed in', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/places')
+        .set(as(bob))
+        .set('x-test-permissions', '')
+        .expect(200);
+      expect(
+        (res.body as Array<{ id: number }>).some((p) => p.id === placeId),
+      ).toBe(true);
+    });
+  });
+
   // AIR: the page asks who is coming, Herald says what the call is, and
   // neither reliably arrives first.
   describe('am I responding', () => {

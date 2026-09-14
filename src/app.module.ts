@@ -52,6 +52,7 @@ import { EventsModule } from './events/events.module';
 import { HealthController } from './health/health.controller';
 import { MembersModule } from './members/members.module';
 import { OpsController } from './ops/ops.controller';
+import { PlacesModule } from './places/places.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { RolesModule } from './roles/roles.module';
@@ -79,6 +80,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     PromotionsModule,
     TrainingsModule,
     AirModule,
+    PlacesModule,
   ],
   controllers: [
     HealthController,

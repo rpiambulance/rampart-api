@@ -1,12 +1,5 @@
 import { Body, Controller, Get, Post, Put, Query } from '@nestjs/common';
-import {
-  IsArray,
-  IsBoolean,
-  IsInt,
-  IsOptional,
-  IsString,
-  Min,
-} from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsString } from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -30,27 +23,6 @@ class IssueDto {
   @IsOptional()
   @IsInt()
   eventId?: number;
-}
-
-class LocationDto {
-  @IsOptional()
-  @IsInt()
-  id?: number;
-
-  @IsString()
-  name!: string;
-
-  @IsString()
-  abbr!: string;
-
-  @IsOptional()
-  @IsBoolean()
-  active?: boolean;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  nextRun?: number;
 }
 
 class DivisionsDto {
@@ -95,12 +67,6 @@ export class RunNumbersController {
       note: body.note,
       eventId: body.eventId,
     });
-  }
-
-  @Put('locations')
-  @RequirePermissions(PERMISSIONS.RUN_NUMBERS_MANAGE)
-  saveLocation(@CurrentAuth() auth: AuthContext, @Body() body: LocationDto) {
-    return this.runNumbers.upsertLocation(auth, body);
   }
 
   /** Undo a changeover settled by mistake, so this month asks again. */
