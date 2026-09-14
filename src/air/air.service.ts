@@ -114,6 +114,22 @@ export class AirService {
   }
 
   /**
+   * When the call this dispatch belongs to actually happened.
+   *
+   * The tones are the call. If a page opened a callout minutes ago, that
+   * moment is the time of the call and Herald's arrival is only when the
+   * paperwork caught up — so the dispatch is filed under the earlier one,
+   * and everything counting or searching by time agrees with the pager.
+   *
+   * Asked before the dispatch row is written, so nothing has to be
+   * corrected afterwards.
+   */
+  async callTime(now = new Date()): Promise<Date> {
+    const open = await this.openCalloutNear(now, 'DISPATCH');
+    return open && !open.dispatchId ? open.openedAt : now;
+  }
+
+  /**
    * Herald filed a dispatch. Either it is the call a page already opened, or
    * it is the first anybody here has heard of it.
    */
@@ -122,7 +138,7 @@ export class AirService {
     if (existing && !existing.dispatchId) {
       const joined = await this.prisma.callout.update({
         where: { id: existing.id },
-        data: { dispatchId: dispatch.id },
+        data: { dispatchId: dispatch.id, dispatchAt: now },
         include: RESPONSES_INCLUDE,
       });
       // The ask went out with one line of pager text; now it can say what
@@ -138,6 +154,7 @@ export class AirService {
       pageText: null,
       pagedAt: null,
       dispatchId: dispatch.id,
+      dispatchAt: now,
     });
     await this.adoptOrphanAudio(callout.id, now);
     await this.render(callout.id);
@@ -364,6 +381,7 @@ export class AirService {
     pageText: string | null;
     pagedAt: Date | null;
     dispatchId: number | null;
+    dispatchAt?: Date | null;
   }) {
     const crew = await this.crewTonight(input.now);
     const asked = shouldAsk({ kind: input.kind, crew, now: input.now });
@@ -374,6 +392,7 @@ export class AirService {
         pageText: input.pageText,
         pagedAt: input.pagedAt,
         dispatchId: input.dispatchId,
+        dispatchAt: input.dispatchAt ?? null,
         asked,
         closesAt: new Date(
           input.now.getTime() + RESPONSE_WINDOW_MINUTES * 60_000,

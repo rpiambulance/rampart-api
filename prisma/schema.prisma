@@ -1282,6 +1282,10 @@ model Callout {
   /// arrives to join it — the page is the only thing that carries this text.
   pageText   String?
   pagedAt    DateTime?
+  /// When Herald's dispatch landed, which is not when the call happened if
+  /// the tones beat it here. Kept so the record can still say when each
+  /// signal arrived, while openedAt stays the time of the call itself.
+  dispatchAt DateTime?
   /// Herald's record of the same call, when it has arrived. The dispatch is
   /// the data; this is the asking. Neither owns the other.
   dispatchId Int?      @unique

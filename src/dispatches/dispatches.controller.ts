@@ -115,8 +115,15 @@ export class DispatchesController {
       complaint?: unknown;
     };
 
+    // The tones are the call. When a page opened a callout minutes ago,
+    // that is when this happened — Herald arriving later is the paperwork
+    // catching up, and the log, the counts and anything searched by date
+    // should all say the earlier time.
+    const receivedAt = await this.air.callTime(new Date());
+
     const dispatch = await this.prisma.dispatch.create({
       data: {
+        receivedAt,
         determinant: str(callType.determinant),
         complaint: str(callType.complaint) ?? str(body['Call Type']),
         location: str(body['Location']),

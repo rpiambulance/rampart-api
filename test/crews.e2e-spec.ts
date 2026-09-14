@@ -3243,6 +3243,45 @@ describe('Night crews engine (e2e)', () => {
       await prisma.dispatch.delete({ where: { id: dispatch.id } });
     });
 
+    // The tones are the call: a dispatch that lands afterwards is filed
+    // under the moment the page arrived, not its own.
+    it('files a late dispatch under the time the tones dropped', async () => {
+      const tones = new Date(Date.now() - 3 * 60_000);
+      const paged = await air.page(`Timing ${stamp}`, 'DISPATCH', tones);
+
+      const receivedAt = await air.callTime(new Date());
+      expect(receivedAt.getTime()).toBe(paged.openedAt.getTime());
+
+      const dispatch = await prisma.dispatch.create({
+        data: {
+          receivedAt,
+          complaint: `Timing ${stamp}`,
+          raw: { source: 'test' },
+        },
+      });
+      const joined = await air.dispatched({
+        id: dispatch.id,
+        determinant: 'Bravo',
+        complaint: dispatch.complaint,
+        location: null,
+        units: null,
+        receivedAt: dispatch.receivedAt,
+      });
+      expect(joined.id).toBe(paged.id);
+      // Both signals are still on the record, each with its own moment.
+      expect(joined.dispatchAt).not.toBeNull();
+      expect(joined.dispatchAt!.getTime()).toBeGreaterThan(
+        joined.openedAt.getTime(),
+      );
+      await prisma.dispatch.delete({ where: { id: dispatch.id } });
+    });
+
+    it('gives a dispatch its own time when nothing paged', async () => {
+      const now = new Date();
+      const receivedAt = await air.callTime(now);
+      expect(receivedAt.getTime()).toBe(now.getTime());
+    });
+
     it('joins them in the other order too', async () => {
       const dispatch = await prisma.dispatch.create({
         data: { complaint: `Fall ${stamp}`, raw: { source: 'test' } },
