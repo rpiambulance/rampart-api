@@ -779,6 +779,7 @@ export class Ems2Service {
       turnoverAgency: string | null;
       firstAidOnly: boolean;
       runNumberId: number | null;
+      runNumberText: string | null;
       countyRunNumber: string | null;
       prid: string | null;
       locationId: number | null;
@@ -1020,7 +1021,8 @@ export class Ems2Service {
         sequence: encounter.sequence,
         category: encounter.category,
         disposition: encounter.disposition,
-        runNumber: encounter.runNumber?.number ?? null,
+        runNumber:
+          encounter.runNumber?.number ?? encounter.runNumberText ?? null,
       },
     });
     await this.prisma.encounter.delete({ where: { id: encounterId } });
@@ -1038,8 +1040,13 @@ export class Ems2Service {
     locationId: number,
   ) {
     const encounter = await this.mineOrVisible(auth, standbyId, encounterId);
-    if (encounter.runNumberId) {
-      throw new BadRequestException('This encounter already has a run number.');
+    // Either kind counts as having one. Issuing over a number somebody has
+    // already written down burns one out of our sequence for nothing.
+    if (encounter.runNumberId || encounter.runNumberText?.trim()) {
+      throw new BadRequestException(
+        'This encounter already has a run number. Clear it first if it needs ' +
+          'one from our own pool instead.',
+      );
     }
     const standby = await this.prisma.standbyLog.findUniqueOrThrow({
       where: { id: standbyId },

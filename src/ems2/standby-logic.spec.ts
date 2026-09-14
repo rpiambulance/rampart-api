@@ -247,6 +247,38 @@ describe('one supervisor in charge', () => {
   });
 });
 
+describe('a run number from somewhere else', () => {
+  // A transport often carries the county's number and nothing of ours.
+  it('satisfies the run-number rule when it was written down', () => {
+    const typed = encounter({
+      runNumberId: null,
+      runNumberText: '26-014882',
+      prid: 'PR-2',
+    });
+    expect(blockingProblems(typed)).toEqual([]);
+  });
+
+  it('still asks for a PRID, whoever issued the number', () => {
+    expect(
+      blockingProblems(
+        encounter({
+          runNumberId: null,
+          runNumberText: '26-014882',
+          prid: null,
+        }),
+      ).map((p) => p.field),
+    ).toEqual(['prid']);
+  });
+
+  it('is not satisfied by an empty box', () => {
+    expect(
+      blockingProblems(
+        encounter({ runNumberId: null, runNumberText: '   ' }),
+      ).map((p) => p.field),
+    ).toEqual(['runNumberId']);
+  });
+});
+
 describe('voided encounters', () => {
   const base = {
     category: 'MINOR_INJURY' as const,

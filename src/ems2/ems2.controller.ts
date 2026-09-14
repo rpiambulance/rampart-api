@@ -148,6 +148,7 @@ class EncounterPatchDto {
   @IsOptional() @IsString() @MaxLength(200) turnoverAgency?: string | null;
   @IsOptional() @IsBoolean() firstAidOnly?: boolean;
   @IsOptional() @IsInt() runNumberId?: number | null;
+  @IsOptional() @IsString() @MaxLength(40) runNumberText?: string | null;
   @IsOptional() @IsString() @MaxLength(40) countyRunNumber?: string | null;
   @IsOptional() @IsString() @MaxLength(60) prid?: string | null;
   @IsOptional() @IsInt() locationId?: number | null;
@@ -522,9 +523,18 @@ export class Ems2Controller {
   // -------------------------------------------------------------- the kit
 
   /** Venues, their insides, unit designators and hospitals. */
+  /**
+   * Everything the board needs to fill a picker with.
+   *
+   * The roster is here rather than behind members:read because naming who
+   * is working a standby is part of running one: a crew chief adding the
+   * person who just turned up should not need the permission that opens the
+   * member directory. Names only — enough to pick somebody, and nothing
+   * else about them.
+   */
   @Get('config/all')
   async config() {
-    const [venues, designators, hospitals] = await Promise.all([
+    const [venues, designators, hospitals, members] = await Promise.all([
       this.prisma.venue.findMany({
         where: { active: true },
         include: {
@@ -540,7 +550,17 @@ export class Ems2Controller {
         where: { active: true },
         orderBy: { name: 'asc' },
       }),
+      this.prisma.member.findMany({
+        where: { active: true },
+        select: {
+          id: true,
+          firstName: true,
+          preferredFirstName: true,
+          lastName: true,
+        },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      }),
     ]);
-    return { venues, designators, hospitals };
+    return { venues, designators, hospitals, members };
   }
 }

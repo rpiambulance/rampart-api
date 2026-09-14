@@ -116,7 +116,9 @@ export class Ems2ExportService {
       at: e.openedAt,
       initials: e.patientInitials,
       prid: e.prid,
-      runNumber: e.runNumber?.number ?? null,
+      // Ours when we issued one, and whatever was written down when the
+      // number came from somewhere else.
+      runNumber: e.runNumber?.number ?? e.runNumberText ?? null,
       countyRunNumber: e.countyRunNumber,
       chiefComplaint: e.chiefComplaint,
       category: e.category,
@@ -243,7 +245,8 @@ export class Ems2ExportService {
           at: encounter.openedAt,
           initials: encounter.patientInitials,
           prid: encounter.prid,
-          runNumber: encounter.runNumber?.number ?? null,
+          runNumber:
+            encounter.runNumber?.number ?? encounter.runNumberText ?? null,
           countyRunNumber: encounter.countyRunNumber,
           chiefComplaint: encounter.chiefComplaint,
           category: encounter.category,

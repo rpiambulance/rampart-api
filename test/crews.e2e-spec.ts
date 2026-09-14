@@ -3919,6 +3919,39 @@ describe('Night crews engine (e2e)', () => {
       expect(JSON.stringify(closed.body.advisories)).toContain('county');
     });
 
+    // A transport often carries the county's number and nothing of ours.
+    it('closes on a run number that came from somewhere else', async () => {
+      const opened = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters`)
+        .set(sup())
+        .send({})
+        .expect(201);
+      const id = opened.body.id as number;
+      await request(app.getHttpServer())
+        .patch(`/v1/standbys/${standbyId}/encounters/${id}`)
+        .set(sup())
+        .send({
+          category: 'MAJOR_INJURY',
+          disposition: 'TRANSPORTED',
+          patientInitials: 'RS',
+          runNumberText: `26-0${stamp}`.slice(0, 12),
+          prid: 'PR-9',
+        })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
+        .set(sup())
+        .expect(201);
+
+      // And ours is not issued over the top of it.
+      const refused = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/encounters/${id}/run-number`)
+        .set({ ...sup(), 'x-test-permissions': 'standbys:manage,run-numbers:manage' })
+        .send({ locationId: runLocationId })
+        .expect(400);
+      expect(refused.body.message).toContain('already has a run number');
+    });
+
     it('will not hold anything longer than initials', async () => {
       const opened = await request(app.getHttpServer())
         .post(`/v1/standbys/${standbyId}/encounters`)

@@ -22,9 +22,16 @@ export interface EncounterShape {
   died: boolean;
   intoxicationSigns: boolean;
   runNumberId?: number | null;
+  /** A number that did not come from our pool — the county's, usually. */
+  runNumberText?: string | null;
   countyRunNumber?: string | null;
   prid?: string | null;
   patientInitials?: string | null;
+}
+
+/** A run number, from our own pool or written down from somebody else's. */
+export function hasRunNumber(encounter: EncounterShape): boolean {
+  return Boolean(encounter.runNumberId || encounter.runNumberText?.trim());
 }
 
 export interface Problem {
@@ -54,7 +61,11 @@ export function encounterProblems(encounter: EncounterShape): Problem[] {
 
   // The rule you asked for: everything past an ice pack gets a run number,
   // and the exemption is a deliberate tick rather than a blank nobody filled.
-  if (!encounter.firstAidOnly && !encounter.runNumberId) {
+  //
+  // Either kind counts. A transport often carries the county's number and
+  // nothing of ours, and an encounter written up against it is not missing
+  // anything.
+  if (!encounter.firstAidOnly && !hasRunNumber(encounter)) {
     problems.push({
       field: 'runNumberId',
       message:
@@ -82,7 +93,7 @@ export function encounterProblems(encounter: EncounterShape): Problem[] {
   }
 
   // A run number of any kind means a patient record exists somewhere.
-  if (encounter.runNumberId && !encounter.prid?.trim()) {
+  if (hasRunNumber(encounter) && !encounter.prid?.trim()) {
     problems.push({
       field: 'prid',
       message:

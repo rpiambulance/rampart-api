@@ -2320,6 +2320,12 @@ model Encounter {
   /// a deliberate tick rather than a blank field nobody filled in.
   firstAidOnly    Boolean @default(false)
   runNumberId     Int?
+  /// The number written on this encounter when it did not come from our own
+  /// pool: issued by the county on a transport, given over the radio before
+  /// anybody opened the portal, or another agency's on a turnover. Held
+  /// beside the link rather than instead of it, so a number this agency
+  /// issued still reconciles with the run-number log.
+  runNumberText   String?
   /// Issued by the county, for transports and turnovers.
   countyRunNumber String?
   /// Patient record identifier, from whatever wrote the actual care report.
