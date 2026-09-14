@@ -15,6 +15,39 @@ import {
  * deployment configured the old way keeps working and moving to the console
  * is a matter of saving the form once.
  */
+/**
+ * What Slack's error means, for somebody who did not write this.
+ *
+ * Raw codes are the thing this check exists to avoid: "missing_scope" in a
+ * table of channels tells whoever configured it nothing about which scope,
+ * on which channel, or whether anything is actually broken.
+ */
+function describeChannelError(error?: string): string {
+  switch (error) {
+    case 'channel_not_found':
+      return 'No such channel, or the bot cannot see it. A private channel is invisible until the bot is invited.';
+    case 'missing_scope':
+      // conversations.info reads public channels with channels:read and
+      // private ones with groups:read. Posting needs neither — a bot that
+      // is in a private channel can post to it with chat:write alone — so
+      // this is usually a channel that works with a status nobody can read.
+      return (
+        'The app cannot look this channel up: a private channel needs the ' +
+        'groups:read scope and a public one needs channels:read. Posting ' +
+        'does not need either, so messages may well be arriving — reinstall ' +
+        'the app with the scope to see for certain.'
+      );
+    case 'token_revoked':
+    case 'invalid_auth':
+    case 'account_inactive':
+      return 'The bot token is no longer good. Reinstall the app and save the new token.';
+    case undefined:
+      return 'unknown error';
+    default:
+      return error;
+  }
+}
+
 @Injectable()
 export class SlackService {
   private readonly logger = new Logger(SlackService.name);
@@ -203,10 +236,7 @@ export class SlackService {
             key,
             channel,
             ok: false,
-            detail:
-              data.error === 'channel_not_found'
-                ? 'No such channel, or the bot cannot see it. A private channel is invisible until the bot is invited.'
-                : (data.error ?? 'unknown error'),
+            detail: describeChannelError(data.error),
           });
           continue;
         }
