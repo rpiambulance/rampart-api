@@ -33,9 +33,9 @@ const STANDBY_INCLUDE = {
   event: {
     select: { id: true, title: true, startsAt: true, endsAt: true, kind: true },
   },
-  venue: {
+  place: {
     include: {
-      locations: { where: { active: true }, orderBy: { order: 'asc' } },
+      spots: { where: { active: true }, orderBy: { order: 'asc' } },
     },
   },
   personnel: {
@@ -111,7 +111,7 @@ export class Ems2Service {
   async open(
     auth: AuthContext,
     input:
-      | { eventId: number; venueId?: number }
+      | { eventId: number; placeId?: number }
       | {
           event: {
             title: string;
@@ -119,7 +119,7 @@ export class Ems2Service {
             endsAt: string;
             kindId: number;
           };
-          venueId?: number;
+          placeId?: number;
         },
   ) {
     // Something happened that nobody put on the calendar. The event is made
@@ -145,7 +145,7 @@ export class Ems2Service {
               },
             })
           ).id;
-    const venueId = input.venueId;
+    const placeId = input.placeId;
 
     const existing = await this.prisma.standbyLog.findUnique({
       where: { eventId },
@@ -162,7 +162,7 @@ export class Ems2Service {
     const standby = await this.prisma.standbyLog.create({
       data: {
         eventId,
-        venueId: venueId ?? null,
+        placeId: placeId ?? null,
         createdById: memberId,
         sponsorOperator: 'RPI Ambulance',
         personnel: {
@@ -254,7 +254,7 @@ export class Ems2Service {
       take: Math.min(limit, 200),
       include: {
         event: { select: { id: true, title: true, startsAt: true } },
-        venue: { select: { id: true, name: true } },
+        place: { select: { id: true, name: true } },
         _count: { select: { encounters: true, personnel: true, units: true } },
       },
     });
@@ -264,8 +264,8 @@ export class Ems2Service {
     auth: AuthContext,
     id: number,
     data: {
-      venueId?: number | null;
-      venueText?: string | null;
+      placeId?: number | null;
+      placeText?: string | null;
       startedAt?: string | null;
       endedAt?: string | null;
       totalAttendance?: number | null;
@@ -571,7 +571,7 @@ export class Ems2Service {
       // The place is named in the entry, not only pointed at: a location
       // renamed or retired next season should not rewrite last season's log.
       const location = unit.currentLocationId
-        ? await this.prisma.venueLocation.findUnique({
+        ? await this.prisma.placeSpot.findUnique({
             where: { id: unit.currentLocationId },
             select: { name: true },
           })
@@ -1032,12 +1032,31 @@ export class Ems2Service {
   /**
    * Issues a run number for an encounter, from the same pool as everything
    * else, tagged to the event so it reconciles with the run-number log.
+   *
+   * Nobody says where from. The standby is worked at a place, and a place
+   * either carries the abbreviation or files under one that does, so the
+   * counter follows from the standby. A standby with no place at all — one
+   * opened for something ad-hoc before anybody named where it is — falls
+   * back to the only counter there is, and asks when there is more than
+   * one, because picking the wrong town's sequence is not recoverable.
    */
+  private async onlyCounter(): Promise<number> {
+    const counters = await this.runNumbers.counters();
+    if (counters.length === 1) return counters[0].id;
+    throw new BadRequestException(
+      counters.length
+        ? 'This standby has no place on it, so there is nothing to say which ' +
+            'run numbers it counts against. Set the place, or say which one.'
+        : 'No place has a run-number abbreviation yet, so there is no ' +
+            'sequence to take a number from.',
+    );
+  }
+
   async issueRunNumber(
     auth: AuthContext,
     standbyId: number,
     encounterId: number,
-    locationId: number,
+    placeId?: number,
   ) {
     const encounter = await this.mineOrVisible(auth, standbyId, encounterId);
     // Either kind counts as having one. Issuing over a number somebody has
@@ -1050,9 +1069,10 @@ export class Ems2Service {
     }
     const standby = await this.prisma.standbyLog.findUniqueOrThrow({
       where: { id: standbyId },
-      select: { eventId: true },
+      select: { eventId: true, placeId: true },
     });
-    const issued = await this.runNumbers.issue(auth, locationId, {
+    const from = placeId ?? standby.placeId ?? (await this.onlyCounter());
+    const issued = await this.runNumbers.issue(auth, from, {
       eventId: standby.eventId,
       note: `Standby encounter #${encounter.sequence}`,
     });
@@ -1151,7 +1171,7 @@ export class Ems2Service {
           where: { standbyId },
           select: { id: true, sequence: true },
         }),
-        this.prisma.venueLocation.findMany({
+        this.prisma.placeSpot.findMany({
           select: { id: true, name: true },
         }),
       ]);

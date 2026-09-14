@@ -78,12 +78,12 @@ class OpenStandbyDto {
   @ValidateNested()
   @Type(() => AdHocEventDto)
   event?: AdHocEventDto;
-  @IsOptional() @IsInt() venueId?: number;
+  @IsOptional() @IsInt() placeId?: number;
 }
 
 class UpdateStandbyDto {
-  @IsOptional() @IsInt() venueId?: number | null;
-  @IsOptional() @IsString() @MaxLength(200) venueText?: string | null;
+  @IsOptional() @IsInt() placeId?: number | null;
+  @IsOptional() @IsString() @MaxLength(200) placeText?: string | null;
   @IsOptional() @IsDateString() startedAt?: string | null;
   @IsOptional() @IsDateString() endedAt?: string | null;
   @IsOptional() @IsInt() @Min(0) totalAttendance?: number | null;
@@ -156,7 +156,11 @@ class EncounterPatchDto {
 }
 
 class IssueRunNumberDto {
-  @IsInt() locationId!: number;
+  /**
+   * Where the number counts. Left out in the ordinary case: the standby's
+   * place already answers it.
+   */
+  @IsOptional() @IsInt() placeId?: number;
 }
 
 class VoidEncounterDto {
@@ -219,7 +223,7 @@ export class Ems2Controller {
     if (body.eventId) {
       return this.ems2.open(auth, {
         eventId: body.eventId,
-        venueId: body.venueId,
+        placeId: body.placeId,
       });
     }
     if (!body.event) {
@@ -232,7 +236,7 @@ export class Ems2Controller {
     // run numbers to — so events:create would be a barrier in front of the
     // one case that cannot wait: something is happening now, and whoever is
     // running it needs the board open.
-    return this.ems2.open(auth, { event: body.event, venueId: body.venueId });
+    return this.ems2.open(auth, { event: body.event, placeId: body.placeId });
   }
 
   @Get(':id')
@@ -466,7 +470,7 @@ export class Ems2Controller {
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() body: IssueRunNumberDto,
   ) {
-    return this.ems2.issueRunNumber(auth, id, encounterId, body.locationId);
+    return this.ems2.issueRunNumber(auth, id, encounterId, body.placeId);
   }
 
   // --------------------------------------------------------------- exports
@@ -534,11 +538,11 @@ export class Ems2Controller {
    */
   @Get('config/all')
   async config() {
-    const [venues, designators, hospitals, members] = await Promise.all([
-      this.prisma.venue.findMany({
+    const [places, designators, hospitals, members] = await Promise.all([
+      this.prisma.place.findMany({
         where: { active: true },
         include: {
-          locations: { where: { active: true }, orderBy: { order: 'asc' } },
+          spots: { where: { active: true }, orderBy: { order: 'asc' } },
         },
         orderBy: { name: 'asc' },
       }),
@@ -561,6 +565,6 @@ export class Ems2Controller {
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       }),
     ]);
-    return { venues, designators, hospitals, members };
+    return { places, designators, hospitals, members };
   }
 }

@@ -1014,7 +1014,11 @@ model Event {
   id             Int                 @id @default(autoincrement())
   title          String
   description    String?
+  /// Where it is, as somebody typed it. Kept beside the link because most
+  /// event locations are a one-off — a dorm lounge, somebody's back garden
+  /// — and the list of places is for the ones the agency returns to.
   location       String?
+  placeId        Int?
   startsAt       DateTime
   endsAt         DateTime
   kindId         Int
@@ -1029,6 +1033,7 @@ model Event {
   updatedAt      DateTime            @updatedAt
 
   kind                  EventKind           @relation(fields: [kindId], references: [id])
+  place                 Place?              @relation(fields: [placeId], references: [id])
   tier                  EventTier?          @relation(fields: [tierId], references: [id])
   positions             EventPosition[]
   runNumbers            RunNumber[]
@@ -1542,16 +1547,6 @@ model ChoreOccurrence {
 /// Ported from strng: run numbers read <LOC>-<DIV><YY><NNN>, e.g. DCC-S25001.
 /// Each location counts independently, so the next number is held per
 /// location rather than globally.
-model RunNumberLocation {
-  id      Int     @id @default(autoincrement())
-  name    String
-  abbr    String  @unique
-  active  Boolean @default(true)
-  /// The number the next run at this location will take.
-  nextRun Int     @default(1)
-
-  runNumbers RunNumber[]
-}
 
 /// One issued run number.
 ///
@@ -1561,7 +1556,7 @@ model RunNumberLocation {
 model RunNumber {
   id         Int      @id @default(autoincrement())
   number     String   @unique
-  locationId Int
+  placeId    Int
   /// The academic-term division letter this number was issued under.
   division   String
   /// Two digits, matching the number itself.
@@ -1572,13 +1567,13 @@ model RunNumber {
   issuedById Int?
   issuedAt   DateTime @default(now())
 
-  location   RunNumberLocation @relation(fields: [locationId], references: [id])
-  event      Event?            @relation(fields: [eventId], references: [id])
-  issuedBy   Member?           @relation("RunNumberIssuer", fields: [issuedById], references: [id])
+  place      Place       @relation(fields: [placeId], references: [id])
+  event      Event?      @relation(fields: [eventId], references: [id])
+  issuedBy   Member?     @relation("RunNumberIssuer", fields: [issuedById], references: [id])
   encounters Encounter[]
 
   @@index([issuedAt])
-  @@index([locationId, sequence])
+  @@index([placeId, sequence])
 }
 
 /**
@@ -2045,7 +2040,16 @@ model HeadsupCounterReset {
 // event and somebody may work two units in a role they never signed up for.
 
 /// A place standbys happen at, with the inside of it named.
-model Venue {
+/// Somewhere the agency goes. One list doing three jobs, because they were
+/// three lists of the same places: where an event is, where a standby is
+/// worked, and where the run numbers count.
+///
+/// The tiers are properties rather than tables. Every place can be an
+/// event's location — that is the long tail, and most of the list. A place
+/// with an abbreviation is where numbering counts. A place either carries
+/// one or files under a place that does, so a standby always resolves to
+/// exactly one counter without a field house needing a letter of its own.
+model Place {
   id        Int      @id @default(autoincrement())
   name      String   @unique
   address   String?
@@ -2053,8 +2057,24 @@ model Venue {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  locations VenueLocation[]
-  standbys  StandbyLog[]
+  /// Set when the agency's run numbers count here. It is inside the number
+  /// the county reads — T-A26001 — so it is given by an officer and never
+  /// generated from a name.
+  abbr    String? @unique
+  /// The number the next run at this place will take. Only meaningful on a
+  /// place that has an abbreviation.
+  nextRun Int     @default(1)
+
+  /// Where this place files its numbering when it has no counter of its
+  /// own: a field house is in a city, and the city is what counts.
+  parentId Int?
+
+  parent     Place?       @relation("PlaceParent", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "Place_parentId_fkey")
+  children   Place[]      @relation("PlaceParent")
+  spots      PlaceSpot[]
+  standbys   StandbyLog[]
+  runNumbers RunNumber[]
+  events     Event[]
 }
 
 /// A named place inside a venue — a gate, a stand, an aid room.
@@ -2062,22 +2082,24 @@ model Venue {
 /// Saved against the venue rather than the event, because the same gate is
 /// the same gate at every game, and a supervisor should not retype the
 /// building's geography every time.
-model VenueLocation {
+/// A position inside a place: a gate, the aid station, the north stand.
+/// Not somewhere the agency files under — somewhere a unit stands.
+model PlaceSpot {
   id      Int     @id @default(autoincrement())
-  venueId Int
+  placeId Int
   name    String
   /// Where it sits in the list the pickers show. Arrangement is what a
-  /// venue's insides need; a second field naming the kind of place it is
-  /// was asked for on the setup page and read by nothing.
+  /// place's insides need; a second field naming the kind of spot it is was
+  /// asked for on the setup page and read by nothing.
   order   Int     @default(0)
   active  Boolean @default(true)
 
-  venue       Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  place       Place         @relation(fields: [placeId], references: [id], onDelete: Cascade)
   atUnits     StandbyUnit[] @relation("UnitCurrentLocation")
   stagedUnits StandbyUnit[] @relation("UnitStagingLocation")
   encounters  Encounter[]
 
-  @@unique([venueId, name])
+  @@unique([placeId, name])
 }
 
 /// The standing list of unit designators — M-1, Gator 2, Bike 1.
@@ -2104,9 +2126,9 @@ model Hospital {
 model StandbyLog {
   id        Int     @id @default(autoincrement())
   eventId   Int     @unique
-  venueId   Int?
-  /// Named here when the venue was made up on the day and not saved.
-  venueText String?
+  placeId   Int?
+  /// Named here when the place was made up on the day and not saved.
+  placeText String?
 
   /// What happened, as opposed to what the calendar said would. An event
   /// that ran late ran late, and the DOH report wants the real dates.
@@ -2138,7 +2160,7 @@ model StandbyLog {
   updatedAt   DateTime  @updatedAt
 
   event      Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  venue      Venue?                 @relation(fields: [venueId], references: [id])
+  place      Place?                 @relation(fields: [placeId], references: [id])
   closedBy   Member?                @relation("StandbyClosedBy", fields: [closedById], references: [id])
   createdBy  Member?                @relation("StandbyCreatedBy", fields: [createdById], references: [id])
   personnel  StandbyPersonnel[]
@@ -2222,8 +2244,8 @@ model StandbyUnit {
 
   standby         StandbyLog       @relation(fields: [standbyId], references: [id], onDelete: Cascade)
   designator      UnitDesignator?  @relation(fields: [designatorId], references: [id])
-  currentLocation VenueLocation?   @relation("UnitCurrentLocation", fields: [currentLocationId], references: [id])
-  stagingLocation VenueLocation?   @relation("UnitStagingLocation", fields: [stagingLocationId], references: [id])
+  currentLocation PlaceSpot?       @relation("UnitCurrentLocation", fields: [currentLocationId], references: [id])
+  stagingLocation PlaceSpot?       @relation("UnitStagingLocation", fields: [stagingLocationId], references: [id])
   createdBy       Member?          @relation("StandbyUnitCreatedBy", fields: [createdById], references: [id])
   assignments     UnitAssignment[]
   encounters      Encounter[]
@@ -2351,13 +2373,13 @@ model Encounter {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  standby   StandbyLog     @relation(fields: [standbyId], references: [id], onDelete: Cascade)
-  unit      StandbyUnit?   @relation(fields: [unitId], references: [id])
-  hospital  Hospital?      @relation(fields: [hospitalId], references: [id])
-  runNumber RunNumber?     @relation(fields: [runNumberId], references: [id])
-  location  VenueLocation? @relation(fields: [locationId], references: [id])
-  createdBy Member?        @relation("EncounterCreatedBy", fields: [createdById], references: [id])
-  voidedBy  Member?        @relation("EncounterVoidedBy", fields: [voidedById], references: [id])
+  standby   StandbyLog   @relation(fields: [standbyId], references: [id], onDelete: Cascade)
+  unit      StandbyUnit? @relation(fields: [unitId], references: [id])
+  hospital  Hospital?    @relation(fields: [hospitalId], references: [id])
+  runNumber RunNumber?   @relation(fields: [runNumberId], references: [id])
+  location  PlaceSpot?   @relation(fields: [locationId], references: [id])
+  createdBy Member?      @relation("EncounterCreatedBy", fields: [createdById], references: [id])
+  voidedBy  Member?      @relation("EncounterVoidedBy", fields: [voidedById], references: [id])
 
   @@unique([standbyId, sequence])
   @@index([standbyId])

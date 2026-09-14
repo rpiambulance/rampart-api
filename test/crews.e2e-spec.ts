@@ -3739,20 +3739,24 @@ describe('Night crews engine (e2e)', () => {
         },
       });
       eventId = event.id;
-      const venue = await prisma.venue.create({
-        data: {
-          name: `Venue ${stamp}`,
-          locations: { create: [{ name: 'Gate 1' }] },
-        },
-      });
-      venueId = venue.id;
-      locationId = (await prisma.venueLocation.findFirstOrThrow({ where: { venueId } })).id;
+      // The counter this place files its numbering under.
       runLocationId = (
-        await prisma.runNumberLocation.upsert({
+        await prisma.place.upsert({
           where: { abbr: 'T' },
           create: { name: 'Troy', abbr: 'T' },
           update: {},
         })
+      ).id;
+      const place = await prisma.place.create({
+        data: {
+          name: `Venue ${stamp}`,
+          parentId: runLocationId,
+          spots: { create: [{ name: 'Gate 1' }] },
+        },
+      });
+      venueId = place.id;
+      locationId = (
+        await prisma.placeSpot.findFirstOrThrow({ where: { placeId: venueId } })
       ).id;
     });
 
@@ -3760,7 +3764,7 @@ describe('Night crews engine (e2e)', () => {
       await prisma.standbyLog.deleteMany({ where: { eventId } });
       await prisma.runNumber.deleteMany({ where: { eventId } });
       await prisma.event.deleteMany({ where: { id: eventId } });
-      await prisma.venue.deleteMany({ where: { id: venueId } });
+      await prisma.place.deleteMany({ where: { id: venueId } });
     });
 
     // The signups are a starting point. From there the standby keeps its own
@@ -3769,7 +3773,7 @@ describe('Night crews engine (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/v1/standbys')
         .set(sup())
-        .send({ eventId, venueId })
+        .send({ eventId, placeId: venueId })
         .expect(201);
       standbyId = res.body.id;
       const roles = (res.body.personnel as Array<{ role: string; fromSignup: boolean }>);
@@ -3935,9 +3939,13 @@ describe('Night crews engine (e2e)', () => {
       const issued = await request(app.getHttpServer())
         .post(`/v1/standbys/${standbyId}/encounters/${id}/run-number`)
         .set({ ...sup(), 'x-test-permissions': 'standbys:manage,run-numbers:manage' })
-        .send({ locationId: runLocationId })
+        .send({})
         .expect(201);
       expect(issued.body.eventId).toBe(eventId);
+      // Nobody said where from. The standby is worked at a place, that place
+      // files under Troy, and Troy is what the number carries.
+      expect(issued.body.number).toMatch(/^T-/);
+      expect(issued.body.placeId).toBe(runLocationId);
 
       const noPrid = await request(app.getHttpServer())
         .post(`/v1/standbys/${standbyId}/encounters/${id}/close`)
@@ -3986,7 +3994,7 @@ describe('Night crews engine (e2e)', () => {
       const refused = await request(app.getHttpServer())
         .post(`/v1/standbys/${standbyId}/encounters/${id}/run-number`)
         .set({ ...sup(), 'x-test-permissions': 'standbys:manage,run-numbers:manage' })
-        .send({ locationId: runLocationId })
+        .send({})
         .expect(400);
       expect(refused.body.message).toContain('already has a run number');
     });

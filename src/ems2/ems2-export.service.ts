@@ -36,7 +36,7 @@ export class Ems2ExportService {
       where: { id: standbyId },
       include: {
         event: { include: { kind: true } },
-        venue: true,
+        place: true,
         personnel: {
           include: {
             member: {
@@ -108,7 +108,7 @@ export class Ems2ExportService {
       completedByTitle: standby.completedByTitle,
       completedByPhone: standby.completedByPhone,
       inCharge: inCharge ? displayName(inCharge.member) : null,
-      venue: standby.venue?.name ?? standby.venueText,
+      venue: standby.place?.name ?? standby.placeText,
     };
 
     const asRow = (e: (typeof encounters)[number]): IncidentRow => ({

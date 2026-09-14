@@ -78,17 +78,58 @@ export class RunNumbersService {
     return { year, division: null, options: window.options, settledBy: null };
   }
 
-  listLocations(includeInactive = false) {
-    return this.prisma.runNumberLocation.findMany({
-      where: includeInactive ? {} : { active: true },
+  /**
+   * The place a number actually counts at.
+   *
+   * A place either carries the abbreviation itself — the abbreviation is in
+   * the number the county reads — or it files under one that does: a field
+   * house is in a city, and the city is what counts. Resolved here so
+   * nobody issuing a number has to know which of the two they picked.
+   */
+  async counterFor(placeId: number) {
+    const place = await this.prisma.place.findUnique({
+      where: { id: placeId },
+      include: { parent: true },
+    });
+    if (!place || !place.active) throw new NotFoundException('No such place');
+    if (place.abbr) return place;
+    if (place.parent?.abbr && place.parent.active) return place.parent;
+    throw new BadRequestException(
+      `${place.name} has no run-number abbreviation and files under nowhere ` +
+        'that does. Give it one, or say which place it files under.',
+    );
+  }
+
+  /** The places numbering actually counts at, for a picker or a check. */
+  counters(includeInactive = false) {
+    return this.prisma.place.findMany({
+      where: {
+        abbr: { not: null },
+        ...(includeInactive ? {} : { active: true }),
+      },
       orderBy: { abbr: 'asc' },
+    });
+  }
+
+  /**
+   * Every place, counters first.
+   *
+   * One list doing three jobs: an event's location, a standby's venue, and
+   * the counters. What a caller wants out of it is a matter of which
+   * property they read, not which list they ask for.
+   */
+  listLocations(includeInactive = false) {
+    return this.prisma.place.findMany({
+      where: includeInactive ? {} : { active: true },
+      include: { parent: { select: { id: true, name: true, abbr: true } } },
+      orderBy: [{ abbr: 'asc' }, { name: 'asc' }],
     });
   }
 
   recent(limit = 50) {
     return this.prisma.runNumber.findMany({
       include: {
-        location: { select: { abbr: true, name: true } },
+        place: { select: { abbr: true, name: true } },
         issuedBy: {
           select: {
             id: true,
@@ -189,16 +230,17 @@ export class RunNumbersService {
       }
     }
 
+    const counter = await this.counterFor(locationId);
+
     const issued = await this.prisma.$transaction(async (tx) => {
-      const location = await tx.runNumberLocation.findUnique({
-        where: { id: locationId },
+      // Re-read inside the transaction: the sequence is the one thing here
+      // that two people can take at the same moment.
+      const place = await tx.place.findUniqueOrThrow({
+        where: { id: counter.id },
       });
-      if (!location || !location.active) {
-        throw new NotFoundException('Location not found');
-      }
-      const sequence = location.nextRun;
+      const sequence = place.nextRun;
       const number = formatRunNumber(
-        location.abbr,
+        place.abbr!,
         division,
         term.year,
         sequence,
@@ -206,7 +248,7 @@ export class RunNumbersService {
       const created = await tx.runNumber.create({
         data: {
           number,
-          locationId,
+          placeId: place.id,
           division,
           year: term.year,
           sequence,
@@ -214,10 +256,10 @@ export class RunNumbersService {
           eventId: opts.eventId ?? null,
           issuedById: auth.kind === 'member' ? auth.memberId : null,
         },
-        include: { location: { select: { abbr: true, name: true } } },
+        include: { place: { select: { abbr: true, name: true } } },
       });
-      await tx.runNumberLocation.update({
-        where: { id: locationId },
+      await tx.place.update({
+        where: { id: place.id },
         data: { nextRun: sequence + 1 },
       });
       return created;
@@ -245,7 +287,7 @@ export class RunNumbersService {
         'An abbreviation is up to eight letters or digits',
       );
     }
-    const clash = await this.prisma.runNumberLocation.findUnique({
+    const clash = await this.prisma.place.findUnique({
       where: { abbr },
     });
     if (clash && clash.id !== data.id) {
@@ -253,7 +295,7 @@ export class RunNumbersService {
     }
 
     const location = data.id
-      ? await this.prisma.runNumberLocation.update({
+      ? await this.prisma.place.update({
           where: { id: data.id },
           data: {
             name: data.name.trim(),
@@ -264,7 +306,7 @@ export class RunNumbersService {
               : { nextRun: Math.max(1, data.nextRun) }),
           },
         })
-      : await this.prisma.runNumberLocation.create({
+      : await this.prisma.place.create({
           data: {
             name: data.name.trim(),
             abbr,
