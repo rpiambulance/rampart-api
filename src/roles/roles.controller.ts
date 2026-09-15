@@ -63,6 +63,12 @@ interface ConferredHolder {
   };
   /** What they actually hold, which may sit above the credential linked. */
   credentialType: { id: number; name: string; key: string };
+  /**
+   * Everything they hold, so a screen can show them as what they are rather
+   * than as whichever rung happened to match the link. A Duty Supervisor is
+   * a Duty Supervisor, not a Crew Chief Trainer who also has the seat.
+   */
+  credentials: Array<{ key: string; name: string; title: string | null }>;
   /** True when they hold something above the link rather than the link. */
   inherited: boolean;
 }
@@ -132,6 +138,7 @@ export class RolesController {
               lastName: true,
             },
           },
+          title: true,
           type: { select: { id: true, name: true, key: true } },
         },
       }),
@@ -141,6 +148,22 @@ export class RolesController {
     // question about a credential is read here: a role linked to Crew Chief
     // is held by a Crew Chief Trainer and by a Duty Supervisor, whose
     // records often do not carry the rungs beneath them at all.
+    // Everything each person holds, gathered once: the badge on a name is
+    // their standing, not the rung that matched.
+    const heldByMember = new Map<
+      number,
+      Array<{ key: string; name: string; title: string | null }>
+    >();
+    for (const held of conferred) {
+      const list = heldByMember.get(held.member.id) ?? [];
+      list.push({
+        key: held.type.key,
+        name: held.type.name,
+        title: held.title,
+      });
+      heldByMember.set(held.member.id, list);
+    }
+
     const satisfiedByKey = new Map<string, Set<string>>();
     for (const key of new Set(conferred.map((held) => held.type.key))) {
       satisfiedByKey.set(key, await this.graph.keysSatisfiedBy(new Set([key])));
@@ -171,6 +194,7 @@ export class RolesController {
             name: held.type.name,
             key: held.type.key,
           },
+          credentials: heldByMember.get(held.member.id) ?? [],
           inherited,
         });
         byRole.set(role.id, holders);

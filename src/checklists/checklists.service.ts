@@ -228,8 +228,14 @@ export class ChecklistsService {
    * signed and when. Previous work is visible to whoever picks the checklist
    * up next — that is the point of keeping it in one place.
    */
-  async progress(templateId: number, memberId: number) {
+  async progress(templateId: number, memberId: number, viewerId?: number) {
     const template = await this.templateOrThrow(templateId);
+    // What the viewer holds, so each line can say whether it is theirs to
+    // sign. The page used to offer the form to everybody and let the API
+    // refuse, which reads as "you may sign this" right up until you cannot.
+    const viewerHolds = viewerId
+      ? await this.graph.heldKeys(viewerId)
+      : new Set<string>();
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
       select: {
@@ -248,21 +254,39 @@ export class ChecklistsService {
     });
     const byItem = new Map(signoffs.map((s) => [s.itemId, s]));
 
+    const satisfied = new Set<string>();
+    for (const key of viewerHolds) {
+      for (const met of await this.graph.keysSatisfiedBy(new Set([key]))) {
+        satisfied.add(met);
+      }
+    }
+
     const decorate = (item: {
       id: number;
       order: number;
       prompt: string;
       scoreType: string;
       signoffCredentialTypes: Array<{ id: number; key: string; name: string }>;
-    }) => ({
-      ...item,
-      signoff: byItem.get(item.id) ?? null,
+    }) => {
       // Who this line needs, resolved: the item's own set if it names one,
       // otherwise the checklist's. Any one of them is enough.
-      requires: item.signoffCredentialTypes.length
+      const requires = item.signoffCredentialTypes.length
         ? item.signoffCredentialTypes
-        : template.signoffCredentialTypes,
-    });
+        : template.signoffCredentialTypes;
+      return {
+        ...item,
+        signoff: byItem.get(item.id) ?? null,
+        requires,
+        // The same question the sign route asks, asked early so the screen
+        // can offer the form to whoever it is actually for. Nobody signs
+        // their own, and a line already signed is not signed again.
+        maySign:
+          viewerId !== undefined &&
+          viewerId !== memberId &&
+          !byItem.get(item.id) &&
+          requires.some((credential) => satisfied.has(credential.key)),
+      };
+    };
 
     const lineIds = this.lines(template);
     return {

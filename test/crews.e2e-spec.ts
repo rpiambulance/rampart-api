@@ -3143,6 +3143,93 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // A line that says it needs a Driver Trainer is signed by a Driver
+  // Trainer, or by somebody above one — and by nobody else.
+  describe('who may sign a checklist line', () => {
+    let itemId: number;
+    let templateId: number;
+    let driverTrainer: number;
+    let plainCrewChief: number;
+
+    beforeAll(async () => {
+      const dt = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'D_T' },
+      });
+      const template = await prisma.evalFormTemplate.create({
+        data: {
+          name: `Driving checklist ${stamp}`,
+          kind: 'CHECKLIST',
+          signoffCredentialTypes: { connect: { id: dt.id } },
+          items: {
+            create: [{ order: 1, prompt: 'Backs into the bay', scoreType: 'PASS_FAIL' }],
+          },
+        },
+        include: { items: true },
+      });
+      templateId = template.id;
+      itemId = template.items[0].id;
+
+      driverTrainer = await createMember('Trainer', ['O', 'A', 'A_D', 'P_D', 'D', 'D_T']);
+      // A crew chief, and every rung under it — but nothing on the driving
+      // side of the ladder.
+      plainCrewChief = await createMember('Chief', ['O', 'A', 'A_CC', 'P_CC', 'CC']);
+    });
+
+    afterAll(async () => {
+      await prisma.checklistSignoff.deleteMany({ where: { itemId } });
+      await prisma.evalFormTemplate.deleteMany({ where: { id: templateId } });
+    });
+
+    it('refuses a crew chief, however senior', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/v1/checklists/items/${itemId}/sign`)
+        .set(as(plainCrewChief))
+        .send({ memberId: charlie })
+        .expect(403);
+      expect(JSON.stringify(res.body)).toContain('Driver Trainer');
+      expect(await prisma.checklistSignoff.count({ where: { itemId } })).toBe(0);
+    });
+
+    // And the screen is told which lines are theirs, so the form is not
+    // offered to somebody it will only turn down.
+    it('tells each reader which lines are theirs to sign', async () => {
+      const forChief = await request(app.getHttpServer())
+        .get(`/v1/checklists/${templateId}/members/${charlie}`)
+        .set(as(plainCrewChief))
+        .set('x-test-permissions', 'members:read')
+        .expect(200);
+      expect(
+        (forChief.body.items as Array<{ maySign: boolean }>)[0].maySign,
+      ).toBe(false);
+
+      const forTrainer = await request(app.getHttpServer())
+        .get(`/v1/checklists/${templateId}/members/${charlie}`)
+        .set(as(driverTrainer))
+        .set('x-test-permissions', 'members:read')
+        .expect(200);
+      expect(
+        (forTrainer.body.items as Array<{ maySign: boolean }>)[0].maySign,
+      ).toBe(true);
+
+      // Nobody signs their own, whatever they hold.
+      const own = await request(app.getHttpServer())
+        .get(`/v1/checklists/${templateId}/members/${driverTrainer}`)
+        .set(as(driverTrainer))
+        .expect(200);
+      expect((own.body.items as Array<{ maySign: boolean }>)[0].maySign).toBe(
+        false,
+      );
+    });
+
+    it('takes the signature of a driver trainer', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/checklists/items/${itemId}/sign`)
+        .set(as(driverTrainer))
+        .send({ memberId: charlie })
+        .expect(201);
+    });
+  });
+
   // Being called the right thing is the member's to set and an officer's to
   // fix: somebody who has not found the field, or whose name came in wrong
   // from the legacy import, should not have to be the one who notices.

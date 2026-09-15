@@ -132,7 +132,7 @@ export class ChecklistsController {
     ) {
       throw new ForbiddenException('Not your checklist');
     }
-    return this.checklists.progress(templateId, memberId);
+    return this.checklists.progress(templateId, memberId, viewer);
   }
 
   @Post('items/:itemId/sign')
