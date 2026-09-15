@@ -172,6 +172,32 @@ export class CredentialGraphService {
     return out;
   }
 
+  /**
+   * The topmost of these credentials: the one nothing else here is above.
+   *
+   * A member holding the whole chain is a Duty Supervisor, not an Observer
+   * who also has the seat. Where two are genuinely side by side — a crew
+   * chief trainer and a driver trainer both satisfying "Attendant" — the
+   * deeper of the two wins, and the key breaks a remaining tie so the same
+   * set always reads the same way.
+   */
+  async highestOf(keys: Iterable<string>): Promise<string | undefined> {
+    const { below, outranking } = await this.graph();
+    const held = [...keys];
+    if (!held.length) return undefined;
+
+    const outranks = held.find((key) => outranking.has(key));
+    if (outranks) return outranks;
+
+    const ranked = held
+      .filter((key) => !held.some((other) => below.get(other)?.has(key)))
+      .sort((a, b) => {
+        const depth = (below.get(b)?.size ?? 0) - (below.get(a)?.size ?? 0);
+        return depth !== 0 ? depth : a.localeCompare(b);
+      });
+    return ranked[0] ?? held[0];
+  }
+
   /** Does the set include a credential that outranks the whole ladder (DS)? */
   async outranksEverything(heldKeys: Set<string>): Promise<boolean> {
     const { outranking } = await this.graph();

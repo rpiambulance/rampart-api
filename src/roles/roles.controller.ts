@@ -61,14 +61,14 @@ interface ConferredHolder {
     preferredFirstName: string | null;
     lastName: string;
   };
-  /** What they actually hold, which may sit above the credential linked. */
-  credentialType: { id: number; name: string; key: string };
   /**
-   * Everything they hold, so a screen can show them as what they are rather
-   * than as whichever rung happened to match the link. A Duty Supervisor is
-   * a Duty Supervisor, not a Crew Chief Trainer who also has the seat.
+   * The one credential worth naming: the highest thing they hold that
+   * reaches this link. Not everything they hold — a driver's licence has
+   * nothing to do with a role linked to Crew Chief — and not whichever rung
+   * happened to match first, which made one Duty Supervisor read as a Crew
+   * Chief Trainer here and an EES there.
    */
-  credentials: Array<{ key: string; name: string; title: string | null }>;
+  credential: { key: string; name: string; title: string | null };
   /** True when they hold something above the link rather than the link. */
   inherited: boolean;
 }
@@ -148,8 +148,8 @@ export class RolesController {
     // question about a credential is read here: a role linked to Crew Chief
     // is held by a Crew Chief Trainer and by a Duty Supervisor, whose
     // records often do not carry the rungs beneath them at all.
-    // Everything each person holds, gathered once: the badge on a name is
-    // their standing, not the rung that matched.
+    // Everything each person holds, gathered once, so the badge can be the
+    // top of whichever chain reaches the link.
     const heldByMember = new Map<
       number,
       Array<{ key: string; name: string; title: string | null }>
@@ -169,6 +169,23 @@ export class RolesController {
       satisfiedByKey.set(key, await this.graph.keysSatisfiedBy(new Set([key])));
     }
 
+    /** The top of what this person holds that actually reaches the link. */
+    const badgeFor = async (memberId: number, linkKey: string) => {
+      const held = heldByMember.get(memberId) ?? [];
+      const reaching = held.filter(
+        (credential) =>
+          credential.key === linkKey ||
+          satisfiedByKey.get(credential.key)?.has(linkKey),
+      );
+      const top = await this.graph.highestOf(
+        reaching.map((credential) => credential.key),
+      );
+      return (
+        reaching.find((credential) => credential.key === top) ??
+        reaching[0] ?? { key: linkKey, name: linkKey, title: null }
+      );
+    };
+
     // Keyed by member so somebody holding both the linked credential and
     // one above it is listed once, under the one they hold that the link
     // actually names.
@@ -184,18 +201,18 @@ export class RolesController {
         if (!link) continue;
         const holders =
           byRole.get(role.id) ?? new Map<number, ConferredHolder>();
-        const inherited = link.credentialType.key !== held.type.key;
-        const already = holders.get(held.member.id);
-        if (already && (!already.inherited || inherited)) continue;
+        // Once per person per role, whichever of their credentials brought
+        // us here: the badge is worked out from everything they hold, so
+        // the row that triggered it no longer decides what it says.
+        if (holders.has(held.member.id)) continue;
+        const credential = await badgeFor(
+          held.member.id,
+          link.credentialType.key,
+        );
         holders.set(held.member.id, {
           member: held.member,
-          credentialType: {
-            id: held.type.id,
-            name: held.type.name,
-            key: held.type.key,
-          },
-          credentials: heldByMember.get(held.member.id) ?? [],
-          inherited,
+          credential,
+          inherited: credential.key !== link.credentialType.key,
         });
         byRole.set(role.id, holders);
       }

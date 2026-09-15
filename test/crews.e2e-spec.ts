@@ -3864,7 +3864,7 @@ describe('Night crews engine (e2e)', () => {
           credentialLinks: Array<{ credentialType: { name: string } }>;
           conferred: Array<{
             member: { id: number };
-            credentialType: { key: string };
+            credential: { key: string };
             inherited: boolean;
           }>;
         }>
@@ -3894,7 +3894,7 @@ describe('Night crews engine (e2e)', () => {
       // above rather than from the link itself.
       const inherited = role?.conferred.find((c) => c.member.id === above);
       expect(inherited?.inherited).toBe(true);
-      expect(inherited?.credentialType.key).toBe(`TX${stamp}`.slice(0, 16));
+      expect(inherited?.credential.key).toBe(`TX${stamp}`.slice(0, 16));
       expect(
         role?.conferred.find((c) => c.member.id === holder)?.inherited,
       ).toBe(false);
@@ -3903,7 +3903,7 @@ describe('Night crews engine (e2e)', () => {
       expect(role?.conferred.map((c) => c.member.id)).not.toContain(suspended);
       // Listed under the credential they actually hold.
       expect(
-        role?.conferred.find((c) => c.member.id === holder)?.credentialType.key,
+        role?.conferred.find((c) => c.member.id === holder)?.credential.key,
       ).toBe(`TC${stamp}`.slice(0, 16));
     });
 
@@ -3917,6 +3917,24 @@ describe('Night crews engine (e2e)', () => {
       expect([...ids]).toContain(holder);
       expect([...ids]).toContain(above);
       expect([...ids]).not.toContain(suspended);
+    });
+
+    // One badge per person, and it is the top of whatever chain of theirs
+    // reaches the link — not everything they hold, and not whichever rung
+    // the loop happened to see first.
+    it('names the highest credential that reaches the link', async () => {
+      const graph = app.get(CredentialGraphService);
+      // A Duty Supervisor holds the whole ladder and is none of it.
+      expect(await graph.highestOf(['O', 'A', 'CC', 'CC_T', 'DS'])).toBe('DS');
+      // Without the seat, the top of the chain they are actually on.
+      expect(await graph.highestOf(['O', 'A', 'A_CC', 'P_CC', 'CC'])).toBe('CC');
+      expect(await graph.highestOf(['O', 'A', 'A_D', 'P_D', 'D', 'D_T'])).toBe(
+        'D_T',
+      );
+      // Side by side and neither above the other: deeper first, then the
+      // key, so the same set always reads the same way.
+      expect(await graph.highestOf(['CC_T', 'D_T'])).toBe('CC_T');
+      expect(await graph.highestOf([])).toBeUndefined();
     });
 
     it('leaves out a member who is no longer active', async () => {
