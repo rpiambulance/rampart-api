@@ -3143,6 +3143,114 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // DiALERT asks who the duty supervisor is and gets one member id back.
+  // The whole question is which night it means at two in the morning.
+  describe('the duty supervisor endpoint', () => {
+    const token = `dialert-${stamp}`;
+    let lastNight: number;
+    let tonight: number;
+    const NIGHT = '2026-08-20';
+    const NEXT = '2026-08-21';
+
+    /** The UTC instant for a New York wall-clock time in August (EDT). */
+    const edt = (day: number, hhmm: string) => {
+      const [h, m] = hhmm.split(':').map(Number);
+      return new Date(Date.UTC(2026, 7, day, h + 4, m));
+    };
+
+    const ask = () =>
+      request(app.getHttpServer()).get(`/v1/dialert/duty-supervisor?token=${token}`);
+
+    /** Only the clock is faked; the pool's timers have to keep running. */
+    const at = (when: Date) =>
+      jest.useFakeTimers({
+        now: when,
+        doNotFake: [
+          'setTimeout',
+          'setInterval',
+          'setImmediate',
+          'clearTimeout',
+          'clearInterval',
+          'clearImmediate',
+          'nextTick',
+          'queueMicrotask',
+          'performance',
+          'hrtime',
+        ],
+      });
+
+    beforeAll(async () => {
+      process.env.DIALERT_TOKEN = token;
+      lastNight = await createMember('Sup20', []);
+      tonight = await createMember('Sup21', []);
+      for (const [date, memberId] of [
+        [NIGHT, lastNight],
+        [NEXT, tonight],
+      ] as const) {
+        const crew = await prisma.crew.upsert({
+          where: { date: toDbDate(date) },
+          create: { date: toDbDate(date) },
+          update: {},
+        });
+        await prisma.crewSlot.deleteMany({
+          where: { crewId: crew.id, position: 'DUTY_SUP' },
+        });
+        await prisma.crewSlot.create({
+          data: { crewId: crew.id, position: 'DUTY_SUP', memberId },
+        });
+      }
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    afterAll(async () => {
+      delete process.env.DIALERT_TOKEN;
+      for (const date of [NIGHT, NEXT]) {
+        const crew = await prisma.crew.findUnique({
+          where: { date: toDbDate(date) },
+        });
+        if (crew) {
+          await prisma.crewSlot.deleteMany({ where: { crewId: crew.id } });
+          await prisma.crew.delete({ where: { id: crew.id } });
+        }
+      }
+    });
+
+    it('names tonight’s supervisor once the crew is on', async () => {
+      at(edt(20, '18:00'));
+      expect((await ask().expect(200)).text).toBe(String(lastNight));
+      at(edt(20, '23:59'));
+      expect((await ask().expect(200)).text).toBe(String(lastNight));
+    });
+
+    // The one that matters: midnight is in the middle of a shift.
+    it('does not change over at midnight', async () => {
+      at(edt(21, '00:00'));
+      expect((await ask().expect(200)).text).toBe(String(lastNight));
+      at(edt(21, '02:30'));
+      expect((await ask().expect(200)).text).toBe(String(lastNight));
+      at(edt(21, '05:59'));
+      expect((await ask().expect(200)).text).toBe(String(lastNight));
+    });
+
+    it('changes over at 0600, when the crew goes off', async () => {
+      at(edt(21, '06:00'));
+      expect((await ask().expect(200)).text).toBe(String(tonight));
+    });
+
+    it('refuses without the token', async () => {
+      at(edt(21, '02:00'));
+      await request(app.getHttpServer())
+        .get('/v1/dialert/duty-supervisor')
+        .expect(401);
+      await request(app.getHttpServer())
+        .get('/v1/dialert/duty-supervisor?token=wrong')
+        .expect(401);
+    });
+  });
+
   // A line that says it needs a Driver Trainer is signed by a Driver
   // Trainer, or by somebody above one — and by nobody else.
   describe('who may sign a checklist line', () => {
