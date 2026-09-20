@@ -4311,6 +4311,76 @@ describe('Night crews engine (e2e)', () => {
       await prisma.event.delete({ where: { id: adHocEventId } });
     });
 
+    // The DOH form asks for things the board cannot work out: how many
+    // people came, and who filled the form in.
+    describe('what the forms ask for', () => {
+      it('takes them, keeps them, and lets them be changed again', async () => {
+        await request(app.getHttpServer())
+          .patch(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .send({
+            totalAttendance: 4200,
+            totalEstimated: true,
+            peakAttendance: 3100,
+            peakEstimated: true,
+            sponsorOperator: 'Student Union',
+            unusualOccurrences: 'Barrier moved at the east gate.',
+            completedByName: 'Aaron Burns',
+            completedByTitle: 'Duty Supervisor',
+            completedByPhone: '555-0100',
+          })
+          .expect(200);
+
+        const filled = await request(app.getHttpServer())
+          .get(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .expect(200);
+        expect(filled.body.totalAttendance).toBe(4200);
+        expect(filled.body.totalEstimated).toBe(true);
+        expect(filled.body.completedByName).toBe('Aaron Burns');
+        expect(filled.body.sponsorOperator).toBe('Student Union');
+
+        // A week later the sponsor sends the real number. The estimate it
+        // replaces is not a thing that has to be lived with.
+        await request(app.getHttpServer())
+          .patch(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .send({ totalAttendance: 4118, totalEstimated: false })
+          .expect(200);
+
+        const corrected = await request(app.getHttpServer())
+          .get(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .expect(200);
+        expect(corrected.body.totalAttendance).toBe(4118);
+        expect(corrected.body.totalEstimated).toBe(false);
+        // Everything else was left where it was.
+        expect(corrected.body.peakAttendance).toBe(3100);
+        expect(corrected.body.completedByName).toBe('Aaron Burns');
+      });
+
+      it('takes a field back to nothing', async () => {
+        await request(app.getHttpServer())
+          .patch(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .send({ unusualOccurrences: null })
+          .expect(200);
+        const res = await request(app.getHttpServer())
+          .get(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .expect(200);
+        expect(res.body.unusualOccurrences).toBeNull();
+      });
+
+      it('refuses an attendance that is not a number of people', async () => {
+        await request(app.getHttpServer())
+          .patch(`/v1/standbys/${standbyId}`)
+          .set(sup())
+          .send({ totalAttendance: -5 })
+          .expect(400);
+      });
+    });
+
     it('is the same standby if opened twice', async () => {
       const again = await request(app.getHttpServer())
         .post('/v1/standbys')
