@@ -657,12 +657,44 @@ export class CrewsService {
     );
 
     let changed = 0;
+    let closedNights = 0;
     for (const dateStr of dates) {
       const crew = await this.prisma.crew.findUnique({
         where: { date: toDbDate(dateStr) },
         include: { slots: true },
       });
       if (!crew) continue;
+
+      // A weekday the agency does not run is part of the template, not a
+      // detail of it: applying the template has to land where generating
+      // from it would, or a standing arrangement only reaches the nights
+      // nobody had looked at yet. The duty supervisor seat is kept —
+      // somebody still carries the phone — and the riding seats are
+      // emptied, because a night that is not running has no crew on it.
+      if (action === 'apply-defaults' && closed.has(weekdayOf(dateStr))) {
+        if (!crew.outOfService) {
+          await this.prisma.crew.update({
+            where: { id: crew.id },
+            data: {
+              outOfService: true,
+              outOfServiceReason: closed.get(weekdayOf(dateStr)) ?? null,
+              outOfServiceAt: new Date(),
+              outOfServiceById: auth.kind === 'member' ? auth.memberId : null,
+            },
+          });
+          closedNights++;
+        }
+        const { count } = await this.prisma.crewSlot.updateMany({
+          where: {
+            crewId: crew.id,
+            position: { not: 'DUTY_SUP' },
+            OR: [{ memberId: { not: null } }, { placeholder: { not: null } }],
+          },
+          data: { memberId: null, placeholder: null },
+        });
+        changed += count;
+      }
+
       for (const slot of crew.slots) {
         if (action === 'clear') {
           if (slot.memberId === null && slot.placeholder === null) continue;
@@ -673,14 +705,10 @@ export class CrewsService {
           changed++;
           continue;
         }
-        // apply-defaults only fills what is empty; it never displaces anyone.
+        // Filling only ever fills what is empty; the one thing it displaces
+        // is a rider on a night the template says is not running, cleared
+        // above along with the night's status.
         if (slot.memberId !== null || slot.placeholder !== null) continue;
-        // A weekday the agency does not run gets its duty supervisor and
-        // nothing else, the same as a night generated from the template —
-        // applying the defaults should land where generating from them
-        // would. The night's own service status is left alone: somebody may
-        // have deliberately put this one back in service, and quietly
-        // reversing that is not what filling vacancies should do.
         if (closed.has(weekdayOf(dateStr)) && slot.position !== 'DUTY_SUP') {
           continue;
         }
@@ -705,8 +733,9 @@ export class CrewsService {
       weekStart,
       action,
       changed,
+      closedNights,
     });
-    return { changed, days: dates.length };
+    return { changed, closedNights, days: dates.length };
   }
 
   /** The caller's own upcoming shifts, including not-yet-public weeks. */

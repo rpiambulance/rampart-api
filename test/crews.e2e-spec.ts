@@ -3143,6 +3143,81 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // A standing arrangement in the template has to reach the nights that
+  // already exist, or it only ever applies to weeks nobody had looked at.
+  describe('applying the weekly template to a week already on the books', () => {
+    let rider: number;
+    let sup: number;
+    let weekStart: string;
+    let closedDate: string;
+
+    beforeAll(async () => {
+      rider = await createMember('TplRider', ['O', 'A', 'A_CC', 'P_CC', 'CC']);
+      sup = await createMember('TplSup', []);
+      // Next week, so every night of it is in the future.
+      weekStart = addDays(startOfWeek(nyNow().dateStr), 7);
+      closedDate = addDays(weekStart, 2);
+
+      // The agency does not run that weekday, as a standing arrangement.
+      await prisma.defaultCrewOutOfService.upsert({
+        where: { weekday: weekdayOf(closedDate) },
+        create: { weekday: weekdayOf(closedDate), reason: 'Weekly meeting' },
+        update: { reason: 'Weekly meeting' },
+      });
+
+      // And the night already exists, in service, with somebody riding it —
+      // the state that made the template look like it did nothing.
+      const crew = await prisma.crew.upsert({
+        where: { date: toDbDate(closedDate) },
+        create: { date: toDbDate(closedDate) },
+        update: { outOfService: false, outOfServiceReason: null },
+      });
+      await prisma.crewSlot.deleteMany({ where: { crewId: crew.id } });
+      await prisma.crewSlot.createMany({
+        data: [
+          { crewId: crew.id, position: 'CC', memberId: rider },
+          { crewId: crew.id, position: 'DRIVER' },
+          { crewId: crew.id, position: 'DUTY_SUP', memberId: sup },
+        ],
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.defaultCrewOutOfService.deleteMany({
+        where: { weekday: weekdayOf(closedDate) },
+      });
+      const crew = await prisma.crew.findUnique({
+        where: { date: toDbDate(closedDate) },
+      });
+      if (crew) {
+        await prisma.crewSlot.deleteMany({ where: { crewId: crew.id } });
+        await prisma.crew.delete({ where: { id: crew.id } });
+      }
+    });
+
+    it('closes the night the template says is closed', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/crews/bulk')
+        .set(as(alice))
+        .set('x-test-permissions', 'schedule:crews:assign')
+        .send({ weekStart, action: 'apply-defaults' })
+        .expect(201);
+      expect(res.body.closedNights).toBeGreaterThanOrEqual(1);
+
+      const crew = await prisma.crew.findUniqueOrThrow({
+        where: { date: toDbDate(closedDate) },
+        include: { slots: true },
+      });
+      expect(crew.outOfService).toBe(true);
+      expect(crew.outOfServiceReason).toBe('Weekly meeting');
+      // Nobody rides a night that is not running; the phone is still carried.
+      expect(crew.slots.find((s) => s.position === 'CC')?.memberId).toBeNull();
+      expect(crew.slots.find((s) => s.position === 'DUTY_SUP')?.memberId).toBe(
+        sup,
+      );
+    });
+  });
+
   // DiALERT asks who the duty supervisor is and gets one member id back.
   // The whole question is which night it means at two in the morning.
   describe('the duty supervisor endpoint', () => {
