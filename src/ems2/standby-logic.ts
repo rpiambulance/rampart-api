@@ -271,3 +271,52 @@ export function personnelName(person: {
   }
   return person.name?.trim() || 'Somebody';
 }
+
+/** Somebody who logged something, and the mark that stands for them. */
+export interface LoggerMark {
+  id: number;
+  name: string;
+  initials: string;
+}
+
+/** "Aaron Burns" -> "AB". First and last word, because a middle name is not
+ *  what anybody would write. */
+function baseInitials(name: string): string {
+  const words = name.split(/\s+/).filter(Boolean);
+  if (!words.length) return '?';
+  const first = words[0][0];
+  const last = words.length > 1 ? words[words.length - 1][0] : '';
+  return (first + last).toUpperCase();
+}
+
+/**
+ * Who logged what, short enough to put against every line.
+ *
+ * A detailed report used to name the member in full at the end of each
+ * entry, which on a busy standby is the same twelve names down the page and
+ * the actual entry pushed off the edge. Initials go against the time and
+ * the names are spelled out once at the bottom.
+ *
+ * Two people whose initials agree are told apart by a number, and the one
+ * who appears first keeps the plain mark: numbering both would suggest the
+ * numbers mean something. So the order matters, and it is the order they
+ * first appear in the report — stable for a given report, which is what a
+ * reader comparing two copies of it needs.
+ */
+export function loggerMarks(
+  actors: Array<{ id: number; name: string }>,
+): LoggerMark[] {
+  const byId = new Map<number, LoggerMark>();
+  const used = new Map<string, number>();
+  for (const actor of actors) {
+    if (byId.has(actor.id)) continue;
+    const base = baseInitials(actor.name);
+    const nth = (used.get(base) ?? 0) + 1;
+    used.set(base, nth);
+    byId.set(actor.id, {
+      ...actor,
+      initials: nth === 1 ? base : `${base}${nth}`,
+    });
+  }
+  return [...byId.values()];
+}

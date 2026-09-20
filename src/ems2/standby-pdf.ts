@@ -625,7 +625,15 @@ export interface EventReportData {
     location: string | null;
   }>;
   incidents: IncidentRow[];
-  timeline: Array<{ at: Date; kind: string; detail: string }>;
+  timeline: Array<{
+    at: Date;
+    kind: string;
+    detail: string;
+    /** Whose mark goes against it; nothing for what the system recorded. */
+    initials: string | null;
+  }>;
+  /** What each mark on the timeline stands for. */
+  loggers: Array<{ initials: string; name: string }>;
   /** Without the nitty gritty: summary only, no per-encounter detail. */
   detailed: boolean;
 }
@@ -870,15 +878,54 @@ export function eventReport(data: EventReportData): Doc {
     y = room(doc, y, 80);
     y = sectionTitle(doc, 'Timeline', y);
     doc.fontSize(8);
+    let anySystem = false;
     for (const entry of data.timeline) {
       y = room(doc, y, 12);
       doc
         .fillColor('#666')
         .text(when(entry.at, 'time'), PAGE.margin, y, { width: 40 });
+      if (entry.initials) {
+        doc.text(`[${entry.initials}]`, PAGE.margin + 46, y, { width: 32 });
+      } else {
+        anySystem = true;
+      }
       doc
         .fillColor('#000')
-        .text(entry.detail, PAGE.margin + 46, y, { width: 470 });
-      y += 11;
+        .text(entry.detail, PAGE.margin + 82, y, { width: 434 });
+      // A line that wrapped has to be stepped over, not written on: the
+      // column is narrower than it was now that the mark sits beside it.
+      y = Math.max(y + 11, doc.y + 3);
+    }
+
+    // The key. Initials against the lines are only worth having if the
+    // report says whose they are, and a reader with two of these side by
+    // side needs it on the same page as the lines it explains.
+    if (data.loggers.length) {
+      y += 6;
+      y = room(doc, y, 40);
+      y = sectionTitle(doc, 'Who logged what', y);
+      doc.fontSize(8).fillColor('#000');
+      doc.text(
+        data.loggers
+          .map((logger) => `[${logger.initials}]=${logger.name}`)
+          .join(';   '),
+        PAGE.margin,
+        y,
+        { width: 516 },
+      );
+      y = doc.y + 4;
+      if (anySystem) {
+        doc
+          .fillColor('#666')
+          .text(
+            'Lines with no initials were recorded by the system.',
+            PAGE.margin,
+            y,
+            { width: 516 },
+          );
+        doc.fillColor('#000');
+        y = doc.y + 4;
+      }
     }
   }
 

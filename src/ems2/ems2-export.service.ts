@@ -10,6 +10,7 @@ import { Ems2Service } from './ems2.service';
 import {
   formCounts,
   inPatientList,
+  loggerMarks,
   onDohForms,
   personnelName,
 } from './standby-logic';
@@ -168,21 +169,36 @@ export class Ems2ExportService {
       standbyId,
     );
 
-    const timeline = detailed
-      ? (await this.ems2.timeline(auth, standbyId)).map((entry) => ({
-          at: entry.at,
-          kind: entry.kind,
-          detail: entry.actor
-            ? `${entry.text} — ${displayName(entry.actor)}`
-            : entry.text,
-        }))
-      : [];
+    // Who logged each line, as initials against the time, and spelled out
+    // once at the foot of the report. The name used to be repeated in full
+    // on every entry, which on a busy standby is the same few names down
+    // the page with the entry itself squeezed against the margin.
+    const entries = detailed ? await this.ems2.timeline(auth, standbyId) : [];
+    const marks = loggerMarks(
+      entries
+        .filter((entry) => entry.actor)
+        .map((entry) => ({
+          id: entry.actor!.id,
+          name: displayName(entry.actor!),
+        })),
+    );
+    const markOf = new Map(marks.map((mark) => [mark.id, mark.initials]));
+    const timeline = entries.map((entry) => ({
+      at: entry.at,
+      kind: entry.kind,
+      detail: entry.text,
+      initials: entry.actor ? (markOf.get(entry.actor.id) ?? null) : null,
+    }));
 
     return render(
       eventReport({
         standby: forForm,
         counts,
         detailed,
+        loggers: marks.map((mark) => ({
+          initials: mark.initials,
+          name: mark.name,
+        })),
         personnel: standby.personnel.map((p) => ({
           name: personnelName(p),
           role: p.role,

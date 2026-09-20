@@ -5,6 +5,7 @@ import {
   formCounts,
   inChargeConflict,
   inPatientList,
+  loggerMarks,
   onDohForms,
   mayReadAllEncounters,
   type EncounterShape,
@@ -333,5 +334,52 @@ describe('voided encounters', () => {
         patientInitials: 'Jonathan Doe',
       }).map((p) => p.field),
     ).toEqual(['patientInitials']);
+  });
+});
+
+describe('the marks that say who logged a line', () => {
+  it('takes the first letter of the first and last name', () => {
+    expect(loggerMarks([{ id: 1, name: 'Aaron Burns' }])[0].initials).toBe(
+      'AB',
+    );
+  });
+
+  it('numbers the second of two people who share them', () => {
+    expect(
+      loggerMarks([
+        { id: 1, name: 'Colin Doyle' },
+        { id: 2, name: 'Charles Delaney' },
+      ]).map((mark) => mark.initials),
+    ).toEqual(['CD', 'CD2']);
+  });
+
+  it('gives somebody the same mark however often they turn up', () => {
+    const marks = loggerMarks([
+      { id: 1, name: 'Aaron Burns' },
+      { id: 2, name: 'Colin Doyle' },
+      { id: 1, name: 'Aaron Burns' },
+    ]);
+    expect(marks).toHaveLength(2);
+    expect(marks.map((mark) => mark.initials)).toEqual(['AB', 'CD']);
+  });
+
+  // The order is the order they first appear, so two printings of the same
+  // report say the same thing.
+  it('hands the plain mark to whoever appeared first', () => {
+    expect(
+      loggerMarks([
+        { id: 2, name: 'Charles Delaney' },
+        { id: 1, name: 'Colin Doyle' },
+      ]).map((mark) => `${mark.initials}=${mark.name}`),
+    ).toEqual(['CD=Charles Delaney', 'CD2=Colin Doyle']);
+  });
+
+  it('copes with a middle name and with only one name', () => {
+    expect(
+      loggerMarks([
+        { id: 1, name: 'Mary Jane Watson' },
+        { id: 2, name: 'Prince' },
+      ]).map((mark) => mark.initials),
+    ).toEqual(['MW', 'P']);
   });
 });
