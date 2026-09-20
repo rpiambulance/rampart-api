@@ -10,8 +10,10 @@ import {
   Post,
   Query,
   Res,
+  Sse,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { Observable, merge } from 'rxjs';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -29,6 +31,7 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
+import { Ems2Events } from './ems2.events';
 import { Ems2Service } from './ems2.service';
 import { Ems2ExportService } from './ems2-export.service';
 
@@ -98,7 +101,10 @@ class UpdateStandbyDto {
 }
 
 class PersonnelDto {
-  @IsInt() memberId!: number;
+  /** Somebody on the roster. Left out for a name written in by hand. */
+  @IsOptional() @IsInt() memberId?: number;
+  /** Mutual aid, a visiting crew — somebody this agency has no record of. */
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
   @IsOptional() @IsIn(ROLES) role?: (typeof ROLES)[number];
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
@@ -193,6 +199,7 @@ class VoidEncounterDto {
 @Controller({ path: 'standbys', version: '1' })
 export class Ems2Controller {
   constructor(
+    private readonly events: Ems2Events,
     private readonly ems2: Ems2Service,
     private readonly exports: Ems2ExportService,
     private readonly prisma: PrismaService,
@@ -250,6 +257,28 @@ export class Ems2Controller {
   @Get(':id')
   get(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
     return this.ems2.get(auth, id);
+  }
+
+  /**
+   * The board, kept live.
+   *
+   * A standby is written by several people at once and each of them used to
+   * see only their own writes until they reloaded. The event says which
+   * standby moved and nothing else; the screen asks for it again, so a
+   * screen that missed one is briefly stale rather than quietly wrong.
+   */
+  @Sse(':id/stream')
+  stream(@Param('id', ParseIntPipe) id: number): Observable<{ data: unknown }> {
+    // A comment every twenty-five seconds, so a proxy between here and the
+    // gate does not decide the connection is idle and close it.
+    const keepAlive = new Observable<{ data: unknown }>((subscriber) => {
+      const timer = setInterval(
+        () => subscriber.next({ data: { at: Date.now() } }),
+        25_000,
+      );
+      return () => clearInterval(timer);
+    });
+    return merge(this.events.stream(id), keepAlive);
   }
 
   @Get(':id/timeline')

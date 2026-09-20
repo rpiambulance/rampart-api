@@ -26,6 +26,7 @@ import { ChecksheetsJobs } from './checksheets/checksheets.jobs';
 import { ChecksheetsService } from './checksheets/checksheets.service';
 import { Ems2Controller } from './ems2/ems2.controller';
 import { Ems2ConfigController } from './ems2/ems2-config.controller';
+import { Ems2Events } from './ems2/ems2.events';
 import { Ems2Service } from './ems2/ems2.service';
 import { Ems2ExportService } from './ems2/ems2-export.service';
 import { HeadsupController } from './headsup/headsup.controller';
@@ -113,6 +114,7 @@ import { TrainingsModule } from './trainings/trainings.module';
     BootstrapService,
     ChecksheetsService,
     Ems2Service,
+    Ems2Events,
     Ems2ExportService,
     HeadsupService,
     RequestsService,

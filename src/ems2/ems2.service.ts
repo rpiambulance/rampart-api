@@ -7,14 +7,15 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { nyDayStart, nyNow } from '../common/dates';
-import { displayName } from '../common/name';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { RunNumbersService } from '../run-numbers/run-numbers.service';
+import { Ems2Events } from './ems2.events';
 import {
   advisoryProblems,
   blockingProblems,
   formCounts,
+  personnelName,
   inChargeConflict,
   mayReadAllEncounters,
   type EncounterShape,
@@ -97,6 +98,7 @@ export class Ems2Service {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly runNumbers: RunNumbersService,
+    private readonly events: Ems2Events,
   ) {}
 
   // ------------------------------------------------------------- the record
@@ -296,6 +298,7 @@ export class Ems2Service {
       },
     });
     await this.audit.log(auth, 'standby.update', 'StandbyLog', id, data);
+    this.events.touched(id);
     return standby;
   }
 
@@ -384,15 +387,43 @@ export class Ems2Service {
 
   // ---------------------------------------------------------------- people
 
+  /**
+   * Puts somebody on the standby.
+   *
+   * Usually a member, named by id. Sometimes not: mutual aid, a visiting
+   * crew, an EMT who turned up with the fire department. They were there,
+   * so they belong on the record, and a name written by hand is the whole of
+   * what we know about them. Nothing else about the standby cares which
+   * kind of person it is holding.
+   */
   async addPersonnel(
     auth: AuthContext,
     standbyId: number,
-    input: { memberId: number; role?: StandbyRole; note?: string },
+    input: {
+      memberId?: number | null;
+      name?: string | null;
+      role?: StandbyRole;
+      note?: string;
+    },
   ) {
-    const existing = await this.prisma.standbyPersonnel.findUnique({
-      where: { standbyId_memberId: { standbyId, memberId: input.memberId } },
-    });
+    const written = input.name?.trim();
+    if (!input.memberId && !written) {
+      throw new BadRequestException(
+        'Name somebody from the roster, or write in who is here.',
+      );
+    }
+
     // Somebody who left and came back is the same person, not a second row.
+    // Only a member can be recognised that way: two people written in by
+    // hand with the same name may or may not be the same person, and
+    // guessing wrong merges two strangers into one record.
+    const existing = input.memberId
+      ? await this.prisma.standbyPersonnel.findUnique({
+          where: {
+            standbyId_memberId: { standbyId, memberId: input.memberId },
+          },
+        })
+      : null;
     const person = existing
       ? await this.prisma.standbyPersonnel.update({
           where: { id: existing.id },
@@ -406,7 +437,8 @@ export class Ems2Service {
       : await this.prisma.standbyPersonnel.create({
           data: {
             standbyId,
-            memberId: input.memberId,
+            memberId: input.memberId ?? null,
+            name: input.memberId ? null : written,
             role: input.role ?? 'CREW',
             note: input.note?.trim() || null,
             addedById: auth.kind === 'member' ? auth.memberId : null,
@@ -419,8 +451,9 @@ export class Ems2Service {
       existing ? 'personnel.returned' : 'personnel.added',
       auth,
       {
-        memberId: input.memberId,
-        detail: { role: person.role },
+        memberId: input.memberId ?? null,
+        // Written into the entry for somebody with no record to look up.
+        detail: { role: person.role, memberName: person.name ?? undefined },
       },
     );
     return person;
@@ -497,7 +530,7 @@ export class Ems2Service {
     });
     await this.log(standbyId, 'personnel.removed', auth, {
       memberId: person.memberId,
-      detail: { role: person.role },
+      detail: { role: person.role, memberName: person.name ?? undefined },
     });
     return person;
   }
@@ -648,7 +681,11 @@ export class Ems2Service {
     await this.log(standbyId, 'crew.assigned', auth, {
       unitId,
       memberId: person.memberId,
-      detail: { name: unit?.name, position: assignment.position },
+      detail: {
+        name: unit?.name,
+        position: assignment.position,
+        memberName: person.name ?? undefined,
+      },
     });
     return assignment;
   }
@@ -666,7 +703,11 @@ export class Ems2Service {
     await this.log(standbyId, 'crew.unassigned', auth, {
       unitId: assignment.unitId,
       memberId: assignment.personnel.memberId,
-      detail: { name: unit?.name, position: assignment.position },
+      detail: {
+        name: unit?.name,
+        position: assignment.position,
+        memberName: assignment.personnel.name ?? undefined,
+      },
     });
     return assignment;
   }
@@ -807,6 +848,7 @@ export class Ems2Service {
       where: { id: encounterId },
       data,
     });
+    this.events.touched(standbyId);
     return { ...encounter, advisories: advisoryProblems(merged) };
   }
 
@@ -1245,8 +1287,12 @@ export class Ems2Service {
       ]);
 
     const unitNames = new Map(units.map((unit) => [unit.id, unit.name]));
+    // Only the ones with a member record can be looked up by id; somebody
+    // written in by hand is named in the entry that mentions them.
     const memberNames = new Map(
-      personnel.map((person) => [person.memberId, displayName(person.member)]),
+      personnel
+        .filter((person) => person.memberId !== null)
+        .map((person) => [person.memberId!, personnelName(person)]),
     );
     const sequences = new Map(
       encounters.map((encounter) => [encounter.id, encounter.sequence]),
@@ -1303,7 +1349,7 @@ export class Ems2Service {
     });
   }
 
-  /** One line in the record of what happened. */
+  /** One line in the record of what happened, and a nudge to the screens. */
   private async log(
     standbyId: number,
     kind: string,
@@ -1315,6 +1361,7 @@ export class Ems2Service {
       detail?: unknown;
     } = {},
   ) {
+    this.events.touched(standbyId);
     await this.prisma.standbyTimelineEntry.create({
       data: {
         standbyId,

@@ -247,3 +247,27 @@ export function inChargeConflict(
     .filter((p) => p.role === 'EES_IC' && !p.removedAt && p.id !== promoting)
     .map((p) => p.id);
 }
+
+/**
+ * What to call somebody on a standby.
+ *
+ * Most people are members and are called what the roster calls them. Some
+ * are not — mutual aid, a visiting crew, an EMT who turned up with the fire
+ * department — and were written in by hand. Both were there, so both are on
+ * the record, and every place that names them asks this.
+ */
+export function personnelName(person: {
+  name?: string | null;
+  member?: {
+    firstName: string;
+    preferredFirstName?: string | null;
+    lastName?: string | null;
+  } | null;
+}): string {
+  if (person.member) {
+    const first =
+      person.member.preferredFirstName?.trim() || person.member.firstName;
+    return [first, person.member.lastName].filter(Boolean).join(' ');
+  }
+  return person.name?.trim() || 'Somebody';
+}

@@ -7,7 +7,12 @@ import type { AuthContext } from '../auth/auth-context';
 import { displayName } from '../common/name';
 import { PrismaService } from '../prisma/prisma.service';
 import { Ems2Service } from './ems2.service';
-import { formCounts, inPatientList, onDohForms } from './standby-logic';
+import {
+  formCounts,
+  inPatientList,
+  onDohForms,
+  personnelName,
+} from './standby-logic';
 import {
   doh2332,
   doh2342,
@@ -103,11 +108,10 @@ export class Ems2ExportService {
       peakEstimated: standby.peakEstimated,
       unusualOccurrences: standby.unusualOccurrences,
       completedByName:
-        standby.completedByName ??
-        (inCharge ? displayName(inCharge.member) : null),
+        standby.completedByName ?? (inCharge ? personnelName(inCharge) : null),
       completedByTitle: standby.completedByTitle,
       completedByPhone: standby.completedByPhone,
-      inCharge: inCharge ? displayName(inCharge.member) : null,
+      inCharge: inCharge ? personnelName(inCharge) : null,
       venue: standby.place?.name ?? standby.placeText,
     };
 
@@ -180,7 +184,7 @@ export class Ems2ExportService {
         counts,
         detailed,
         personnel: standby.personnel.map((p) => ({
-          name: displayName(p.member),
+          name: personnelName(p),
           role: p.role,
           left: !!p.removedAt,
           units: p.assignments
@@ -194,7 +198,7 @@ export class Ems2ExportService {
             .filter((a) => !a.removedAt)
             .map((a) =>
               [
-                displayName(a.personnel.member),
+                personnelName(a.personnel),
                 a.position ? `(${a.position})` : null,
               ]
                 .filter(Boolean)

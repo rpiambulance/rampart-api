@@ -2202,7 +2202,13 @@ enum StandbyRole {
 model StandbyPersonnel {
   id         Int         @id @default(autoincrement())
   standbyId  Int
-  memberId   Int
+  /// Null for somebody this agency has no record of — mutual aid, a visiting
+  /// crew, an EMT who turned up with the fire department. They were there,
+  /// so they are on the standby; they are nobody's member record.
+  memberId   Int?
+  /// What to call them when there is no member record to ask. Never set
+  /// alongside a member: a member is called what the roster calls them.
+  name       String?
   role       StandbyRole @default(CREW)
   /// True when they came from the signup list rather than being added by
   /// hand, so "who actually turned up" stays answerable afterward.
@@ -2217,7 +2223,7 @@ model StandbyPersonnel {
   note        String?
 
   standby     StandbyLog       @relation(fields: [standbyId], references: [id], onDelete: Cascade)
-  member      Member           @relation("StandbyPersonnelMember", fields: [memberId], references: [id])
+  member      Member?          @relation("StandbyPersonnelMember", fields: [memberId], references: [id])
   addedBy     Member?          @relation("StandbyPersonnelAddedBy", fields: [addedById], references: [id])
   removedBy   Member?          @relation("StandbyPersonnelRemovedBy", fields: [removedById], references: [id])
   assignments UnitAssignment[]

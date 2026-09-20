@@ -4353,6 +4353,47 @@ describe('Night crews engine (e2e)', () => {
       expect(live).toBe(2);
     });
 
+    // Mutual aid, a visiting crew: they were there, so they are on it.
+    it('writes in somebody with no member record', async () => {
+      const guest = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/personnel`)
+        .set(sup())
+        .send({ name: `Fire medic ${stamp}`, role: 'SUPPORT' })
+        .expect(201);
+      expect(guest.body.memberId).toBeNull();
+      expect(guest.body.name).toContain('Fire medic');
+
+      // And can be put on a unit like anybody else.
+      const unit = await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/units`)
+        .set(sup())
+        .send({ name: `FD-${stamp}`.slice(0, 20) })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/units/${unit.body.id}/crew`)
+        .set(sup())
+        .send({ personnelId: guest.body.id, position: 'Medic' })
+        .expect(201);
+
+      // The timeline names them, having no record to look one up in.
+      const timeline = await request(app.getHttpServer())
+        .get(`/v1/standbys/${standbyId}/timeline`)
+        .set(sup())
+        .expect(200);
+      const lines = (timeline.body as Array<{ text: string }>).map(
+        (entry) => entry.text,
+      );
+      expect(lines.some((line) => line.includes('Fire medic'))).toBe(true);
+    });
+
+    it('refuses somebody with neither a record nor a name', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/standbys/${standbyId}/personnel`)
+        .set(sup())
+        .send({ role: 'CREW' })
+        .expect(400);
+    });
+
     it('keeps one supervisor in charge', async () => {
       const [a, b] = await prisma.standbyPersonnel.findMany({
         where: { standbyId },
