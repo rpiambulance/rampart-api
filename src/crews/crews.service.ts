@@ -196,6 +196,10 @@ export class CrewsService {
     return {
       weekStart,
       thisWeek,
+      // The first week members cannot see yet. Handed over so a screen can
+      // tell looking back from looking ahead, which are not the same thing
+      // and had been reading as the same notice.
+      publicEnd: addDays(thisWeek, 7 * knobs.publicWeeks),
       prevViewDate: addDays(weekStart, -14),
       nextViewDate,
       currentWeek: weeks[0],

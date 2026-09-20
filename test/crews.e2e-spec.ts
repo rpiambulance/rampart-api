@@ -3143,6 +3143,49 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // Looking back and looking ahead are different states, and the screen
+  // reads them off the same two dates.
+  describe('which week you are looking at', () => {
+    const scheduler = () => ({
+      ...as(alice),
+      'x-test-permissions': 'schedule:crews:assign',
+    });
+
+    it('hands over this week and the end of the published window', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/crews')
+        .set(scheduler())
+        .expect(200);
+      expect(res.body.weekStart).toBe(startOfWeek(nyNow().dateStr));
+      expect(res.body.thisWeek).toBe(startOfWeek(nyNow().dateStr));
+      // Two weeks by default: this one and the next.
+      expect(res.body.publicEnd).toBe(
+        addDays(startOfWeek(nyNow().dateStr), 14),
+      );
+    });
+
+    it('says a week ahead is ahead, not behind', async () => {
+      const ahead = addDays(startOfWeek(nyNow().dateStr), 28);
+      const res = await request(app.getHttpServer())
+        .get(`/v1/crews?viewDate=${ahead}`)
+        .set(scheduler())
+        .expect(200);
+      expect(res.body.weekStart).toBe(ahead);
+      expect(res.body.weekStart > res.body.thisWeek).toBe(true);
+      // And beyond what members can see, which is the thing worth saying.
+      expect(res.body.weekStart >= res.body.publicEnd).toBe(true);
+    });
+
+    it('says a week behind is behind', async () => {
+      const back = addDays(startOfWeek(nyNow().dateStr), -14);
+      const res = await request(app.getHttpServer())
+        .get(`/v1/crews?viewDate=${back}`)
+        .set(scheduler())
+        .expect(200);
+      expect(res.body.weekStart < res.body.thisWeek).toBe(true);
+    });
+  });
+
   // A standing arrangement in the template has to reach the nights that
   // already exist, or it only ever applies to weeks nobody had looked at.
   describe('applying the weekly template to a week already on the books', () => {
