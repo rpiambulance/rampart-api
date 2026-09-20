@@ -85,7 +85,7 @@ export function render(doc: Doc): Promise<Buffer> {
  */
 function when(
   value: Date | string | null | undefined,
-  shape: 'datetime' | 'date' | 'day' | 'time' = 'datetime',
+  shape: 'datetime' | 'date' | 'dateline' | 'day' | 'time' = 'datetime',
 ): string {
   if (!value) return '';
   const d = new Date(value);
@@ -94,16 +94,23 @@ function when(
       ? { hour: '2-digit', minute: '2-digit', hour12: false }
       : shape === 'day'
         ? { day: 'numeric', month: 'short' }
-        : shape === 'date'
-          ? { day: 'numeric', month: 'short', year: 'numeric' }
-          : {
+        : shape === 'dateline'
+          ? {
+              weekday: 'long',
               day: 'numeric',
               month: 'short',
               year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            };
+            }
+          : shape === 'date'
+            ? { day: 'numeric', month: 'short', year: 'numeric' }
+            : {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              };
   return new Intl.DateTimeFormat('en-GB', {
     ...opts,
     timeZone: AGENCY_TZ,
@@ -879,22 +886,51 @@ export function eventReport(data: EventReportData): Doc {
     y = sectionTitle(doc, 'Timeline', y);
     doc.fontSize(8);
     let anySystem = false;
+
+    // A standby that runs past midnight — most of them — puts two dates on
+    // the timeline, and a bare 02:30 does not say which night it was. The
+    // date is said once with its times under it. One that starts and ends
+    // inside a day says nothing, because the date is already at the top of
+    // the report and a heading repeating it is furniture.
+    const byDay = new Map<string, typeof data.timeline>();
     for (const entry of data.timeline) {
-      y = room(doc, y, 12);
-      doc
-        .fillColor('#666')
-        .text(when(entry.at, 'time'), PAGE.margin, y, { width: 40 });
-      if (entry.initials) {
-        doc.text(`[${entry.initials}]`, PAGE.margin + 46, y, { width: 32 });
-      } else {
-        anySystem = true;
+      const day = when(entry.at, 'dateline');
+      const rows = byDay.get(day);
+      if (rows) rows.push(entry);
+      else byDay.set(day, [entry]);
+    }
+    const spansDays = byDay.size > 1;
+
+    for (const [day, rows] of byDay) {
+      if (spansDays) {
+        // Kept with an entry or two rather than stranded at the foot of a
+        // page above nothing.
+        y = room(doc, y, 34);
+        doc
+          .font('Helvetica-Bold')
+          .fillColor('#000')
+          .text(day, PAGE.margin, y, { width: 516 });
+        doc.font('Helvetica');
+        y = doc.y + 3;
       }
-      doc
-        .fillColor('#000')
-        .text(entry.detail, PAGE.margin + 82, y, { width: 434 });
-      // A line that wrapped has to be stepped over, not written on: the
-      // column is narrower than it was now that the mark sits beside it.
-      y = Math.max(y + 11, doc.y + 3);
+      for (const entry of rows) {
+        y = room(doc, y, 12);
+        doc
+          .fillColor('#666')
+          .text(when(entry.at, 'time'), PAGE.margin, y, { width: 40 });
+        if (entry.initials) {
+          doc.text(`[${entry.initials}]`, PAGE.margin + 46, y, { width: 32 });
+        } else {
+          anySystem = true;
+        }
+        doc
+          .fillColor('#000')
+          .text(entry.detail, PAGE.margin + 82, y, { width: 434 });
+        // A line that wrapped has to be stepped over, not written on: the
+        // column is narrower than it was now that the mark sits beside it.
+        y = Math.max(y + 11, doc.y + 3);
+      }
+      if (spansDays) y += 4;
     }
 
     // The key. Initials against the lines are only worth having if the
