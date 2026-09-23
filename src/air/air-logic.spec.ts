@@ -4,6 +4,9 @@ import {
   shouldAsk,
   withinMatchWindow,
   withinWindow,
+  fullCrewAmong,
+  fullCrewLine,
+  type ResponderSkills,
 } from './air-logic';
 
 /** A New York wall-clock time, as an instant. */
@@ -156,5 +159,129 @@ describe('rosterLines', () => {
       '*Responding (2):* A. Rivera, D. Wu',
       '*Not responding:* C. Okonkwo',
     ]);
+  });
+});
+
+describe('whether the people who answered can take a truck out', () => {
+  const who = (
+    name: string,
+    skills: Partial<Omit<ResponderSkills, 'name'>> = {},
+  ): ResponderSkills => ({
+    name,
+    cc: false,
+    driver: false,
+    probCC: false,
+    probDriver: false,
+    ccTrainer: false,
+    driverTrainer: false,
+    ...skills,
+  });
+
+  it('is a crew chief and a driver', () => {
+    const crew = fullCrewAmong([
+      who('Alice', { cc: true }),
+      who('Bob', { driver: true }),
+    ]);
+    expect(crew?.cc.name).toBe('Alice');
+    expect(crew?.driver.name).toBe('Bob');
+    expect(fullCrewLine(crew)).toBe(
+      '*Full crew responding* — Alice (CC), Bob (driver)',
+    );
+  });
+
+  it('is not one person who could do both', () => {
+    expect(
+      fullCrewAmong([who('Alice', { cc: true, driver: true })]),
+    ).toBeNull();
+  });
+
+  it('is not a chief with nobody to drive', () => {
+    expect(fullCrewAmong([who('Alice', { cc: true }), who('Bob')])).toBeNull();
+  });
+
+  it('takes somebody who is both when a second person can drive', () => {
+    const crew = fullCrewAmong([
+      who('Alice', { cc: true, driver: true }),
+      who('Bob', { driver: true }),
+    ]);
+    expect(crew?.cc.name).toBe('Alice');
+    expect(crew?.driver.name).toBe('Bob');
+  });
+
+  // The way probationary crew chiefs get their hours.
+  it('lets a trainer take the other seat', () => {
+    const crew = fullCrewAmong([
+      who('Alice', { probCC: true }),
+      who('Bob', { driver: true, cc: true, ccTrainer: true }),
+    ]);
+    expect(crew?.cc.name).toBe('Alice');
+    expect(crew?.driver.name).toBe('Bob');
+    expect(crew?.ccTrainer?.name).toBe('Bob');
+    expect(fullCrewLine(crew)).toBe(
+      '*Full crew responding* — Alice (probationary CC, with Bob), Bob (driver)',
+    );
+  });
+
+  it('refuses a probationary chief with no trainer anywhere', () => {
+    expect(
+      fullCrewAmong([
+        who('Alice', { probCC: true }),
+        who('Bob', { driver: true }),
+      ]),
+    ).toBeNull();
+  });
+
+  it('refuses a probationary driver with no trainer anywhere', () => {
+    expect(
+      fullCrewAmong([
+        who('Alice', { cc: true }),
+        who('Bob', { probDriver: true }),
+      ]),
+    ).toBeNull();
+  });
+
+  it('takes a third person as the trainer', () => {
+    const crew = fullCrewAmong([
+      who('Alice', { probCC: true }),
+      who('Bob', { driver: true }),
+      who('Carol', { cc: true, ccTrainer: true }),
+    ]);
+    expect(crew?.cc.name).toBe('Carol');
+    expect(crew?.driver.name).toBe('Bob');
+  });
+
+  it('nobody supervises themselves', () => {
+    expect(
+      fullCrewAmong([
+        who('Alice', { probCC: true, ccTrainer: true }),
+        who('Bob', { driver: true }),
+      ]),
+    ).toBeNull();
+  });
+
+  it('covers two probationary seats with the trainers for each', () => {
+    const crew = fullCrewAmong([
+      who('Alice', { probCC: true }),
+      who('Bob', { probDriver: true }),
+      who('Carol', { cc: true, ccTrainer: true, driverTrainer: true }),
+    ]);
+    // Carol holds the chief's credential outright, so she takes that seat
+    // and only the driver is riding probationary.
+    expect(crew?.cc.name).toBe('Carol');
+    expect(crew?.driver.name).toBe('Bob');
+    expect(crew?.driverTrainer?.name).toBe('Carol');
+  });
+
+  it('lets an agency that does not require trainers run without one', () => {
+    const crew = fullCrewAmong(
+      [who('Alice', { probCC: true }), who('Bob', { probDriver: true })],
+      false,
+    );
+    expect(crew?.cc.name).toBe('Alice');
+    expect(crew?.driver.name).toBe('Bob');
+  });
+
+  it('says nothing when there is no crew', () => {
+    expect(fullCrewLine(null)).toBeNull();
   });
 });

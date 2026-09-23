@@ -124,3 +124,93 @@ export function rosterLines(responders: Responder[]): string[] {
   if (no.length) lines.push(`*Not responding:* ${no.join(', ')}`);
   return lines;
 }
+
+/** What somebody who has said they are coming can do on a truck. */
+export interface ResponderSkills {
+  name: string;
+  /** Holds the credential, or one above it. */
+  cc: boolean;
+  driver: boolean;
+  /** Holds only the probationary one, which rides with a trainer. */
+  probCC: boolean;
+  probDriver: boolean;
+  ccTrainer: boolean;
+  driverTrainer: boolean;
+}
+
+export interface FullCrew {
+  cc: ResponderSkills;
+  driver: ResponderSkills;
+  /** Named only when somebody is riding on a probationary credential. */
+  ccTrainer?: ResponderSkills;
+  driverTrainer?: ResponderSkills;
+}
+
+/**
+ * Can the people who have answered take a truck out?
+ *
+ * A crew chief and a driver, and they cannot be the same person — one
+ * drives and one is in the back. Somebody riding on a probationary
+ * credential needs the matching trainer to have answered as well, and the
+ * trainer is allowed to be the other seat: a probationary crew chief with a
+ * CC-T driving is a crew, which is most of how probationary crew chiefs get
+ * their hours.
+ *
+ * Nobody supervises themselves. Beyond that the search is exhaustive rather
+ * than clever, because six responders is a big call and the answer has to
+ * be right rather than fast: a full crew missed here is a truck that does
+ * not roll.
+ */
+export function fullCrewAmong(
+  responders: ResponderSkills[],
+  probationaryRequiresTrainer = true,
+): FullCrew | null {
+  // Whoever holds the credential outright is tried first, so the message
+  // names the plainest crew of the several that may be possible.
+  const byFull =
+    (key: 'cc' | 'driver') => (a: ResponderSkills, b: ResponderSkills) =>
+      Number(b[key]) - Number(a[key]);
+  const chiefs = responders.filter((r) => r.cc || r.probCC).sort(byFull('cc'));
+  const drivers = responders
+    .filter((r) => r.driver || r.probDriver)
+    .sort(byFull('driver'));
+
+  for (const cc of chiefs) {
+    for (const driver of drivers) {
+      if (driver === cc) continue;
+      const needsCcTrainer = !cc.cc && probationaryRequiresTrainer;
+      const needsDriverTrainer = !driver.driver && probationaryRequiresTrainer;
+      const ccTrainer = needsCcTrainer
+        ? responders.find((r) => r !== cc && r.ccTrainer)
+        : undefined;
+      const driverTrainer = needsDriverTrainer
+        ? responders.find((r) => r !== driver && r.driverTrainer)
+        : undefined;
+      if (needsCcTrainer && !ccTrainer) continue;
+      if (needsDriverTrainer && !driverTrainer) continue;
+      return { cc, driver, ccTrainer, driverTrainer };
+    }
+  }
+  return null;
+}
+
+/** The line that says a truck can go, or nothing when it cannot. */
+export function fullCrewLine(crew: FullCrew | null): string | null {
+  if (!crew) return null;
+  const seat = (
+    person: ResponderSkills,
+    full: boolean,
+    trainer: ResponderSkills | undefined,
+    label: string,
+  ) =>
+    full || !trainer
+      ? `${person.name} (${label})`
+      : `${person.name} (probationary ${label}, with ${trainer.name})`;
+  return (
+    '*Full crew responding* — ' +
+    [
+      seat(crew.cc, crew.cc.cc, crew.ccTrainer, 'CC'),
+      seat(crew.driver, crew.driver.driver, crew.driverTrainer, 'driver'),
+    ].join(', ')
+  );
+}

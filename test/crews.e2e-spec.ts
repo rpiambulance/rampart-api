@@ -3143,6 +3143,32 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // A week past the public window is a draft the member has not been told
+  // about, whoever is pencilled into it.
+  describe('a member\'s own upcoming shifts', () => {
+    it('stop at the end of the published schedule', async () => {
+      const soon = addDays(startOfWeek(nyNow().dateStr), 8); // next week
+      const draft = addDays(startOfWeek(nyNow().dateStr), 30); // beyond it
+
+      for (const date of [soon, draft]) {
+        await request(app.getHttpServer())
+          .put(`/v1/crews/by-date/${date}/slots/OBSERVER`)
+          .set(as(alice))
+          .set('x-test-permissions', 'schedule:crews:assign')
+          .send({ memberId: bob })
+          .expect(200);
+      }
+
+      const mine = await request(app.getHttpServer())
+        .get('/v1/crews/mine')
+        .set(as(bob))
+        .expect(200);
+      const dates = (mine.body as Array<{ date: string }>).map((s) => s.date);
+      expect(dates).toContain(soon);
+      expect(dates).not.toContain(draft);
+    });
+  });
+
   // Looking back and looking ahead are different states, and the screen
   // reads them off the same two dates.
   describe('which week you are looking at', () => {

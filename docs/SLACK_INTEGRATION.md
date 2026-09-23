@@ -39,9 +39,16 @@ Under **OAuth & Permissions → Scopes → Bot Token Scopes**:
   officer/who's-on channels. Inviting the bot (`/invite @Rampart` in each
   channel) is the tighter option; this scope lets it post to *any* public
   channel.
-- `users:read` + `users:read.email` — **only** if you want the Slack-ID
-  backfill described in §5. Not needed for messaging.
-- `commands` — only if you later add slash commands (e.g. `/whoson`).
+- `users:read` + `users:read.email` — the Slack-ID backfill described in
+  §5. Not needed for messaging.
+
+  `users:read` alone also decides who counts as a workspace admin, which is
+  what `/memberinfo` gates cell phone numbers on. Without it nobody is an
+  admin as far as the app can tell, so `/memberinfo` answers everybody
+  without the number rather than failing — the rest of the reply still
+  works.
+- `commands` — needed for the slash commands: `/whoson`, `/linkme` and
+  `/memberinfo`.
 
 Nothing here needs a **user token** (`xoxp-`), and no user scopes are
 required. Install to the workspace and copy the **Bot User OAuth Token**

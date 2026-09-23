@@ -6,15 +6,20 @@ import { HeadsupEvents } from '../headsup/headsup.events';
 import { StorageService } from '../storage/storage.service';
 import { SlackService } from '../notifications/slack.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CredentialGraphService } from '../credentials/credential-graph.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   MATCH_WINDOW_MINUTES,
   RESPONSE_WINDOW_MINUTES,
   crewNightFor,
+  fullCrewAmong,
+  fullCrewLine,
   rosterLines,
   shouldAsk,
   withinMatchWindow,
   withinWindow,
   type Responder,
+  type ResponderSkills,
 } from './air-logic';
 
 /** What a dispatch looks like to the callout, whoever wrote it down. */
@@ -47,6 +52,10 @@ const RESPONSES_INCLUDE = {
           firstName: true,
           preferredFirstName: true,
           lastName: true,
+          credentials: {
+            where: { status: 'ACTIVE' as const },
+            select: { type: { select: { key: true } } },
+          },
         },
       },
     },
@@ -76,6 +85,8 @@ export class AirService {
     private readonly slack: SlackService,
     private readonly headsup: HeadsupEvents,
     private readonly storage: StorageService,
+    private readonly graph: CredentialGraphService,
+    private readonly settings: SettingsService,
   ) {}
 
   // --------------------------------------------------------------- signals
@@ -438,6 +449,46 @@ export class AirService {
   // ------------------------------------------------------------------ Slack
 
   /** What to call somebody on a roster line, member record or not. */
+  /**
+   * What the people coming can do, asked of the credential ladder rather
+   * than of the rows they happen to hold: a duty supervisor satisfies the
+   * lot whether or not anybody ever wrote the lower ones down.
+   *
+   * Somebody who pressed the button without a linked member record counts
+   * as a body but not as a seat — we know a Slack account is coming and
+   * nothing else about them.
+   */
+  private async skillsOf(
+    responses: Array<{
+      responding: boolean;
+      slackName: string | null;
+      member: {
+        firstName: string;
+        preferredFirstName: string | null;
+        lastName: string | null;
+        credentials: Array<{ type: { key: string } }>;
+      } | null;
+    }>,
+  ): Promise<ResponderSkills[]> {
+    const skills: ResponderSkills[] = [];
+    for (const response of responses) {
+      if (!response.responding || !response.member) continue;
+      const can = await this.graph.keysSatisfiedBy(
+        new Set(response.member.credentials.map((c) => c.type.key)),
+      );
+      skills.push({
+        name: this.nameFor(response),
+        cc: can.has('CC'),
+        driver: can.has('D'),
+        probCC: can.has('P_CC') && !can.has('CC'),
+        probDriver: can.has('P_D') && !can.has('D'),
+        ccTrainer: can.has('CC_T'),
+        driverTrainer: can.has('D_T'),
+      });
+    }
+    return skills;
+  }
+
   private nameFor(response: {
     slackName: string | null;
     member: {
@@ -474,28 +525,31 @@ export class AirService {
     return callout.pageText?.trim() || 'RPI Ambulance dispatched';
   }
 
-  private blocksFor(callout: {
-    id: number;
-    kind: CalloutKind;
-    asked: boolean;
-    openedAt: Date;
-    pageText: string | null;
-    dispatch: {
-      determinant: string | null;
-      complaint: string | null;
-      location: string | null;
-      units: string | null;
-    } | null;
-    responses: Array<{
-      responding: boolean;
-      slackName: string | null;
-      member: {
-        firstName: string;
-        preferredFirstName: string | null;
-        lastName: string | null;
+  private blocksFor(
+    callout: {
+      id: number;
+      kind: CalloutKind;
+      asked: boolean;
+      openedAt: Date;
+      pageText: string | null;
+      dispatch: {
+        determinant: string | null;
+        complaint: string | null;
+        location: string | null;
+        units: string | null;
       } | null;
-    }>;
-  }): unknown[] {
+      responses: Array<{
+        responding: boolean;
+        slackName: string | null;
+        member: {
+          firstName: string;
+          preferredFirstName: string | null;
+          lastName: string | null;
+        } | null;
+      }>;
+    },
+    crew: string | null,
+  ): unknown[] {
     const when = callout.openedAt.toISOString();
     const heading =
       callout.kind === 'LONGTONE'
@@ -544,7 +598,14 @@ export class AirService {
     }));
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: rosterLines(responders).join('\n') },
+      text: {
+        type: 'mrkdwn',
+        // Whether they add up to a truck, under who they are. Absent when
+        // they do not, and it goes again if somebody takes their answer
+        // back — the message is redrawn from the answers every time, so
+        // there is nothing here to keep in step.
+        text: [...rosterLines(responders), ...(crew ? [crew] : [])].join('\n'),
+      },
     });
     blocks.push({
       type: 'actions',
@@ -612,7 +673,17 @@ export class AirService {
         ? 'Rensselaer County longtone'
         : 'RPI Ambulance dispatched'
     }: ${this.headline(callout)}`;
-    const blocks = this.blocksFor(callout);
+    const blocks = this.blocksFor(
+      callout,
+      callout.asked
+        ? fullCrewLine(
+            fullCrewAmong(
+              await this.skillsOf(callout.responses),
+              (await this.settings.scheduling()).probationaryRequiresTrainer,
+            ),
+          )
+        : null,
+    );
 
     if (callout.slackTs && callout.slackChannel) {
       await this.slack.update(

@@ -327,12 +327,57 @@ export class SlackService {
    * their press came too late — which is between them and the bot, and not
    * worth a line in a channel everybody else is reading.
    */
+  /**
+   * Whether this Slack account administers the workspace.
+   *
+   * Needs the users:read scope, which the documented minimal install does
+   * not ask for — so an agency that installed the app the light way gets
+   * false for everybody rather than an error, and whatever is gated on this
+   * is simply not offered. Failing closed is the only safe direction: the
+   * question is only ever asked before showing something private.
+   */
+  async isWorkspaceAdmin(slackUserId: string): Promise<boolean> {
+    const { botToken } = await this.settings();
+    if (!botToken) return false;
+    try {
+      const res = await fetch(
+        `https://slack.com/api/users.info?user=${encodeURIComponent(slackUserId)}`,
+        { headers: { Authorization: `Bearer ${botToken}` } },
+      );
+      const data = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        user?: { is_admin?: boolean; is_owner?: boolean };
+      };
+      if (!data.ok) {
+        this.logger.warn(
+          data.error === 'missing_scope'
+            ? 'slack: cannot tell who administers the workspace without the users:read scope'
+            : `slack: users.info failed: ${data.error}`,
+        );
+        return false;
+      }
+      return !!(data.user?.is_admin || data.user?.is_owner);
+    } catch (error) {
+      this.logger.error(`slack: users.info failed: ${String(error)}`);
+      return false;
+    }
+  }
+
   async respondPrivately(responseUrl: string, text: string): Promise<boolean> {
     try {
       const res = await fetch(responseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ response_type: 'ephemeral', text }),
+        // Slack takes a post to a button's response_url as an edit of the
+        // message the button is on unless it is told otherwise, which is how
+        // "your response was too late" — meant for one person — ended up in
+        // the dispatch everybody was reading.
+        body: JSON.stringify({
+          response_type: 'ephemeral',
+          replace_original: false,
+          text,
+        }),
       });
       return res.ok;
     } catch (error) {

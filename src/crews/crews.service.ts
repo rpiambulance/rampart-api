@@ -742,26 +742,39 @@ export class CrewsService {
     return { changed, closedNights, days: dates.length };
   }
 
-  /** The caller's own upcoming shifts, including not-yet-public weeks. */
+  /**
+   * The caller's own upcoming shifts, as far ahead as the schedule is
+   * published.
+   *
+   * A week past the public window is a draft: a scheduler has put somebody
+   * down, and may move them before anybody is told. Showing a member a
+   * shift they have not been given yet makes a promise the schedule has not
+   * made, so the window that decides what members may look at decides this
+   * too.
+   */
   async myUpcoming(memberId: number) {
-    const slots = await this.prisma.crewSlot.findMany({
-      where: {
-        memberId,
-        crew: { date: { gte: toDbDate(nyNow().dateStr) } },
-      },
-      include: { crew: true },
-      orderBy: { crew: { date: 'asc' } },
-    });
     const knobs = await this.settings.scheduling();
     const publicEnd = addDays(
       startOfWeek(nyNow().dateStr),
       7 * knobs.publicWeeks,
     );
+    const slots = await this.prisma.crewSlot.findMany({
+      where: {
+        memberId,
+        crew: {
+          date: {
+            gte: toDbDate(nyNow().dateStr),
+            lt: toDbDate(publicEnd),
+          },
+        },
+      },
+      include: { crew: true },
+      orderBy: { crew: { date: 'asc' } },
+    });
     return slots.map((slot) => ({
       crewId: slot.crewId,
       date: fromDbDate(slot.crew.date),
       position: slot.position,
-      isPublic: fromDbDate(slot.crew.date) < publicEnd,
     }));
   }
 

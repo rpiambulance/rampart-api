@@ -10,6 +10,7 @@ import { AirService } from '../air/air.service';
 import { Public } from '../auth/public.decorator';
 import { ChoresService } from '../chores/chores.service';
 import { whosOnReply } from '../crews/whoson';
+import { memberInfoReply } from '../members/member-info';
 import { SlackLinkService } from '../notifications/slack-link.service';
 import { SlackService } from '../notifications/slack.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -91,6 +92,25 @@ export class SlackController {
         text: body.user_id
           ? await this.links.linkBySlackUser(body.user_id)
           : 'Slack did not say who you are.',
+      };
+    }
+
+    /**
+     * /memberinfo — how to reach somebody, and what they can do.
+     *
+     * Private like the rest: a channel does not need to watch somebody look
+     * up a phone number. Numbers go only to whoever administers the
+     * workspace, which is a question about the asker and so is asked of
+     * Slack rather than of anything here.
+     */
+    if (command === 'memberinfo') {
+      return {
+        response_type: 'ephemeral',
+        text: await memberInfoReply(this.prisma, body.text ?? '', {
+          withPhones: body.user_id
+            ? await this.slack.isWorkspaceAdmin(body.user_id)
+            : false,
+        }),
       };
     }
 
