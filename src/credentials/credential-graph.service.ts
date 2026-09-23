@@ -182,12 +182,29 @@ export class CredentialGraphService {
    * set always reads the same way.
    */
   async highestOf(keys: Iterable<string>): Promise<string | undefined> {
+    return (await this.topmostOf(keys))[0];
+  }
+
+  /**
+   * The top of each branch these credentials reach: what somebody would say
+   * they are, rather than everything they have ever been signed off on.
+   *
+   * The ladder forks — a crew chief side and a driver side, with add-ons
+   * hanging off neither — so there is usually more than one answer and
+   * "Crew Chief, Driver" is the honest summary. A Duty Supervisor is one
+   * answer, because it is above the fork and everything under it.
+   *
+   * Nothing here is a list of tracks. Which credentials sit above which is
+   * in the ladder already, and a second copy of it would be a second thing
+   * to keep right.
+   */
+  async topmostOf(keys: Iterable<string>): Promise<string[]> {
     const { below, outranking } = await this.graph();
     const held = [...keys];
-    if (!held.length) return undefined;
+    if (!held.length) return [];
 
     const outranks = held.find((key) => outranking.has(key));
-    if (outranks) return outranks;
+    if (outranks) return [outranks];
 
     const ranked = held
       .filter((key) => !held.some((other) => below.get(other)?.has(key)))
@@ -195,7 +212,7 @@ export class CredentialGraphService {
         const depth = (below.get(b)?.size ?? 0) - (below.get(a)?.size ?? 0);
         return depth !== 0 ? depth : a.localeCompare(b);
       });
-    return ranked[0] ?? held[0];
+    return ranked.length ? ranked : held.slice(0, 1);
   }
 
   /** Does the set include a credential that outranks the whole ladder (DS)? */

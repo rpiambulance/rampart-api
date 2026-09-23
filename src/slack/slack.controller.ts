@@ -9,6 +9,7 @@ import type { Request } from 'express';
 import { AirService } from '../air/air.service';
 import { Public } from '../auth/public.decorator';
 import { ChoresService } from '../chores/chores.service';
+import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { whosOnReply } from '../crews/whoson';
 import { memberInfoReply } from '../members/member-info';
 import { SlackLinkService } from '../notifications/slack-link.service';
@@ -35,6 +36,7 @@ export class SlackController {
   constructor(
     private readonly air: AirService,
     private readonly chores: ChoresService,
+    private readonly graph: CredentialGraphService,
     private readonly links: SlackLinkService,
     private readonly prisma: PrismaService,
     private readonly slack: SlackService,
@@ -106,7 +108,7 @@ export class SlackController {
     if (command === 'memberinfo') {
       return {
         response_type: 'ephemeral',
-        text: await memberInfoReply(this.prisma, body.text ?? '', {
+        text: await memberInfoReply(this.prisma, this.graph, body.text ?? '', {
           withPhones: body.user_id
             ? await this.slack.isWorkspaceAdmin(body.user_id)
             : false,

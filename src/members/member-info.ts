@@ -1,3 +1,4 @@
+import type { CredentialGraphService } from '../credentials/credential-graph.service';
 import { displayName } from '../common/name';
 import { slackIdIn } from '../notifications/slack-id';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +14,7 @@ const CARD = {
   cellPhone: true,
   credentials: {
     where: { status: 'ACTIVE' as const },
-    select: { type: { select: { key: true, name: true } } },
+    select: { title: true, type: { select: { key: true, name: true } } },
   },
 } as const;
 
@@ -23,7 +24,10 @@ interface Card {
   lastName: string;
   email: string | null;
   cellPhone: string | null;
-  credentials: Array<{ type: { key: string; name: string } }>;
+  credentials: Array<{
+    title: string | null;
+    type: { key: string; name: string };
+  }>;
 }
 
 /** A credential key as people write it: D_T is a D-T on paper and in speech. */
@@ -31,10 +35,38 @@ function formatKey(key: string): string {
   return key.replace(/_/g, '-');
 }
 
-function card(member: Card, withPhones: boolean): string {
-  const credentials = member.credentials
-    .map((held) => formatKey(held.type.key))
-    .sort();
+/**
+ * What somebody is, rather than everything they have been signed off on.
+ *
+ * The top of each branch of the ladder they are on, which for most people
+ * is two words — a crew chief side and a driver side. A duty supervisor is
+ * one, being above the fork, and says so in whatever the grant is titled:
+ * the portal shows a senior supervisor as SDS and this is the same person.
+ */
+async function summarize(
+  graph: CredentialGraphService,
+  credentials: Card['credentials'],
+): Promise<string[]> {
+  const byKey = new Map(credentials.map((held) => [held.type.key, held]));
+  const top = await graph.topmostOf(byKey.keys());
+  return top.map((key) => {
+    const title = byKey.get(key)?.title?.trim();
+    // "Senior Duty Supervisor" is initials on a badge everywhere else.
+    return title
+      ? title
+          .split(/\s+/)
+          .map((word) => word[0].toUpperCase())
+          .join('')
+      : formatKey(key);
+  });
+}
+
+async function card(
+  graph: CredentialGraphService,
+  member: Card,
+  withPhones: boolean,
+): Promise<string> {
+  const credentials = await summarize(graph, member.credentials);
   const lines = [
     `*${displayName(member)}*`,
     member.email ? `Email: ${member.email}` : 'No email on file.',
@@ -68,6 +100,7 @@ function card(member: Card, withPhones: boolean): string {
  */
 export async function memberInfoReply(
   prisma: PrismaService,
+  graph: CredentialGraphService,
   asked: string,
   options: { withPhones: boolean },
 ): Promise<string> {
@@ -85,7 +118,7 @@ export async function memberInfoReply(
     // Knowing exactly who was meant and still having nothing is worth
     // saying plainly, along with the one thing that fixes it.
     return member
-      ? card(member, options.withPhones)
+      ? await card(graph, member, options.withPhones)
       : `<@${tagged}> is not linked to an active member. They can link themselves with \`/linkme\`.`;
   }
 
@@ -124,5 +157,5 @@ export async function memberInfoReply(
     ].join('\n');
   }
 
-  return card(matches[0], options.withPhones);
+  return card(graph, matches[0], options.withPhones);
 }

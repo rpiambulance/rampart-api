@@ -4218,6 +4218,28 @@ describe('Night crews engine (e2e)', () => {
       expect(await graph.highestOf([])).toBeUndefined();
     });
 
+    // The ladder forks, so what somebody is usually takes two words.
+    it('names the top of each branch somebody is on', async () => {
+      const graph = app.get(CredentialGraphService);
+      expect(
+        await graph.topmostOf(['O', 'A', 'A_CC', 'P_CC', 'CC', 'A_D', 'D']),
+      ).toEqual(expect.arrayContaining(['CC', 'D']));
+      expect(
+        await graph.topmostOf(['O', 'A', 'A_CC', 'P_CC', 'CC', 'A_D', 'D']),
+      ).toHaveLength(2);
+
+      // A Duty Supervisor is one answer, not that answer plus the bottom
+      // rung they also happen to hold.
+      expect(await graph.topmostOf(['DS', 'O'])).toEqual(['DS']);
+      expect(await graph.topmostOf(['O', 'A', 'CC', 'CC_T', 'DS'])).toEqual([
+        'DS',
+      ]);
+
+      // Nothing but the bottom of the ladder is still an answer.
+      expect(await graph.topmostOf(['O', 'A'])).toEqual(['A']);
+      expect(await graph.topmostOf([])).toEqual([]);
+    });
+
     it('leaves out a member who is no longer active', async () => {
       await prisma.member.update({
         where: { id: holder },
