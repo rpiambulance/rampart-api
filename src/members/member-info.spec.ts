@@ -23,10 +23,13 @@ const person = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
-/** Just enough Prisma for the one query this makes. */
-const prismaWith = (rows: Row[]) =>
+/** Just enough Prisma for the queries this makes. */
+const prismaWith = (rows: Row[], tagged: Row | null = null) =>
   ({
-    member: { findMany: () => Promise.resolve(rows) },
+    member: {
+      findMany: () => Promise.resolve(rows),
+      findFirst: () => Promise.resolve(tagged),
+    },
   }) as unknown as PrismaService;
 
 describe('looking a member up from Slack', () => {
@@ -88,6 +91,48 @@ describe('looking a member up from Slack', () => {
     expect(
       await memberInfoReply(prismaWith(many), 'a', { withPhones: false }),
     ).toContain('Try more of the name');
+  });
+
+  // Tagging somebody is what a person does in Slack when they mean a person.
+  describe('when the name is tagged rather than typed', () => {
+    it('answers the account the tag names, without searching', async () => {
+      const reply = await memberInfoReply(
+        // Nobody would be found by searching for the raw tag.
+        prismaWith([], person()),
+        '<@U024BE7LH|dan>',
+        { withPhones: true },
+      );
+      expect(reply).toContain('*Dan Rivera*');
+      expect(reply).toContain('Cell: 518-555-0100');
+    });
+
+    it('takes a tag with no display name on it', async () => {
+      expect(
+        await memberInfoReply(prismaWith([], person()), '<@U024BE7LH>', {
+          withPhones: false,
+        }),
+      ).toContain('*Dan Rivera*');
+    });
+
+    it('says what to do when the account is nobody here', async () => {
+      const reply = await memberInfoReply(
+        prismaWith([], null),
+        '<@U024BE7LH|stranger>',
+        { withPhones: false },
+      );
+      expect(reply).toContain('<@U024BE7LH>');
+      expect(reply).toContain('/linkme');
+    });
+
+    // A workspace that does not escape what it sends gives us the display
+    // name that was typed, which is worth a look at the roster and no more.
+    it('tries an unescaped tag as a name', async () => {
+      expect(
+        await memberInfoReply(prismaWith([person()]), '@rivera', {
+          withPhones: false,
+        }),
+      ).toContain('*Dan Rivera*');
+    });
   });
 
   it('says when nobody matches, and when nothing was asked', async () => {

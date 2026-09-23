@@ -50,6 +50,12 @@ Under **OAuth & Permissions → Scopes → Bot Token Scopes**:
 - `commands` — needed for the slash commands: `/whoson`, `/linkme` and
   `/memberinfo`.
 
+  Turn on **Escape channels, users, and links sent to your app** in each
+  command's settings. Without it, `/memberinfo @dan` arrives as the four
+  characters somebody typed and can only be matched against the roster by
+  display name; with it, Slack says which account was tagged and the lookup
+  is exact. None of the other commands take arguments this affects.
+
 Nothing here needs a **user token** (`xoxp-`), and no user scopes are
 required. Install to the workspace and copy the **Bot User OAuth Token**
 (`xoxb-…`).

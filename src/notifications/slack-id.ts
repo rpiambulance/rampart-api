@@ -30,3 +30,16 @@ export function mentionFor(member: {
     ? `<@${member.slackId!.trim()}>`
     : displayName(member);
 }
+
+/**
+ * The Slack account a tagged mention names, if the text carries one.
+ *
+ * Slack hands a tagged user to a slash command one of two ways, depending
+ * on whether the app is set to escape what it is sent: as `<@U024BE7LH|dan>`,
+ * which names an account, or as the plain `@dan` that was typed, which is a
+ * display name and no better than anything else somebody types.
+ */
+export function slackIdIn(text: string): string | null {
+  const match = /<@([UW][A-Z0-9]{6,})(?:\|[^>]*)?>/.exec(text);
+  return match ? match[1] : null;
+}
