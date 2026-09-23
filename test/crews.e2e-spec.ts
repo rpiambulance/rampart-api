@@ -27,10 +27,12 @@ import { NotificationsService } from '../src/notifications/notifications.service
 import {
   addDays,
   nyNow,
+  nyWallToUtc,
   startOfWeek,
   toDbDate,
   weekdayOf,
 } from '../src/common/dates';
+import { HeadsupService } from '../src/headsup/headsup.service';
 
 /**
  * Exercises the ported night-crew rules end-to-end against the dev Postgres.
@@ -2616,6 +2618,48 @@ describe('Night crews engine (e2e)', () => {
         .get(`/v1/headsup/board?token=${made.token}`)
         .expect(403);
       await prisma.headsupLink.delete({ where: { id: made.id } });
+    });
+
+    // Reported from the bay: the screen swapped crews at midnight, six
+    // hours before the crew standing in front of it went home.
+    it('keeps the night crew until six, not until midnight', async () => {
+      const service = app.get(HeadsupService);
+      const night = addDays(startOfWeek(nyNow().dateStr), 16);
+      const after = addDays(night, 1);
+
+      await request(app.getHttpServer())
+        .put(`/v1/crews/by-date/${night}/slots/CC`)
+        .set(as(alice))
+        .set('x-test-permissions', 'schedule:crews:assign')
+        .send({ memberId: alice })
+        .expect(200);
+      await request(app.getHttpServer())
+        .put(`/v1/crews/by-date/${after}/slots/CC`)
+        .set(as(alice))
+        .set('x-test-permissions', 'schedule:crews:assign')
+        .send({ memberId: tina })
+        .expect(200);
+
+      const ccOn = (board: {
+        crew: Array<{ position: string; name?: string }>;
+      }) => board.crew.find((seat) => seat.position === 'CC')?.name ?? '';
+
+      // Half past two in the morning: the crew that came on last evening is
+      // still out there, and the calendar has moved on without them.
+      const smallHours = await service.board(nyWallToUtc(after, '02:30'));
+      expect(smallHours.date).toBe(night);
+      expect(ccOn(smallHours)).toContain('Alice');
+
+      // The last minute of the old night is still the old night.
+      expect((await service.board(nyWallToUtc(after, '05:59'))).date).toBe(
+        night,
+      );
+
+      // Ten past six: they have gone home, and the night ahead is the only
+      // answer anybody could act on.
+      const morning = await service.board(nyWallToUtc(after, '06:10'));
+      expect(morning.date).toBe(after);
+      expect(ccOn(morning)).toContain('Tina');
     });
 
     it('lets anybody signed in write on it, and records who', async () => {

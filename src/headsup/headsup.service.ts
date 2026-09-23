@@ -7,7 +7,8 @@ import {
 import { randomBytes } from 'crypto';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
-import { nyNow, toDbDate } from '../common/dates';
+import { toDbDate } from '../common/dates';
+import { currentCrewNight } from '../crews/crew-night';
 import { PrismaService } from '../prisma/prisma.service';
 import { crewBoard, type BoardSeat } from './headsup-board';
 import { HeadsupEvents } from './headsup.events';
@@ -57,11 +58,16 @@ export class HeadsupService {
    * beside yesterday's chores for as long as one request is slower than
    * another, and nobody standing in the bay would know which half to trust.
    */
-  async board(): Promise<Board> {
-    const today = nyNow().dateStr;
+  async board(now = new Date()): Promise<Board> {
+    // The night in force, not the date on the wall. A crew runs 1800 to
+    // 0600 and is filed under the date it started, so between midnight and
+    // six the calendar has moved on and the crew standing in the bay has
+    // not: asking for today's put tomorrow's crew on the screen while the
+    // people it named were still out on the road.
+    const night = currentCrewNight(now);
     const [crew, calls, mishaps, chores, notes] = await Promise.all([
       this.prisma.crew.findUnique({
-        where: { date: toDbDate(today) },
+        where: { date: toDbDate(night) },
         include: {
           slots: {
             include: {
@@ -79,7 +85,9 @@ export class HeadsupService {
       }),
       this.count('calls'),
       this.count('mishaps'),
-      this.choresDue(today),
+      // Chores belong to the crew that was asked to do them, and are
+      // written for the same night the crew is filed under.
+      this.choresDue(night),
       this.prisma.headsupNote.findMany({
         where: { removedAt: null },
         orderBy: { createdAt: 'asc' },
@@ -88,7 +96,7 @@ export class HeadsupService {
     ]);
 
     return {
-      date: today,
+      date: night,
       crew: crewBoard(crew?.slots ?? []),
       outOfService: crew?.outOfService
         ? { reason: crew.outOfServiceReason }
