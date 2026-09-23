@@ -753,11 +753,7 @@ export class CrewsService {
    * too.
    */
   async myUpcoming(memberId: number) {
-    const knobs = await this.settings.scheduling();
-    const publicEnd = addDays(
-      startOfWeek(nyNow().dateStr),
-      7 * knobs.publicWeeks,
-    );
+    const publicEnd = await this.settings.publishedThrough();
     const slots = await this.prisma.crewSlot.findMany({
       where: {
         memberId,

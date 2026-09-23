@@ -1728,6 +1728,35 @@ describe('Night crews engine (e2e)', () => {
       return res.text;
     }
 
+    // A calendar that has already told somebody they are working is the
+    // worst place to learn otherwise.
+    it('carries shifts only as far as the schedule is published', async () => {
+      const soon = addDays(startOfWeek(nyNow().dateStr), 9);
+      const draft = addDays(startOfWeek(nyNow().dateStr), 37);
+      const crewIds: Record<string, number> = {};
+      for (const date of [soon, draft]) {
+        await request(app.getHttpServer())
+          .put(`/v1/crews/by-date/${date}/slots/OBSERVER`)
+          .set(as(alice))
+          .set('x-test-permissions', 'schedule:crews:assign')
+          .send({ memberId: charlie })
+          .expect(200);
+        const crew = await prisma.crew.findUniqueOrThrow({
+          where: { date: toDbDate(date) },
+          select: { id: true },
+        });
+        crewIds[date] = crew.id;
+      }
+
+      try {
+        const ics = await icsFor(charlie);
+        expect(ics).toContain(`UID:crew-${crewIds[soon]}-OBSERVER@`);
+        expect(ics).not.toContain(`UID:crew-${crewIds[draft]}-OBSERVER@`);
+      } finally {
+        await prisma.icsToken.deleteMany({ where: { memberId: charlie } });
+      }
+    });
+
     it('leaves an unapproved event out of the feed, and adds it once approved', async () => {
       const kind = await prisma.eventKind.findFirstOrThrow();
       const event = await prisma.event.create({

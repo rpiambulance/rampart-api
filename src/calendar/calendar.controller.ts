@@ -12,9 +12,10 @@ import { randomBytes } from 'crypto';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { Public } from '../auth/public.decorator';
-import { addDays, fromDbDate, nyWallToUtc } from '../common/dates';
+import { addDays, fromDbDate, nyWallToUtc, toDbDate } from '../common/dates';
 import { crewPositionLabel } from '../common/crew-positions';
 import { PrismaService } from '../prisma/prisma.service';
+import { SettingsService } from '../settings/settings.service';
 import { IcsScope } from '../generated/prisma/enums';
 
 function requireMember(auth: AuthContext): number {
@@ -48,7 +49,10 @@ function fmtUtc(date: Date): string {
 /** Per-member tokenized ICS feeds (spec §5.3). */
 @Controller({ path: 'calendar', version: '1' })
 export class CalendarController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settings: SettingsService,
+  ) {}
 
   @Get('tokens')
   listTokens(@CurrentAuth() auth: AuthContext) {
@@ -114,9 +118,18 @@ export class CalendarController {
       `X-WR-CALNAME:RPIA — ${icsToken.scope === 'MY_SCHEDULE' ? 'My Schedule' : 'My Schedule + Events'}`,
     ];
 
-    // My crew shifts
+    // My crew shifts, as far ahead as the schedule is published. A week
+    // past that is a scheduler's working copy: people are pencilled in and
+    // moved, and a calendar that has already told somebody they are working
+    // is the worst place to learn otherwise. What has happened stays —
+    // those nights were published when they were worked.
     const slots = await this.prisma.crewSlot.findMany({
-      where: { memberId },
+      where: {
+        memberId,
+        crew: {
+          date: { lt: toDbDate(await this.settings.publishedThrough()) },
+        },
+      },
       include: { crew: true },
     });
     for (const slot of slots) {

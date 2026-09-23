@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { addDays, nyNow, startOfWeek } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface SchedulingKnobs {
@@ -36,6 +37,20 @@ export class SettingsService {
     const knobs = { ...DEFAULTS, ...stored } as SchedulingKnobs;
     this.cache = { at: Date.now(), knobs };
     return knobs;
+  }
+
+  /**
+   * The first date the schedule has not been published for.
+   *
+   * Everything a member is shown of the schedule stops here — the roster
+   * they can look at, the shifts they are told are theirs, the calendar
+   * they subscribe to. Beyond it a scheduler is still working: people are
+   * pencilled in and moved, and saying otherwise to the person pencilled in
+   * promises something nobody has decided.
+   */
+  async publishedThrough(): Promise<string> {
+    const { publicWeeks } = await this.scheduling();
+    return addDays(startOfWeek(nyNow().dateStr), 7 * publicWeeks);
   }
 
   async update(key: keyof SchedulingKnobs, value: unknown) {
