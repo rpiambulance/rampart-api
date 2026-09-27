@@ -46,6 +46,14 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: false, slack: true },
   },
   {
+    key: 'promotion.proxy',
+    label: 'Asked to vote as a proxy',
+    description:
+      'A Training Committee member with a conflict asked you to vote in their place.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'promotion.decided',
     label: 'Promotion decided',
     description: 'The outcome of a promotion request, to the member.',

@@ -2589,6 +2589,173 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // A proxy is not on the committee, holds none of its permissions, and is
+  // told about the request by nothing except being appointed to it.
+  describe('voting by proxy on a promotion', () => {
+    let hopeful: number;
+    let tcA: number;
+    let agent: number;
+    let standIn: number;
+    let requestId: number;
+
+    const asTcA = () => ({
+      ...as(tcA),
+      'x-test-permissions': 'promotions:review',
+    });
+    /** The proxy, carrying nothing: being appointed is the whole warrant. */
+    const asAgent = () => as(agent);
+
+    const inbox = (memberId: number) =>
+      prisma.inboxMessage.findMany({
+        where: { memberId, type: 'promotion.proxy' },
+        orderBy: { id: 'asc' },
+      });
+
+    beforeAll(async () => {
+      hopeful = await createMember('Hopeful', ['O', 'A']);
+      tcA = await createMember('Conflicted', ['O', 'A']);
+      agent = await createMember('Agent', ['O', 'A']);
+      standIn = await createMember('StandIn', ['O', 'A']);
+
+      const committee = await prisma.role.findUniqueOrThrow({
+        where: { name: 'Training Committee' },
+      });
+      await prisma.memberRole.create({
+        data: {
+          memberId: tcA,
+          roleId: committee.id,
+          startDate: toDbDate(nyNow().dateStr),
+        },
+      });
+
+      const type = await prisma.credentialType.findUniqueOrThrow({
+        where: { key: 'CC' },
+      });
+      const request = await prisma.promotionRequest.create({
+        data: {
+          memberId: hopeful,
+          credentialTypeId: type.id,
+          status: 'IN_VOTE',
+        },
+      });
+      requestId = request.id;
+    });
+
+    afterAll(async () => {
+      await prisma.promotionVote.deleteMany({ where: { requestId } });
+      await prisma.promotionProxy.deleteMany({ where: { requestId } });
+      await prisma.promotionRequest.delete({ where: { id: requestId } });
+      await prisma.memberRole.deleteMany({ where: { memberId: tcA } });
+    });
+
+    it('tells the proxy they have been asked, and lets them in', async () => {
+      // Before being appointed, the request is none of their business.
+      await request(app.getHttpServer())
+        .get(`/v1/promotions/requests/${requestId}`)
+        .set(asAgent())
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .send({ proxyId: agent })
+        .expect(201);
+
+      const told = await inbox(agent);
+      expect(told).toHaveLength(1);
+      expect(told[0].subject).toContain('asked you to vote');
+      expect(told[0].isTask).toBe(true);
+      expect(told[0].actionUrl).toBe(`/promotions/${requestId}`);
+
+      // And now the page they were sent to opens, holding no permission.
+      const seen = await request(app.getHttpServer())
+        .get(`/v1/promotions/requests/${requestId}`)
+        .set(asAgent())
+        .expect(200);
+      expect(seen.body.id).toBe(requestId);
+    });
+
+    it('stands the old proxy down when a different one is named', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .send({ proxyId: standIn })
+        .expect(201);
+
+      const agentTold = await inbox(agent);
+      expect(agentTold).toHaveLength(2);
+      expect(agentTold[1].subject).toContain('No longer voting');
+      expect(agentTold[1].isTask).toBe(false);
+      expect((await inbox(standIn))[0].subject).toContain('asked you to vote');
+
+      // The seat has one holder, not two.
+      const proxies = await prisma.promotionProxy.findMany({
+        where: { requestId },
+      });
+      expect(proxies).toHaveLength(1);
+      expect(proxies[0].proxyId).toBe(standIn);
+
+      // And the one stood down is shut out again.
+      await request(app.getHttpServer())
+        .get(`/v1/promotions/requests/${requestId}`)
+        .set(asAgent())
+        .expect(403);
+    });
+
+    it('takes the appointment back altogether', async () => {
+      await request(app.getHttpServer())
+        .delete(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .expect(200);
+
+      expect(
+        await prisma.promotionProxy.findMany({ where: { requestId } }),
+      ).toHaveLength(0);
+      const standInTold = await inbox(standIn);
+      expect(standInTold[standInTold.length - 1].subject).toContain(
+        'No longer voting',
+      );
+
+      // Nothing to withdraw twice.
+      await request(app.getHttpServer())
+        .delete(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .expect(404);
+    });
+
+    it('records a proxy vote against the seat it was cast for', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .send({ proxyId: agent })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/vote`)
+        .set(asAgent())
+        .send({ vote: 'APPROVE' })
+        .expect(201);
+
+      const vote = await prisma.promotionVote.findFirstOrThrow({
+        where: { requestId },
+      });
+      expect(vote.voterId).toBe(agent);
+      expect(vote.proxyForId).toBe(tcA);
+
+      // The seat is spoken for, so the appointment is no longer a live
+      // question — neither changing it nor taking it back means anything.
+      await request(app.getHttpServer())
+        .delete(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/proxy`)
+        .set(asTcA())
+        .send({ proxyId: standIn })
+        .expect(400);
+    });
+  });
+
   describe('the station whiteboard', () => {
     // A display is a television, not a person: the token in its URL is the
     // whole credential, so what that token does and does not open is the
@@ -2641,7 +2808,7 @@ describe('Night crews engine (e2e)', () => {
         .expect(200);
 
       const ccOn = (board: {
-        crew: Array<{ position: string; name?: string }>;
+        crew: Array<{ position: string; name?: string | null }>;
       }) => board.crew.find((seat) => seat.position === 'CC')?.name ?? '';
 
       // Half past two in the morning: the crew that came on last evening is

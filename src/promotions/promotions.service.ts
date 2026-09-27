@@ -154,7 +154,7 @@ export class PromotionsService {
     });
   }
 
-  async getReview(requestId: number) {
+  async getReview(requestId: number, auth: AuthContext) {
     const request = await this.prisma.promotionRequest.findUnique({
       where: { id: requestId },
       include: {
@@ -212,6 +212,17 @@ export class PromotionsService {
     });
     if (!request) throw new NotFoundException('Request not found');
 
+    // A proxy is by definition not on the committee, so they hold none of
+    // the reviewing permissions — and were refused the page they had just
+    // been asked to act on. Being named on this request is the warrant.
+    const mayReview = auth.permissions.has(PERMISSIONS.PROMOTIONS_REVIEW);
+    const isProxy =
+      auth.kind === 'member' &&
+      request.proxies.some((p) => p.proxy.id === auth.memberId);
+    if (!mayReview && !isProxy) {
+      throw new ForbiddenException('Not yours to review');
+    }
+
     const checklist = await this.credentials.checklist(
       request.memberId,
       request.credentialTypeId,
@@ -260,10 +271,133 @@ export class PromotionsService {
     if (request.memberId === proxyId) {
       throw new BadRequestException('The requester cannot be a proxy');
     }
-    return this.prisma.promotionProxy.upsert({
+    // Once the seat has been voted, who holds it is settled. Changing the
+    // appointment afterwards would say somebody is to vote on something
+    // already decided in their name.
+    if (await this.seatIsVoted(requestId, principalId)) {
+      throw new BadRequestException(
+        'A vote has already been cast for your seat on this request',
+      );
+    }
+
+    const existing = await this.prisma.promotionProxy.findUnique({
+      where: { requestId_principalId: { requestId, principalId } },
+    });
+    const appointment = await this.prisma.promotionProxy.upsert({
       where: { requestId_principalId: { requestId, principalId } },
       create: { requestId, principalId, proxyId },
       update: { proxyId },
+    });
+
+    if (existing && existing.proxyId !== proxyId) {
+      await this.tellProxy(
+        existing.proxyId,
+        requestId,
+        principalId,
+        'stood-down',
+      );
+    }
+    if (!existing || existing.proxyId !== proxyId) {
+      await this.tellProxy(proxyId, requestId, principalId, 'appointed');
+    }
+    return appointment;
+  }
+
+  /**
+   * Taking the appointment back.
+   *
+   * A conflict that turns out not to be one, or a proxy who cannot do it
+   * after all: the seat returns to its own member, who can vote it or
+   * appoint somebody else.
+   */
+  async withdrawProxy(principalId: number, requestId: number) {
+    const existing = await this.prisma.promotionProxy.findUnique({
+      where: { requestId_principalId: { requestId, principalId } },
+    });
+    if (!existing) {
+      throw new NotFoundException('You have no proxy on this request');
+    }
+    if (await this.seatIsVoted(requestId, principalId)) {
+      throw new BadRequestException(
+        'A vote has already been cast for your seat on this request',
+      );
+    }
+    await this.prisma.promotionProxy.delete({
+      where: { requestId_principalId: { requestId, principalId } },
+    });
+    await this.tellProxy(
+      existing.proxyId,
+      requestId,
+      principalId,
+      'stood-down',
+    );
+    return { ok: true };
+  }
+
+  /** Has this committee seat already been voted, by anybody? */
+  private async seatIsVoted(
+    requestId: number,
+    principalId: number,
+  ): Promise<boolean> {
+    const vote = await this.prisma.promotionVote.findFirst({
+      where: {
+        requestId,
+        OR: [
+          { proxyForId: principalId },
+          { voterId: principalId, proxyForId: null },
+        ],
+      },
+      select: { id: true },
+    });
+    return !!vote;
+  }
+
+  /**
+   * Telling somebody they have been asked to vote, or need not after all.
+   *
+   * Being appointed is the whole of what a proxy knows about it: they are
+   * not on the committee, nothing in their inbox mentions promotions, and
+   * the request does not appear on any list they can see. Without this they
+   * would have to be told in a corridor.
+   */
+  private async tellProxy(
+    proxyId: number,
+    requestId: number,
+    principalId: number,
+    what: 'appointed' | 'stood-down',
+  ): Promise<void> {
+    const [principal, request] = await Promise.all([
+      this.prisma.member.findUnique({
+        where: { id: principalId },
+        select: { firstName: true, preferredFirstName: true, lastName: true },
+      }),
+      this.prisma.promotionRequest.findUnique({
+        where: { id: requestId },
+        include: { credentialType: { select: { name: true } } },
+      }),
+    ]);
+    if (!principal || !request) return;
+    const who = displayName(principal);
+    const credential = request.credentialType.name;
+
+    await this.notifications.notify(proxyId, {
+      type: 'promotion.proxy',
+      subject:
+        what === 'appointed'
+          ? `${who} asked you to vote on a ${credential} promotion`
+          : `No longer voting for ${who}`,
+      body:
+        what === 'appointed'
+          ? `${who} has a conflict on this ${credential} request and appointed you to vote in their place. The committee must be unanimous, so the request waits on your vote.`
+          : `${who} has taken back the proxy on the ${credential} request. There is nothing for you to do.`,
+      ...(what === 'appointed'
+        ? {
+            task: {
+              actionLabel: 'Cast the vote',
+              actionUrl: `/promotions/${requestId}`,
+            },
+          }
+        : {}),
     });
   }
 

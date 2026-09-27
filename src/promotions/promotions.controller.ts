@@ -113,9 +113,11 @@ export class PromotionsController {
   }
 
   @Get('requests/:id')
-  @RequirePermissions(PERMISSIONS.PROMOTIONS_REVIEW)
-  review(@Param('id', ParseIntPipe) id: number) {
-    return this.promotions.getReview(id);
+  review(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.promotions.getReview(id, auth);
   }
 
   @Post('requests/:id/proxy')
@@ -125,6 +127,14 @@ export class PromotionsController {
     @Body() body: ProxyDto,
   ) {
     return this.promotions.appointProxy(requireMember(auth), id, body.proxyId);
+  }
+
+  @Delete('requests/:id/proxy')
+  withdrawProxy(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.promotions.withdrawProxy(requireMember(auth), id);
   }
 
   @Post('requests/:id/vote')
