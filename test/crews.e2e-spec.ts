@@ -20,6 +20,7 @@ import { ChoresService } from '../src/chores/chores.service';
 import { ChecksheetsService } from '../src/checksheets/checksheets.service';
 import { CrewsService } from '../src/crews/crews.service';
 import { CredentialsService } from '../src/credentials/credentials.service';
+import { EvalsService } from '../src/evals/evals.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
 import { CertificationGraphService } from '../src/certifications/certification-graph.service';
@@ -3637,6 +3638,124 @@ describe('Night crews engine (e2e)', () => {
 
   // A line that says it needs a Driver Trainer is signed by a Driver
   // Trainer, or by somebody above one — and by nobody else.
+  // Reported from the floor: three signed evaluations, a requirement for
+  // two, and a page reading 1/2.
+  describe('counting signed evaluations against a requirement', () => {
+    let subject: number;
+    let evaluator: number;
+    let typeId: number;
+    let templateName: string;
+    let firstVersionId: number;
+
+    const signOne = (templateId: number) =>
+      prisma.evaluation.create({
+        data: {
+          templateId,
+          subjectId: subject,
+          evaluatorId: evaluator,
+          status: 'SIGNED',
+          outcome: 'PASSED',
+          signedByEvaluator: new Date(),
+        },
+      });
+
+    beforeAll(async () => {
+      subject = await createMember('Counted', ['O', 'A']);
+      evaluator = await createMember('Assessor', ['O', 'A', 'A_D', 'P_D', 'D', 'D_T']);
+      templateName = `Call Evaluation ${stamp}`;
+
+      const template = await prisma.evalFormTemplate.create({
+        data: {
+          name: templateName,
+          kind: 'EVALUATION',
+          items: {
+            create: [{ order: 1, prompt: 'Drove well', scoreType: 'PASS_FAIL' }],
+          },
+        },
+      });
+      firstVersionId = template.id;
+
+      const type = await prisma.credentialType.create({
+        data: {
+          key: `TEST_EVAL_${stamp}`,
+          name: `Test Credential ${stamp}`,
+          grantMethod: 'PROMOTION',
+          requirements: {
+            create: [
+              {
+                kind: 'EVALUATION_COUNT',
+                evalTemplateId: template.id,
+                count: 2,
+              },
+            ],
+          },
+        },
+      });
+      typeId = type.id;
+    });
+
+    afterAll(async () => {
+      await prisma.evaluation.deleteMany({ where: { subjectId: subject } });
+      await prisma.credentialRequirement.deleteMany({
+        where: { credentialTypeId: typeId },
+      });
+      await prisma.credentialType.delete({ where: { id: typeId } });
+      await prisma.evalFormTemplate.deleteMany({
+        where: { name: templateName },
+      });
+    });
+
+    it('counts them across a revision of the form', async () => {
+      const credentials = app.get(CredentialsService);
+      const evals = app.get(EvalsService);
+      const countOf = async () => {
+        const checklist = await credentials.checklist(subject, typeId);
+        const item = checklist.find(
+          (entry: { kind: string }) => entry.kind === 'EVALUATION_COUNT',
+        );
+        return item?.detail;
+      };
+
+      await signOne(firstVersionId);
+      expect(await countOf()).toBe('1/2');
+
+      // The form is edited. It has been filled in, so this mints a new row:
+      // same name, next version, a new id of its own.
+      const revised = await evals.reviseTemplate(firstVersionId, {
+        items: [{ order: 1, prompt: 'Drove well, and parked', scoreType: 'PASS_FAIL' }],
+      });
+      expect(revised.id).not.toBe(firstVersionId);
+      expect(revised.name).toBe(templateName);
+
+      // An evaluation on the new form is an evaluation on the same form.
+      await signOne(revised.id);
+      expect(await countOf()).toBe('2/2');
+
+      const checklist = await credentials.checklist(subject, typeId);
+      expect(
+        checklist.find((e: { kind: string }) => e.kind === 'EVALUATION_COUNT')
+          ?.satisfied,
+      ).toBe(true);
+    });
+
+    it('still ignores a draft', async () => {
+      await prisma.evaluation.create({
+        data: {
+          templateId: firstVersionId,
+          subjectId: subject,
+          evaluatorId: evaluator,
+          status: 'DRAFT',
+        },
+      });
+      const credentials = app.get(CredentialsService);
+      const checklist = await credentials.checklist(subject, typeId);
+      expect(
+        checklist.find((e: { kind: string }) => e.kind === 'EVALUATION_COUNT')
+          ?.detail,
+      ).toBe('2/2');
+    });
+  });
+
   describe('who may sign a checklist line', () => {
     let itemId: number;
     let templateId: number;

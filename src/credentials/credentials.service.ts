@@ -125,6 +125,35 @@ export class CredentialsService {
     private readonly webhooks: WebhooksService,
   ) {}
 
+  /**
+   * Signed evaluations on a form, counted across every version of it.
+   *
+   * Editing a form that has been filled in mints a new row — new id, same
+   * name, next version — and the evaluations already written stay pinned to
+   * the row they were answered on, which is right: an evaluation is a record
+   * of the questions somebody was actually asked.
+   *
+   * A requirement is not about a revision, though. "Two signed Driver Call
+   * Evaluations" means the form. Counting the row id meant that revising a
+   * form silently emptied the requirement that named it: evaluations on
+   * either side of the edit stopped counting together, and a member with
+   * three signed evaluations was told she had one. The name is the form's
+   * identity — it is what reviseTemplate itself counts versions by, and
+   * nothing can change it.
+   */
+  private signedEvaluations(
+    memberId: number,
+    templateName: string,
+  ): Promise<number> {
+    return this.prisma.evaluation.count({
+      where: {
+        subjectId: memberId,
+        status: 'SIGNED',
+        template: { name: templateName },
+      },
+    });
+  }
+
   listTypes() {
     return this.prisma.credentialType.findMany({
       where: { active: true },
@@ -559,13 +588,10 @@ export class CredentialsService {
           requirementId: req.id,
         });
       } else if (req.kind === 'EVALUATION_COUNT' && req.evalTemplate) {
-        const count = await this.prisma.evaluation.count({
-          where: {
-            subjectId: memberId,
-            templateId: req.evalTemplateId!,
-            status: 'SIGNED',
-          },
-        });
+        const count = await this.signedEvaluations(
+          memberId,
+          req.evalTemplate.name,
+        );
         items.push({
           kind: 'EVALUATION_COUNT',
           label: `${req.count} signed “${req.evalTemplate.name}” evaluations`,
@@ -630,13 +656,10 @@ export class CredentialsService {
         adjustment.reqKind === 'EVALUATION_COUNT' &&
         adjustment.evalTemplate
       ) {
-        const count = await this.prisma.evaluation.count({
-          where: {
-            subjectId: memberId,
-            templateId: adjustment.evalTemplateId!,
-            status: 'SIGNED',
-          },
-        });
+        const count = await this.signedEvaluations(
+          memberId,
+          adjustment.evalTemplate.name,
+        );
         items.push({
           kind: 'EVALUATION_COUNT',
           label: `Additional: ${adjustment.count} signed “${adjustment.evalTemplate.name}” evaluations`,
