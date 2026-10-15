@@ -84,6 +84,7 @@ model Member {
   profileReviewRequestedBy Member?                          @relation("ProfileReviewRequestedBy", fields: [profileReviewRequestedById], references: [id])
   resourcesCreated         Resource[]                       @relation("ResourceCreator")
   checksheetRuns           ChecksheetRun[]                  @relation("ChecksheetCompletedBy")
+  checksheetRunsCrewed     ChecksheetRun[]                  @relation("ChecksheetRunCrew")
   deficienciesResolved     ChecksheetDeficiency[]           @relation("DeficiencyResolvedBy")
   webhooksCreated          Webhook[]                        @relation("WebhookCreator")
   choresAssigned           Chore[]                          @relation("ChoreAssignee")
@@ -1759,6 +1760,10 @@ model ChecksheetRun {
   template       ChecksheetTemplate       @relation(fields: [templateId], references: [id])
   asset          Asset?                   @relation(fields: [assetId], references: [id])
   completedBy    Member?                  @relation("ChecksheetCompletedBy", fields: [completedById], references: [id])
+  /// Everybody else who did the check. A truck is usually gone over by the
+  /// crew together and the sheet had room for one name, so the other two
+  /// went unrecorded — and the sheet read as one person's word.
+  crew           Member[]                 @relation("ChecksheetRunCrew")
   entries        ChecksheetEntry[]
   sectionEntries ChecksheetSectionEntry[]
   opened         ChecksheetDeficiency[]   @relation("DeficiencyOpenedBy")

@@ -94,6 +94,12 @@ class CompleteDto {
   @MaxLength(4000)
   comment?: string;
 
+  /** Everybody else who went over it, besides whoever is filing. */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  crewIds?: number[];
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => EntryDto)
@@ -400,6 +406,12 @@ export class ChecksheetsController {
   @Get('runs/:id')
   run(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
     return this.checksheets.runFor(auth, id);
+  }
+
+  /** Names for the "who else went over it" box on the completion form. */
+  @Get('crew-options')
+  crewOptions() {
+    return this.checksheets.namableMembers();
   }
 
   @Get(':id')

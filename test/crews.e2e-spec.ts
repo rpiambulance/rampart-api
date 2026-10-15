@@ -3117,6 +3117,139 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // A truck is gone over by the crew together, and the sheet had room for
+  // one name.
+  describe('a checksheet done by more than one person', () => {
+    let templateId: number;
+    let itemId: number;
+    let assetId: number;
+    let filer: number;
+    let withMe: number;
+    let officer: number;
+
+    const fileIt = (countPresent: number, crewIds?: number[]) =>
+      request(app.getHttpServer())
+        .post('/v1/checksheets/complete')
+        .set(as(filer))
+        .send({
+          templateId,
+          assetId,
+          ...(crewIds ? { crewIds } : {}),
+          entries: [{ itemId, countPresent }],
+        });
+
+    const discrepancyNotices = () =>
+      prisma.inboxMessage.findMany({
+        where: { memberId: officer, type: 'checksheet.discrepancy' },
+        orderBy: { id: 'asc' },
+      });
+
+    beforeAll(async () => {
+      filer = await createMember('Filer', ['O', 'A']);
+      withMe = await createMember('Alongside', ['O', 'A']);
+      officer = await createMember('Quartermaster', ['O', 'A']);
+
+      // Somebody who can see the whole deficiency list, which is who the
+      // new-discrepancy notice is for.
+      const role = await prisma.role.create({
+        data: {
+          name: `Supply ${stamp}`,
+          permissions: { create: [{ permission: 'checksheets:read-all' }] },
+        },
+      });
+      await prisma.memberRole.create({
+        data: {
+          memberId: officer,
+          roleId: role.id,
+          startDate: toDbDate(nyNow().dateStr),
+        },
+      });
+
+      const kind = await prisma.assetKind.create({
+        data: { name: `Truck ${stamp}` },
+      });
+      const asset = await prisma.asset.create({
+        data: { name: `Medic ${stamp}`, kindId: kind.id },
+      });
+      assetId = asset.id;
+      const template = await prisma.checksheetTemplate.create({
+        data: { name: `Truck sheet ${stamp}`, assetKindId: kind.id, active: true },
+      });
+      templateId = template.id;
+      const item = await prisma.checksheetItem.create({
+        data: {
+          templateId: template.id,
+          label: `Collars ${stamp}`,
+          kind: 'PAR',
+          parLevel: 4,
+          order: 0,
+        },
+      });
+      itemId = item.id;
+    });
+
+    afterAll(async () => {
+      await prisma.checksheetDeficiency.deleteMany({ where: { templateId } });
+      await prisma.checksheetRun.deleteMany({ where: { templateId } });
+      await prisma.checksheetTemplate.delete({ where: { id: templateId } });
+      await prisma.memberRole.deleteMany({ where: { memberId: officer } });
+    });
+
+    it('records everybody who went over it, and only once', async () => {
+      // The filer names themselves among the crew; they are on it already.
+      const res = await fileIt(4, [withMe, filer, withMe]).expect(201);
+
+      const run = await prisma.checksheetRun.findUniqueOrThrow({
+        where: { id: res.body.runId },
+        include: { crew: { select: { id: true } } },
+      });
+      expect(run.completedById).toBe(filer);
+      expect(run.crew.map((m) => m.id)).toEqual([withMe]);
+    });
+
+    it('lets somebody named on it read it, holding no permission', async () => {
+      const res = await fileIt(4, [withMe]).expect(201);
+      await request(app.getHttpServer())
+        .get(`/v1/checksheets/runs/${res.body.runId}`)
+        .set(as(withMe))
+        .expect(200);
+      // Somebody who was neither on it nor allowed to see everything is not.
+      await request(app.getHttpServer())
+        .get(`/v1/checksheets/runs/${res.body.runId}`)
+        .set(as(bob))
+        .expect(403);
+    });
+
+    it('refuses a name that is not an active member', async () => {
+      await fileIt(4, [999_999]).expect(400);
+    });
+
+    it('tells the people who watch the list about a new shortage', async () => {
+      expect(await discrepancyNotices()).toHaveLength(0);
+
+      // Four expected, two found.
+      const short = await fileIt(2).expect(201);
+      expect(short.body.opened).toBe(1);
+
+      const told = await discrepancyNotices();
+      expect(told).toHaveLength(1);
+      expect(told[0].subject).toContain('1 new discrepancy');
+      expect(told[0].body).toContain('Collars');
+
+      // Found short again on the next check: the same problem, already
+      // known about, and saying so twice teaches people to ignore it.
+      const again = await fileIt(2).expect(201);
+      expect(again.body.opened).toBe(0);
+      expect(await discrepancyNotices()).toHaveLength(1);
+
+      // Put right, then short again: that is a new problem.
+      await fileIt(4).expect(201);
+      const fresh = await fileIt(1).expect(201);
+      expect(fresh.body.opened).toBe(1);
+      expect(await discrepancyNotices()).toHaveLength(2);
+    });
+  });
+
   describe('expired checksheet items', () => {
     // Both lists have to agree. "Expiring soon" computes from the date, so it
     // shows an expired item the moment it turns; deficiencies only ever

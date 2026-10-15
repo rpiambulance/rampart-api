@@ -85,6 +85,16 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: false, slack: true },
   },
   {
+    key: 'checksheet.discrepancy',
+    label: 'New checksheet discrepancy',
+    description:
+      'A check found something missing or short that was not already known about.',
+    audience: 'officers',
+    // Louder than a completed check by default: a completed check is a
+    // thing that happened, and this is a thing somebody has to deal with.
+    defaults: { email: true, slack: true },
+  },
+  {
     key: 'checksheet.expiring',
     label: 'Something on a checksheet is expiring',
     description:

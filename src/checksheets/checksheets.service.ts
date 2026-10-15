@@ -8,6 +8,7 @@ import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
 import { addDays, isDateOnly, nyToday, toDbDate } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   dueState,
@@ -220,6 +221,8 @@ export class ChecksheetsService {
       templateId: number;
       assetId?: number;
       comment?: string;
+      /** Everybody else who went over it, besides whoever is filing. */
+      crewIds?: number[];
       entries: EntryInput[];
       sections?: SectionEntryInput[];
     },
@@ -287,11 +290,31 @@ export class ChecksheetsService {
     }
 
     const memberId = auth.kind === 'member' ? auth.memberId : null;
+    // Whoever is filing it is on it already; naming themselves again in the
+    // crew should not put them on the sheet twice.
+    const crewIds = [...new Set(input.crewIds ?? [])].filter(
+      (id) => id !== memberId,
+    );
+    if (crewIds.length) {
+      const found = await this.prisma.member.findMany({
+        where: { id: { in: crewIds }, active: true },
+        select: { id: true },
+      });
+      if (found.length !== crewIds.length) {
+        throw new BadRequestException(
+          'One of the people named on this check is not an active member',
+        );
+      }
+    }
+
     const run = await this.prisma.checksheetRun.create({
       data: {
         templateId: template.id,
         assetId: input.assetId ?? null,
         completedById: memberId,
+        ...(crewIds.length
+          ? { crew: { connect: crewIds.map((id) => ({ id })) } }
+          : {}),
         comment: input.comment?.trim() || null,
         sectionEntries: {
           // Only the sections that actually carry a seal; anything else sent
@@ -339,13 +362,14 @@ export class ChecksheetsService {
     });
 
     const found = shortfalls(items, input.entries);
-    const { opened, resolved } = await this.reconcileDeficiencies(
-      template.id,
-      input.assetId ?? null,
-      run.id,
-      found,
-      memberId,
-    );
+    const { opened, openedDetails, resolved } =
+      await this.reconcileDeficiencies(
+        template.id,
+        input.assetId ?? null,
+        run.id,
+        found,
+        memberId,
+      );
 
     await this.notifyCompleted(template, run.id, input.assetId ?? null, {
       shortfalls: found.length,
@@ -354,6 +378,12 @@ export class ChecksheetsService {
       comment: input.comment?.trim() || null,
       by: memberId,
     });
+    await this.notifyNewDiscrepancies(
+      template,
+      input.assetId ?? null,
+      openedDetails,
+      memberId,
+    );
 
     return { runId: run.id, shortfalls: found.length, opened, resolved };
   }
@@ -380,7 +410,7 @@ export class ChecksheetsService {
     const foundIds = new Set(found.map((row) => row.itemId));
     const now = new Date();
 
-    let opened = 0;
+    const openedDetails: string[] = [];
     for (const shortfall of found) {
       const existing = openByItem.get(shortfall.itemId);
       if (existing) {
@@ -407,7 +437,7 @@ export class ChecksheetsService {
           lastSeenAt: now,
         },
       });
-      opened += 1;
+      openedDetails.push(shortfall.detail);
     }
 
     const fixed = open.filter((row) => !foundIds.has(row.itemId));
@@ -422,7 +452,69 @@ export class ChecksheetsService {
         },
       });
     }
-    return { opened, resolved: fixed.length };
+    return {
+      opened: openedDetails.length,
+      openedDetails,
+      resolved: fixed.length,
+    };
+  }
+
+  /**
+   * Something is wrong that nobody knew about.
+   *
+   * Separate from the completed-check notice, which goes to whichever roles
+   * a template names and reports every check whether or not anything was
+   * found. This goes to everyone who can see the whole deficiency list, and
+   * only when a check turns up something not already on it — a shortage
+   * found again on four nights running is one problem, and saying so four
+   * times teaches people to ignore it.
+   *
+   * Whether it arrives by Slack, by email or only in the inbox is each
+   * recipient's own setting, as with every other message type.
+   */
+  private async notifyNewDiscrepancies(
+    template: { id: number; name: string },
+    assetId: number | null,
+    opened: string[],
+    byMemberId: number | null,
+  ) {
+    if (!opened.length) return;
+    const [asset, who] = await Promise.all([
+      assetId
+        ? this.prisma.asset.findUnique({ where: { id: assetId } })
+        : Promise.resolve(null),
+      byMemberId
+        ? this.prisma.member.findUnique({
+            where: { id: byMemberId },
+            select: {
+              firstName: true,
+              preferredFirstName: true,
+              lastName: true,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+    const what = asset ? `${asset.name}` : template.name;
+
+    await this.notifications.notifyPermissionHolders(
+      PERMISSIONS.CHECKSHEETS_READ_ALL,
+      {
+        type: 'checksheet.discrepancy',
+        subject: `${what}: ${opened.length} new ${
+          opened.length === 1 ? 'discrepancy' : 'discrepancies'
+        }`,
+        body: [
+          `${who ? displayName(who) : 'Somebody'} checked ${template.name}` +
+            `${asset ? ` for ${asset.name}` : ''} and found something not` +
+            ' already known about:',
+          ...opened.map((detail) => `• ${detail}`),
+        ].join('\n'),
+        task: {
+          actionLabel: 'See the deficiencies',
+          actionUrl: '/checksheets/deficiencies',
+        },
+      },
+    );
   }
 
   private async notifyCompleted(
@@ -727,9 +819,38 @@ export class ChecksheetsService {
             lastName: true,
           },
         },
+        crew: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: { completedAt: 'desc' },
       take: Math.min(filter.take ?? 100, 500),
+    });
+  }
+
+  /**
+   * Who can be named as having gone over it too.
+   *
+   * Filing a checksheet needs no permission — any member can do a truck
+   * check — so naming the crew who did it with them cannot need one either,
+   * or the box would be empty for exactly the people who use it. Names
+   * only, and no more than any member sees on the crew board already.
+   */
+  namableMembers() {
+    return this.prisma.member.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        firstName: true,
+        preferredFirstName: true,
+        lastName: true,
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
   }
 
@@ -747,6 +868,14 @@ export class ChecksheetsService {
             lastName: true,
           },
         },
+        crew: {
+          select: {
+            id: true,
+            firstName: true,
+            preferredFirstName: true,
+            lastName: true,
+          },
+        },
         entries: { include: { expiries: { orderBy: { position: 'asc' } } } },
       },
     });
@@ -754,10 +883,18 @@ export class ChecksheetsService {
     return run;
   }
 
-  /** A member may always read their own; anything else needs the permission. */
+  /**
+   * A member may always read one that is theirs; anything else needs the
+   * permission. Theirs means they filed it or they are named on it — being
+   * one of the crew who went over the truck is the same claim to the sheet
+   * as having been the one to type it in.
+   */
   async runFor(auth: AuthContext, id: number) {
     const run = await this.run(id);
-    const mine = auth.kind === 'member' && run.completedById === auth.memberId;
+    const mine =
+      auth.kind === 'member' &&
+      (run.completedById === auth.memberId ||
+        run.crew.some((member) => member.id === auth.memberId));
     if (!mine && !auth.permissions.has('checksheets:read-all')) {
       throw new ForbiddenException('Not your checksheet');
     }
