@@ -1,5 +1,8 @@
 *.env
-storage/
+# Anchored: the uploads directory at the root, not every directory called
+# storage. Unanchored, this also swallowed src/storage — two source files
+# that were never committed, so a fresh clone could not build.
+/storage/
 scripts/.env.deploy
 
 /dist
