@@ -7,3 +7,5 @@ scripts/.env.deploy
 
 /dist
 /src/generated
+
+/node_modules/
