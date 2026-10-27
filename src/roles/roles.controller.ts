@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
 } from '@nestjs/common';
@@ -310,14 +311,30 @@ export class RolesController {
     return assignment;
   }
 
+  @Patch('assignments/:assignmentId')
+  @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
+  async updateAssignment(
+    @CurrentAuth() auth: AuthContext,
+    @Param('assignmentId', ParseIntPipe) assignmentId: number,
+    @Body() body: Partial<AssignDto>,
+  ) {
+
+    const record = await this.prisma.memberRole.update({ where: { id: assignmentId }, data: { 
+      startDate: body.startDate ? new Date(body.startDate) : undefined, 
+      endDate: body.endDate ? new Date(body.endDate) : undefined 
+    }});
+    await this.audit.log(auth, 'roles.assignment.update', 'MemberRole', assignmentId, record);
+    return { ok: true };
+  }
+
   @Delete('assignments/:assignmentId')
   @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
-  async unassign(
+  async deleteAssignment(
     @CurrentAuth() auth: AuthContext,
     @Param('assignmentId', ParseIntPipe) assignmentId: number,
   ) {
-    await this.prisma.memberRole.delete({ where: { id: assignmentId } });
-    await this.audit.log(auth, 'roles.unassign', 'MemberRole', assignmentId);
+    await this.prisma.memberRole.delete({ where: { id: assignmentId }});
+    await this.audit.log(auth, 'roles.assignment.delete', 'MemberRole', assignmentId);
     return { ok: true };
   }
 }
