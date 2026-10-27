@@ -22,10 +22,12 @@ import {
   type ResponderSkills,
 } from './air-logic';
 import {
+  callType,
   dispatchBlocks,
   fallbackText,
   type DispatchDetail,
 } from './dispatch-message';
+import { mergeMessages } from './dispatch-updates';
 
 /** What a dispatch looks like to the callout, whoever wrote it down. */
 interface DispatchLine {
@@ -65,7 +67,9 @@ const RESPONSES_INCLUDE = {
       },
     },
   },
-  dispatch: true,
+  dispatch: {
+    include: { followUps: { orderBy: { arrivedAt: 'asc' as const } } },
+  },
 };
 
 /**
@@ -146,8 +150,14 @@ export class AirService {
   }
 
   /**
-   * Herald filed a dispatch. Either it is the call a page already opened, or
-   * it is the first anybody here has heard of it.
+   * Herald filed a dispatch for a call nobody here has heard of yet. Either
+   * it is the call a page already opened, or it is new.
+   *
+   * Never an update to a call already posted — those are recognised before
+   * they get here and go to updated() — so a callout that already has its
+   * dispatch means this is a different call, and it is asked about in its
+   * own right. It used to be dropped instead: a second call inside the
+   * window reached the log and nobody's phone.
    */
   async dispatched(dispatch: DispatchLine, now = new Date()) {
     const existing = await this.openCalloutNear(now, 'DISPATCH');
@@ -158,11 +168,10 @@ export class AirService {
         include: RESPONSES_INCLUDE,
       });
       // The ask went out with one line of pager text; now it can say what
-      // the call actually is.
-      await this.render(joined.id);
+      // the call actually is — in the record channel's copy too.
+      await this.render(joined.id, { refreshMirror: true });
       return joined;
     }
-    if (existing) return existing;
 
     const callout = await this.open({
       kind: 'DISPATCH',
@@ -175,6 +184,49 @@ export class AirService {
     await this.adoptOrphanAudio(callout.id, now);
     await this.render(callout.id);
     return callout;
+  }
+
+  /**
+   * Another message about a call already posted.
+   *
+   * The message in Slack is redrawn with everything known now, in place, so
+   * the responders and their answers stay where they are. Redrawing tells
+   * nobody, though, so when the call type has just arrived or changed — the
+   * thing that decides whether somebody goes — it is said again as a reply
+   * under the call, sent to the channel as well. Anything less (a cross
+   * street, a unit) is only redrawn.
+   */
+  async updated(primaryId: number): Promise<void> {
+    const callout = await this.prisma.callout.findUnique({
+      where: { dispatchId: primaryId },
+      select: { id: true },
+    });
+    // A call nobody was told about has nothing in Slack to change.
+    if (!callout) return;
+
+    const first = await this.prisma.dispatch.findUniqueOrThrow({
+      where: { id: primaryId },
+      include: { followUps: { orderBy: { arrivedAt: 'asc' } } },
+    });
+    const messages = [first, ...first.followUps];
+    const before = mergeMessages(messages.slice(0, -1));
+    const after = mergeMessages(messages);
+
+    await this.render(callout.id, { refreshMirror: true });
+
+    if (callType(before) === callType(after)) return;
+    const posted = await this.prisma.callout.findUniqueOrThrow({
+      where: { id: callout.id },
+      select: { slackChannel: true, slackTs: true },
+    });
+    if (posted.slackChannel && posted.slackTs) {
+      await this.slack.replyInThread(
+        posted.slackChannel,
+        posted.slackTs,
+        `Update: ${fallbackText(after)}`,
+        { broadcast: true },
+      );
+    }
   }
 
   // ---------------------------------------------------------------- answers
@@ -445,7 +497,13 @@ export class AirService {
   private async unclaimedDispatchNear(now: Date) {
     const since = new Date(now.getTime() - MATCH_WINDOW_MINUTES * 60_000);
     return this.prisma.dispatch.findFirst({
-      where: { receivedAt: { gte: since }, callout: { is: null } },
+      // Only a call's first message is the call; an update to it is not
+      // something a page can be joined to.
+      where: {
+        receivedAt: { gte: since },
+        callout: { is: null },
+        primaryId: null,
+      },
       orderBy: { receivedAt: 'desc' },
       select: { id: true },
     });
@@ -664,13 +722,27 @@ export class AirService {
    * Slack is a courtesy here, as everywhere else in this system — a failed
    * post is logged and the callout stands, because the record of who said
    * they were coming is in the database either way.
+   *
+   * The call is drawn from all its messages together, so a follow-up that
+   * brings the call type shows it. refreshMirror redraws the record
+   * channel's copy too — only when what the call is has changed, not on
+   * every answer, since the copy shows nobody's answers.
    */
-  private async render(calloutId: number): Promise<void> {
-    const callout = await this.prisma.callout.findUnique({
+  private async render(
+    calloutId: number,
+    opts: { refreshMirror?: boolean } = {},
+  ): Promise<void> {
+    const found = await this.prisma.callout.findUnique({
       where: { id: calloutId },
       include: RESPONSES_INCLUDE,
     });
-    if (!callout) return;
+    if (!found) return;
+    const callout = {
+      ...found,
+      dispatch: found.dispatch
+        ? mergeMessages([found.dispatch, ...found.dispatch.followUps])
+        : null,
+    };
 
     const text = callout.dispatch
       ? fallbackText(callout.dispatch)
@@ -698,6 +770,14 @@ export class AirService {
         text,
         blocks,
       );
+      if (opts.refreshMirror && callout.mirrorChannel && callout.mirrorTs) {
+        await this.slack.update(
+          callout.mirrorChannel,
+          callout.mirrorTs,
+          text,
+          this.mirrorBlocks(callout),
+        );
+      }
     } else {
       // The asking goes to the channel kept for it, which is how AIR was
       // arranged: one channel people watch when they might turn out, and one
@@ -716,9 +796,21 @@ export class AirService {
         this.logger.warn(`callout ${callout.id}: nothing posted to Slack`);
       }
       // A plain copy for the record, when the two are separate channels.
-      // Never edited afterwards: it is a log line, not a conversation.
+      // Kept so it can be redrawn when the call turns out to be something
+      // more than its first message said; the record should end up saying
+      // what the call was, not what was known a minute in.
       if (asking === 'responding') {
-        await this.slack.post('dispatches', text, this.mirrorBlocks(callout));
+        const mirror = await this.slack.postReturning(
+          'dispatches',
+          text,
+          this.mirrorBlocks(callout),
+        );
+        if (mirror) {
+          await this.prisma.callout.update({
+            where: { id: callout.id },
+            data: { mirrorChannel: mirror.channel, mirrorTs: mirror.ts },
+          });
+        }
       }
     }
 

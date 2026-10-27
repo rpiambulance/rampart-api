@@ -1263,10 +1263,25 @@ model Dispatch {
   /// which are what the pager actually said.
   enteredById    Int?
 
-  enteredBy Member?  @relation("DispatchEnteredBy", fields: [enteredById], references: [id])
+  /// When this message reached Rampart. receivedAt is when the call
+  /// happened — backdated to the pager when the tones came first — so an
+  /// update is matched by how long after the last message it arrived, which
+  /// only this can say.
+  arrivedAt DateTime @default(now())
+  /// Set on a message that updates a call already received: dispatch sends
+  /// the location first and the call type a minute or two later, as a second
+  /// message. Points at the call's first message, which is the one a callout
+  /// belongs to; every message is kept as a record of what was known when.
+  primaryId Int?
+
+  enteredBy Member?    @relation("DispatchEnteredBy", fields: [enteredById], references: [id])
   callout   Callout?
+  primary   Dispatch?  @relation("DispatchFollowUps", fields: [primaryId], references: [id], onDelete: Cascade)
+  followUps Dispatch[] @relation("DispatchFollowUps")
 
   @@index([receivedAt])
+  @@index([arrivedAt])
+  @@index([primaryId])
 }
 
 /// AIR — "am I responding". A page and a dispatch are two signals for one
@@ -1304,8 +1319,13 @@ model Callout {
   closesAt DateTime
 
   /// Where the message is, so it can be edited in place as answers land.
-  slackChannel String?
-  slackTs      String?
+  slackChannel  String?
+  slackTs       String?
+  /// The plain copy in the record channel, when that is a separate channel.
+  /// Edited when the call's details change, so the record says what the
+  /// call turned out to be rather than what the first message knew.
+  mirrorChannel String?
+  mirrorTs      String?
 
   dispatch  Dispatch?         @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
   responses CalloutResponse[]

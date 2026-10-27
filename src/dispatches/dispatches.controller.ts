@@ -27,6 +27,12 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import type { AuthContext } from '../auth/auth-context';
 import { ConfigService } from '@nestjs/config';
 import { AirService } from '../air/air.service';
+import type { DispatchDetail } from '../air/dispatch-message';
+import {
+  mergeMessages,
+  samePlace,
+  UPDATE_WINDOW_MINUTES,
+} from '../air/dispatch-updates';
 import { geocode } from './geocode';
 import { HeadsupEvents } from '../headsup/headsup.events';
 import { WebhooksService } from '../webhooks/webhooks.service';
@@ -114,6 +120,28 @@ export class DispatchesController {
    * Optional: with no GOOGLE_MAPS_API_KEY the call is filed as it came, and
    * the Slack post builds its directions from the address text instead.
    */
+  /**
+   * The call this message is more about, if it is one.
+   *
+   * Same place, and within a few minutes of the last message about it —
+   * measured from when they arrived, since a call's own time can be backdated
+   * to the pager. Calls typed in by hand are left out: they are somebody's
+   * recollection, and Herald's message about the same call should stand as
+   * the call that gets asked about.
+   */
+  private async callBeingUpdated(
+    incoming: DispatchDetail,
+    now: Date,
+  ): Promise<number | null> {
+    const since = new Date(now.getTime() - UPDATE_WINDOW_MINUTES * 60_000);
+    const recent = await this.prisma.dispatch.findMany({
+      where: { arrivedAt: { gte: since }, enteredById: null },
+      orderBy: { arrivedAt: 'desc' },
+    });
+    const match = recent.find((message) => samePlace(message, incoming));
+    return match ? (match.primaryId ?? match.id) : null;
+  }
+
   private async locate(
     location: string | null,
     have: { latitude: number | null; longitude: number | null },
@@ -159,39 +187,74 @@ export class DispatchesController {
       complaint?: unknown;
     };
 
+    const now = new Date();
+    const location = str(body['Location']);
+    const latitude = num(body['latitude']);
+    const longitude = num(body['longitude']);
+    const fields = {
+      determinant: str(callType.determinant),
+      complaint: str(callType.complaint) ?? str(body['Call Type']),
+      location,
+      business: str(body['Business']),
+      additionalInfo: str(body['Additional Location Info']),
+      crossStreets: str(body['Cross Street']) ?? str(body['Cross Streets']),
+      units: str(body['Dispatched Units']),
+      responseAreas: str(body['Response Areas']),
+      latitude,
+      longitude,
+      geocodedPlace: str(body['geocoded_place']),
+      ...(await this.locate(location, { latitude, longitude })),
+    };
+    // Required by Prisma's JSON input type. The lint rule disagrees — it
+    // reads the assertion as redundant — and `eslint --fix` has quietly
+    // removed it, which breaks the build and not a test. tsc is the
+    // authority here, so the rule is silenced rather than obeyed.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const raw = body as object;
+
+    // More about a call already received — usually the call type, which
+    // dispatch sends a minute or two after the location. Kept as a message
+    // of its own, attached to the call, and the call's post is redrawn
+    // rather than a second one going out and asking everybody again.
+    const primaryId = await this.callBeingUpdated(fields, now);
+    if (primaryId) {
+      const update = await this.prisma.dispatch.create({
+        data: { ...fields, receivedAt: now, primaryId, raw },
+      });
+      const first = await this.prisma.dispatch.findUniqueOrThrow({
+        where: { id: primaryId },
+        include: { followUps: { orderBy: { arrivedAt: 'asc' } } },
+      });
+      const call = mergeMessages([first, ...first.followUps]);
+      this.webhooks.emit('dispatch.updated', {
+        id: primaryId,
+        messageId: update.id,
+        determinant: call.determinant,
+        complaint: call.complaint,
+        location: call.location,
+        units: call.units,
+        receivedAt: first.receivedAt.toISOString(),
+      });
+      // The screens in the bay show the call again with what is now known.
+      // The count does not move: it is the same call.
+      this.headsup.emit({
+        kind: 'dispatch',
+        determinant: call.determinant,
+        complaint: call.complaint,
+        location: call.location,
+        receivedAt: first.receivedAt.toISOString(),
+      });
+      await this.air.updated(primaryId);
+      return { ok: true, id: update.id, updates: primaryId };
+    }
+
     // The tones are the call. When a page opened a callout minutes ago,
     // that is when this happened — Herald arriving later is the paperwork
     // catching up, and the log, the counts and anything searched by date
     // should all say the earlier time.
-    const receivedAt = await this.air.callTime(new Date());
-
-    const location = str(body['Location']);
-    const latitude = num(body['latitude']);
-    const longitude = num(body['longitude']);
-    const located = await this.locate(location, { latitude, longitude });
-
+    const receivedAt = await this.air.callTime(now);
     const dispatch = await this.prisma.dispatch.create({
-      data: {
-        receivedAt,
-        determinant: str(callType.determinant),
-        complaint: str(callType.complaint) ?? str(body['Call Type']),
-        location,
-        business: str(body['Business']),
-        additionalInfo: str(body['Additional Location Info']),
-        crossStreets: str(body['Cross Street']) ?? str(body['Cross Streets']),
-        units: str(body['Dispatched Units']),
-        responseAreas: str(body['Response Areas']),
-        latitude,
-        longitude,
-        geocodedPlace: str(body['geocoded_place']),
-        ...located,
-        // Required by Prisma's JSON input type. The lint rule disagrees —
-        // it reads the assertion as redundant — and `eslint --fix` has
-        // quietly removed it, which breaks the build and not a test. tsc is
-        // the authority here, so the rule is silenced rather than obeyed.
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-        raw: body as object,
-      },
+      data: { ...fields, receivedAt, raw },
     });
     this.webhooks.emit('dispatch.received', {
       id: dispatch.id,
@@ -275,7 +338,7 @@ export class DispatchesController {
 
   @Get('dispatches')
   @RequirePermissions(PERMISSIONS.DISPATCHES_READ)
-  list(
+  async list(
     @Query('limit') limit?: string,
     @Query('q') q?: string,
     @Query('from') from?: string,
@@ -288,40 +351,47 @@ export class DispatchesController {
     const fromStart = from && isDateOnly(from) ? nyDayStart(from) : undefined;
     const toEnd = to && isDateOnly(to) ? nyDayEnd(to) : undefined;
 
-    return this.prisma.dispatch.findMany({
+    // The fields someone would actually search a call by — in any of the
+    // call's messages, since the call type is often only in the second.
+    const matches = (needle: string) => [
+      {
+        complaint: { contains: needle, mode: 'insensitive' as const },
+      },
+      {
+        location: { contains: needle, mode: 'insensitive' as const },
+      },
+      {
+        business: { contains: needle, mode: 'insensitive' as const },
+      },
+      {
+        crossStreets: {
+          contains: needle,
+          mode: 'insensitive' as const,
+        },
+      },
+      { units: { contains: needle, mode: 'insensitive' as const } },
+      {
+        determinant: {
+          contains: needle,
+          mode: 'insensitive' as const,
+        },
+      },
+      {
+        additionalInfo: {
+          contains: needle,
+          mode: 'insensitive' as const,
+        },
+      },
+    ];
+    const rows = await this.prisma.dispatch.findMany({
       where: {
+        // A call's first message is the call; updates appear within it.
+        primaryId: null,
         ...(search
           ? {
-              // The fields someone would actually search a call by.
               OR: [
-                {
-                  complaint: { contains: search, mode: 'insensitive' as const },
-                },
-                {
-                  location: { contains: search, mode: 'insensitive' as const },
-                },
-                {
-                  business: { contains: search, mode: 'insensitive' as const },
-                },
-                {
-                  crossStreets: {
-                    contains: search,
-                    mode: 'insensitive' as const,
-                  },
-                },
-                { units: { contains: search, mode: 'insensitive' as const } },
-                {
-                  determinant: {
-                    contains: search,
-                    mode: 'insensitive' as const,
-                  },
-                },
-                {
-                  additionalInfo: {
-                    contains: search,
-                    mode: 'insensitive' as const,
-                  },
-                },
+                ...matches(search),
+                { followUps: { some: { OR: matches(search) } } },
               ],
             }
           : {}),
@@ -335,6 +405,7 @@ export class DispatchesController {
           : {}),
       },
       include: {
+        followUps: { orderBy: { arrivedAt: 'asc' } },
         enteredBy: {
           select: { firstName: true, preferredFirstName: true, lastName: true },
         },
@@ -376,5 +447,11 @@ export class DispatchesController {
       orderBy: { receivedAt: 'desc' },
       take: limit ? Math.min(Number(limit), 500) : 100,
     });
+    // Each call as all its messages describe it, with how many there were.
+    return rows.map(({ followUps, ...row }) => ({
+      ...row,
+      ...mergeMessages([row, ...followUps]),
+      updates: followUps.length,
+    }));
   }
 }

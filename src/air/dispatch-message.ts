@@ -51,12 +51,25 @@ function esc(text: string): string {
 const present = (value: string | null | undefined): string | null =>
   value?.trim() || null;
 
-/** "Alpha - Falls", as Herald writes it. */
+/**
+ * A call type that has actually been given. Herald says "Unknown" for both
+ * halves when the first message about a call carries only a location, and
+ * the call type follows in a second message.
+ */
+const given = (value: string | null | undefined): string | null => {
+  const text = present(value);
+  return text && !/^unknown$/i.test(text) ? text : null;
+};
+
+/**
+ * "Alpha - Falls", as Herald writes it — and, before dispatch has said,
+ * that it has not, rather than Herald's "Unknown - Unknown".
+ */
 export function callType(dispatch: DispatchDetail): string {
   return (
-    [present(dispatch.determinant), present(dispatch.complaint)]
+    [given(dispatch.determinant), given(dispatch.complaint)]
       .filter(Boolean)
-      .join(' - ') || 'Unknown'
+      .join(' - ') || 'type not given yet'
   );
 }
 
@@ -114,8 +127,8 @@ export function navigationLinks(
  * says the two things that decide whether somebody gets up.
  */
 export function fallbackText(dispatch: DispatchDetail): string {
-  const determinant = present(dispatch.determinant)?.toUpperCase();
-  const complaint = present(dispatch.complaint)?.toLowerCase();
+  const determinant = given(dispatch.determinant)?.toUpperCase();
+  const complaint = given(dispatch.complaint)?.toLowerCase();
   const what = [determinant, complaint].filter(Boolean).join(' ') || 'Call';
   const where = addressOf(dispatch);
   return where ? `${what} at ${where}` : what;

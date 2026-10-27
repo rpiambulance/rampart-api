@@ -18,6 +18,12 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
     description: 'A call came in from Herald.',
   },
   {
+    key: 'dispatch.updated',
+    label: 'Dispatch updated',
+    description:
+      'Herald sent more about a call already received — usually the call type, after the location.',
+  },
+  {
     key: 'crew.assigned',
     label: 'Crew slot filled',
     description: 'Somebody took, or was placed in, a night crew seat.',

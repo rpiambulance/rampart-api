@@ -511,6 +511,46 @@ export class SlackService {
     }
   }
 
+  /**
+   * A reply under a message, optionally also shown in the channel.
+   *
+   * Editing a message notifies nobody — Slack redraws it quietly — so a
+   * change worth somebody getting up for has to be said again as a message
+   * of its own. In the thread it stays with the call it is about; sent to
+   * the channel as well, it reaches people the way the original did.
+   */
+  async replyInThread(
+    channel: string,
+    threadTs: string,
+    text: string,
+    opts: { broadcast?: boolean } = {},
+  ): Promise<boolean> {
+    const { botToken } = await this.settings();
+    if (!botToken) return false;
+    try {
+      const res = await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({
+          channel,
+          thread_ts: threadTs,
+          text,
+          ...(opts.broadcast ? { reply_broadcast: true } : {}),
+        }),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok)
+        this.logger.error(`slack thread reply failed: ${data.error}`);
+      return data.ok;
+    } catch (error) {
+      this.logger.error(`slack thread reply failed: ${String(error)}`);
+      return false;
+    }
+  }
+
   /** Replies to an interaction using the response_url Slack supplied. */
   async respond(responseUrl: string, body: unknown): Promise<void> {
     try {

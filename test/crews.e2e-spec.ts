@@ -34,6 +34,7 @@ import {
   weekdayOf,
 } from '../src/common/dates';
 import { HeadsupService } from '../src/headsup/headsup.service';
+import { SlackService } from '../src/notifications/slack.service';
 
 /**
  * Exercises the ported night-crew rules end-to-end against the dev Postgres.
@@ -4114,6 +4115,186 @@ describe('Night crews engine (e2e)', () => {
       expect(
         (res.body as Array<{ id: number }>).some((p) => p.id === placeId),
       ).toBe(true);
+    });
+  });
+
+  // Dispatch sends the location first and the call type a minute or two
+  // later, as a second message about the same call.
+  describe('a call whose type arrives in a second message', () => {
+    let token: string;
+    let slack: SlackService;
+    let headsup: HeadsupService;
+    // Somewhere no other test sends a call, so the window cannot fold one
+    // of theirs into these.
+    const address = `${(stamp % 9000) + 1000} Updater Ave, Troy, NY`;
+
+    const herald = async (fields: Record<string, unknown>) => {
+      const res = await request(app.getHttpServer())
+        .post(`/v1/herald/dispatch?token=${token}`)
+        .send({ Location: address, ...fields })
+        .expect(201);
+      return res.body as { id: number; updates?: number };
+    };
+
+    const locationOnly = () =>
+      herald({
+        'Call Type': '',
+        'CALL TYPE': { determinant: 'Unknown', complaint: 'Unknown' },
+        'Cross Street': 'Bouton Road/Sage Avenue',
+      });
+    const withCallType = () =>
+      herald({
+        'Call Type': 'B - Falls',
+        'CALL TYPE': { determinant: 'Bravo', complaint: 'Falls' },
+        'Dispatched Units': 'RE59',
+      });
+
+    beforeAll(async () => {
+      slack = app.get(SlackService);
+      headsup = app.get(HeadsupService);
+      token = `rpa_updates_${stamp}`;
+      await prisma.apiToken.create({
+        data: {
+          name: `Herald updates ${stamp}`,
+          tokenHash: createHash('sha256').update(token).digest('hex'),
+          ownerId: alice,
+          permissions: ['dispatches:ingest'],
+        },
+      });
+    });
+
+    beforeEach(async () => {
+      // Each test is its own call; a callout left open by anything earlier
+      // would otherwise be joined by this one's first message.
+      await prisma.callout.deleteMany({});
+      await prisma.dispatch.deleteMany({ where: { location: address } });
+    });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    afterAll(async () => {
+      await prisma.callout.deleteMany({});
+      await prisma.dispatch.deleteMany({ where: { location: address } });
+      await prisma.apiToken.deleteMany({
+        where: { name: `Herald updates ${stamp}` },
+      });
+    });
+
+    it('keeps it as one call, with both messages on record', async () => {
+      const callsBefore = await headsup.count('calls');
+      const first = await locationOnly();
+      const second = await withCallType();
+
+      expect(second.updates).toBe(first.id);
+      const update = await prisma.dispatch.findUniqueOrThrow({
+        where: { id: second.id },
+      });
+      expect(update.primaryId).toBe(first.id);
+
+      // One call asked about, not two.
+      expect(await prisma.callout.count()).toBe(1);
+      // And one call on the board's counter.
+      expect((await headsup.count('calls')) - callsBefore).toBe(1);
+    });
+
+    it('shows the call in the log as everything its messages say', async () => {
+      const first = await locationOnly();
+      await withCallType();
+
+      const log = await request(app.getHttpServer())
+        .get(`/v1/dispatches?q=${encodeURIComponent('Updater Ave')}`)
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:read')
+        .expect(200);
+      const rows = log.body as Array<{
+        id: number;
+        determinant: string;
+        complaint: string;
+        crossStreets: string;
+        units: string;
+        updates: number;
+      }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        id: first.id,
+        determinant: 'Bravo',
+        complaint: 'Falls',
+        // From the first message, which the second did not repeat.
+        crossStreets: 'Bouton Road/Sage Avenue',
+        units: 'RE59',
+        updates: 1,
+      });
+
+      // Searched by what only the second message said, it is still found.
+      const byType = await request(app.getHttpServer())
+        .get('/v1/dispatches?q=Falls')
+        .set(as(alice))
+        .set('x-test-permissions', 'dispatches:read')
+        .expect(200);
+      expect(
+        (byType.body as Array<{ id: number }>).map((row) => row.id),
+      ).toContain(first.id);
+    });
+
+    it('redraws the post and says the call type to the channel', async () => {
+      const update = jest.spyOn(slack, 'update').mockResolvedValue(true);
+      const reply = jest.spyOn(slack, 'replyInThread').mockResolvedValue(true);
+
+      await locationOnly();
+      // Slack is not configured here, so stand in for the post having gone.
+      await prisma.callout.updateMany({
+        data: { slackChannel: 'C_RESPONDING', slackTs: '1700000000.000100' },
+      });
+
+      await withCallType();
+      expect(update).toHaveBeenCalledWith(
+        'C_RESPONDING',
+        '1700000000.000100',
+        expect.stringContaining('BRAVO falls'),
+        expect.anything(),
+      );
+      expect(reply).toHaveBeenCalledTimes(1);
+      expect(reply).toHaveBeenCalledWith(
+        'C_RESPONDING',
+        '1700000000.000100',
+        expect.stringContaining('BRAVO falls'),
+        { broadcast: true },
+      );
+
+      // A further message that changes only a cross street is redrawn and
+      // not announced: it does not change whether anybody goes.
+      await herald({
+        'CALL TYPE': { determinant: 'Bravo', complaint: 'Falls' },
+        'Cross Street': '15th St/Sage Ave',
+      });
+      expect(reply).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes a message after five minutes as a new call', async () => {
+      const first = await locationOnly();
+      await prisma.dispatch.updateMany({
+        where: { location: address },
+        data: { arrivedAt: new Date(Date.now() - 6 * 60_000) },
+      });
+      const later = await withCallType();
+      expect(later.updates).toBeUndefined();
+      expect(later.id).not.toBe(first.id);
+    });
+
+    // It used to be dropped: logged, and on nobody's phone.
+    it('asks about a different call that comes in meanwhile', async () => {
+      await locationOnly();
+      await request(app.getHttpServer())
+        .post(`/v1/herald/dispatch?token=${token}`)
+        .send({
+          Location: `${address} — somewhere else entirely`.replace(/^\d+/, '9'),
+          'CALL TYPE': { determinant: 'Delta', complaint: 'Cardiac' },
+        })
+        .expect(201);
+      expect(await prisma.callout.count()).toBe(2);
+      await prisma.dispatch.deleteMany({
+        where: { complaint: 'Cardiac', location: { startsWith: '9 ' } },
+      });
     });
   });
 

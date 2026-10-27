@@ -141,7 +141,12 @@ export class HeadsupService {
     const since = await this.lastReset(counter);
     if (counter === 'calls') {
       return this.prisma.dispatch.count({
-        where: since ? { receivedAt: { gt: since } } : {},
+        where: {
+          // Calls, not messages: a call whose type arrived in a second
+          // message is still one call.
+          primaryId: null,
+          ...(since ? { receivedAt: { gt: since } } : {}),
+        },
       });
     }
     return this.prisma.dispatchMishap.count({
