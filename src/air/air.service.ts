@@ -21,6 +21,11 @@ import {
   type Responder,
   type ResponderSkills,
 } from './air-logic';
+import {
+  dispatchBlocks,
+  fallbackText,
+  type DispatchDetail,
+} from './dispatch-message';
 
 /** What a dispatch looks like to the callout, whoever wrote it down. */
 interface DispatchLine {
@@ -532,12 +537,7 @@ export class AirService {
       asked: boolean;
       openedAt: Date;
       pageText: string | null;
-      dispatch: {
-        determinant: string | null;
-        complaint: string | null;
-        location: string | null;
-        units: string | null;
-      } | null;
+      dispatch: DispatchDetail | null;
       responses: Array<{
         responding: boolean;
         slackName: string | null;
@@ -551,18 +551,10 @@ export class AirService {
     crew: string | null,
   ): unknown[] {
     const when = callout.openedAt.toISOString();
-    const heading =
-      callout.kind === 'LONGTONE'
-        ? '*Rensselaer County longtone*'
-        : '*RPI Ambulance dispatched*';
     const blocks: unknown[] = [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `${heading}\n${this.headline(callout)}`,
-        },
-      },
+      // The call, as Herald laid it out, once there is a dispatch to lay out.
+      // Until then all anybody has is the pager's one line.
+      ...this.callBlocks(callout),
       {
         type: 'context',
         elements: [
@@ -596,6 +588,7 @@ export class AirService {
       name: this.nameFor(response),
       responding: response.responding,
     }));
+    blocks.push({ type: 'divider' });
     blocks.push({
       type: 'section',
       text: {
@@ -628,17 +621,19 @@ export class AirService {
     return blocks;
   }
 
-  /** The same call, stated once for the channel that keeps the record. */
-  private mirrorBlocks(callout: {
+  /**
+   * The call itself, before anything about who is answering it.
+   *
+   * With a dispatch, Herald's layout — call type, location, cross streets,
+   * directions. Without one, the pager's line under a plain heading: a
+   * longtone never has a dispatch, and a page-first call does not yet.
+   */
+  private callBlocks(callout: {
     kind: CalloutKind;
     pageText: string | null;
-    dispatch: {
-      determinant: string | null;
-      complaint: string | null;
-      location: string | null;
-      units: string | null;
-    } | null;
+    dispatch: DispatchDetail | null;
   }): unknown[] {
+    if (callout.dispatch) return dispatchBlocks(callout.dispatch);
     const heading =
       callout.kind === 'LONGTONE'
         ? '*Rensselaer County longtone*'
@@ -652,6 +647,15 @@ export class AirService {
         },
       },
     ];
+  }
+
+  /** The same call, stated once for the channel that keeps the record. */
+  private mirrorBlocks(callout: {
+    kind: CalloutKind;
+    pageText: string | null;
+    dispatch: DispatchDetail | null;
+  }): unknown[] {
+    return this.callBlocks(callout);
   }
 
   /**
@@ -668,11 +672,13 @@ export class AirService {
     });
     if (!callout) return;
 
-    const text = `${
-      callout.kind === 'LONGTONE'
-        ? 'Rensselaer County longtone'
-        : 'RPI Ambulance dispatched'
-    }: ${this.headline(callout)}`;
+    const text = callout.dispatch
+      ? fallbackText(callout.dispatch)
+      : `${
+          callout.kind === 'LONGTONE'
+            ? 'Rensselaer County longtone'
+            : 'RPI Ambulance dispatched'
+        }: ${this.headline(callout)}`;
     const blocks = this.blocksFor(
       callout,
       callout.asked

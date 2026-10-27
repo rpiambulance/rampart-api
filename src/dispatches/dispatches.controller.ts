@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Logger,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   IsDateString,
@@ -17,7 +25,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import type { AuthContext } from '../auth/auth-context';
+import { ConfigService } from '@nestjs/config';
 import { AirService } from '../air/air.service';
+import { geocode } from './geocode';
 import { HeadsupEvents } from '../headsup/headsup.events';
 import { WebhooksService } from '../webhooks/webhooks.service';
 
@@ -91,7 +101,41 @@ export class DispatchesController {
     private readonly headsup: HeadsupEvents,
     private readonly audit: AuditService,
     private readonly air: AirService,
+    private readonly config: ConfigService,
   ) {}
+
+  private readonly logger = new Logger(DispatchesController.name);
+
+  /**
+   * Coordinates for a call that arrived without them.
+   *
+   * Herald geocodes before it forwards, so this only runs when it did not —
+   * Herald has no key, its lookup failed, or somebody typed the call in.
+   * Optional: with no GOOGLE_MAPS_API_KEY the call is filed as it came, and
+   * the Slack post builds its directions from the address text instead.
+   */
+  private async locate(
+    location: string | null,
+    have: { latitude: number | null; longitude: number | null },
+  ): Promise<{
+    latitude?: number;
+    longitude?: number;
+    geocodedPlace?: string;
+  }> {
+    if (have.latitude != null && have.longitude != null) return {};
+    const key = this.config.get<string>('GOOGLE_MAPS_API_KEY');
+    if (!location || !key) return {};
+    const found = await geocode(location, key);
+    if (!found) {
+      this.logger.warn(`could not place "${location}" on the map`);
+      return {};
+    }
+    return {
+      latitude: found.latitude,
+      longitude: found.longitude,
+      geocodedPlace: found.place,
+    };
+  }
 
   @Public()
   @Throttle({ default: { limit: 120, ttl: 3_600_000 } })
@@ -121,20 +165,26 @@ export class DispatchesController {
     // should all say the earlier time.
     const receivedAt = await this.air.callTime(new Date());
 
+    const location = str(body['Location']);
+    const latitude = num(body['latitude']);
+    const longitude = num(body['longitude']);
+    const located = await this.locate(location, { latitude, longitude });
+
     const dispatch = await this.prisma.dispatch.create({
       data: {
         receivedAt,
         determinant: str(callType.determinant),
         complaint: str(callType.complaint) ?? str(body['Call Type']),
-        location: str(body['Location']),
+        location,
         business: str(body['Business']),
         additionalInfo: str(body['Additional Location Info']),
         crossStreets: str(body['Cross Street']) ?? str(body['Cross Streets']),
         units: str(body['Dispatched Units']),
         responseAreas: str(body['Response Areas']),
-        latitude: num(body['latitude']),
-        longitude: num(body['longitude']),
+        latitude,
+        longitude,
         geocodedPlace: str(body['geocoded_place']),
+        ...located,
         // Required by Prisma's JSON input type. The lint rule disagrees —
         // it reads the assertion as redundant — and `eslint --fix` has
         // quietly removed it, which breaks the build and not a test. tsc is
@@ -191,8 +241,13 @@ export class DispatchesController {
   ) {
     const clean = (value?: string) => value?.trim() || null;
     const enteredById = auth.kind === 'member' ? auth.memberId : null;
+    const located = await this.locate(clean(body.location), {
+      latitude: null,
+      longitude: null,
+    });
     const dispatch = await this.prisma.dispatch.create({
       data: {
+        ...located,
         receivedAt: body.receivedAt ? new Date(body.receivedAt) : new Date(),
         determinant: clean(body.determinant),
         complaint: clean(body.complaint),

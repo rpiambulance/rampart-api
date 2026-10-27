@@ -65,6 +65,10 @@ services:
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       # Shared secret for the DiALERT duty-supervisor lookup; unset denies all.
       DIALERT_TOKEN: ${DIALERT_TOKEN:-}
+      # Geocodes a call Herald forwarded without coordinates. Unset is fine:
+      # Herald geocodes most calls itself, and the Slack post builds its
+      # directions from the address text when nobody did.
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
     volumes:
       - apistorage:/data/storage
     depends_on:
