@@ -4277,12 +4277,10 @@ describe('Night crews engine (e2e)', () => {
         .mockImplementation((key: string) =>
           Promise.resolve(key === 'responding' ? 'C_RESPONDING' : 'C_DISPATCH'),
         );
-      const asked = jest
-        .spyOn(slack, 'postReturning')
-        .mockResolvedValue({
-          channel: 'C_RESPONDING',
-          ts: '1700000000.000200',
-        });
+      const asked = jest.spyOn(slack, 'postReturning').mockResolvedValue({
+        channel: 'C_RESPONDING',
+        ts: '1700000000.000200',
+      });
       const record = jest.spyOn(slack, 'post').mockResolvedValue(true);
 
       await withCallType();
