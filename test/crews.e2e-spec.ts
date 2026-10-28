@@ -4270,6 +4270,37 @@ describe('Night crews engine (e2e)', () => {
       expect(reply).toHaveBeenCalledTimes(1);
     });
 
+    // The record channel is read by more people than are asked to go.
+    it('tells the record channel there is a call, and not where', async () => {
+      jest
+        .spyOn(slack, 'channelId')
+        .mockImplementation((key: string) =>
+          Promise.resolve(key === 'responding' ? 'C_RESPONDING' : 'C_DISPATCH'),
+        );
+      const asked = jest
+        .spyOn(slack, 'postReturning')
+        .mockResolvedValue({
+          channel: 'C_RESPONDING',
+          ts: '1700000000.000200',
+        });
+      const record = jest.spyOn(slack, 'post').mockResolvedValue(true);
+
+      await withCallType();
+
+      // The people being asked get where it is.
+      expect(JSON.stringify(asked.mock.calls)).toContain('Updater Ave');
+      // The record gets that there is a call — in the post and in the line
+      // a lock screen shows.
+      expect(record).toHaveBeenCalledWith(
+        'dispatches',
+        'RPI Ambulance dispatched',
+        expect.anything(),
+      );
+      const said = JSON.stringify(record.mock.calls);
+      expect(said).not.toContain('Updater');
+      expect(said).not.toMatch(/falls|bravo/i);
+    });
+
     it('takes a message after five minutes as a new call', async () => {
       const first = await locationOnly();
       await prisma.dispatch.updateMany({

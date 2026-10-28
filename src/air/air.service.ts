@@ -168,8 +168,8 @@ export class AirService {
         include: RESPONSES_INCLUDE,
       });
       // The ask went out with one line of pager text; now it can say what
-      // the call actually is — in the record channel's copy too.
-      await this.render(joined.id, { refreshMirror: true });
+      // the call actually is.
+      await this.render(joined.id);
       return joined;
     }
 
@@ -212,7 +212,7 @@ export class AirService {
     const before = mergeMessages(messages.slice(0, -1));
     const after = mergeMessages(messages);
 
-    await this.render(callout.id, { refreshMirror: true });
+    await this.render(callout.id);
 
     if (callType(before) === callType(after)) return;
     const posted = await this.prisma.callout.findUniqueOrThrow({
@@ -707,13 +707,26 @@ export class AirService {
     ];
   }
 
-  /** The same call, stated once for the channel that keeps the record. */
-  private mirrorBlocks(callout: {
-    kind: CalloutKind;
-    pageText: string | null;
-    dispatch: DispatchDetail | null;
-  }): unknown[] {
-    return this.callBlocks(callout);
+  /**
+   * The record channel's line: that there is a call, and nothing else.
+   *
+   * No location, no call type, and not the pager's text either, which
+   * carries the address. Where a call is and what it is goes to the people
+   * being asked to go — the responding channel — and not to everybody who
+   * reads the record. Nothing in it can change, so it is posted once and
+   * left alone.
+   */
+  private recordNotice(kind: CalloutKind): { text: string; blocks: unknown[] } {
+    const text =
+      kind === 'LONGTONE'
+        ? 'Rensselaer County longtone'
+        : 'RPI Ambulance dispatched';
+    return {
+      text,
+      blocks: [
+        { type: 'section', text: { type: 'mrkdwn', text: `*${text}*` } },
+      ],
+    };
   }
 
   /**
@@ -724,14 +737,9 @@ export class AirService {
    * they were coming is in the database either way.
    *
    * The call is drawn from all its messages together, so a follow-up that
-   * brings the call type shows it. refreshMirror redraws the record
-   * channel's copy too — only when what the call is has changed, not on
-   * every answer, since the copy shows nobody's answers.
+   * brings the call type shows it.
    */
-  private async render(
-    calloutId: number,
-    opts: { refreshMirror?: boolean } = {},
-  ): Promise<void> {
+  private async render(calloutId: number): Promise<void> {
     const found = await this.prisma.callout.findUnique({
       where: { id: calloutId },
       include: RESPONSES_INCLUDE,
@@ -770,14 +778,6 @@ export class AirService {
         text,
         blocks,
       );
-      if (opts.refreshMirror && callout.mirrorChannel && callout.mirrorTs) {
-        await this.slack.update(
-          callout.mirrorChannel,
-          callout.mirrorTs,
-          text,
-          this.mirrorBlocks(callout),
-        );
-      }
     } else {
       // The asking goes to the channel kept for it, which is how AIR was
       // arranged: one channel people watch when they might turn out, and one
@@ -795,22 +795,12 @@ export class AirService {
       } else {
         this.logger.warn(`callout ${callout.id}: nothing posted to Slack`);
       }
-      // A plain copy for the record, when the two are separate channels.
-      // Kept so it can be redrawn when the call turns out to be something
-      // more than its first message said; the record should end up saying
-      // what the call was, not what was known a minute in.
+      // A line for the record, when the two are separate channels. The
+      // notification text is the same line: Slack shows that on a lock
+      // screen, and an address there would undo leaving it out of the post.
       if (asking === 'responding') {
-        const mirror = await this.slack.postReturning(
-          'dispatches',
-          text,
-          this.mirrorBlocks(callout),
-        );
-        if (mirror) {
-          await this.prisma.callout.update({
-            where: { id: callout.id },
-            data: { mirrorChannel: mirror.channel, mirrorTs: mirror.ts },
-          });
-        }
+        const notice = this.recordNotice(callout.kind);
+        await this.slack.post('dispatches', notice.text, notice.blocks);
       }
     }
 

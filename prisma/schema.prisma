@@ -1319,13 +1319,8 @@ model Callout {
   closesAt DateTime
 
   /// Where the message is, so it can be edited in place as answers land.
-  slackChannel  String?
-  slackTs       String?
-  /// The plain copy in the record channel, when that is a separate channel.
-  /// Edited when the call's details change, so the record says what the
-  /// call turned out to be rather than what the first message knew.
-  mirrorChannel String?
-  mirrorTs      String?
+  slackChannel String?
+  slackTs      String?
 
   dispatch  Dispatch?         @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
   responses CalloutResponse[]
