@@ -2758,6 +2758,155 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // One press can end a promotion request — a single denial does — so a
+  // vote cast by mistake has to be something its voter can take back.
+  describe('taking back a promotion vote', () => {
+    let hopeful: number;
+    let voter: number;
+    let outsider: number;
+    let typeId: number;
+    let requestId: number;
+
+    const asVoter = () => as(voter);
+    const vote = (choice: 'APPROVE' | 'DENY') =>
+      request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/vote`)
+        .set(asVoter())
+        .send({ vote: choice })
+        .expect(201);
+    const liveVote = () =>
+      prisma.promotionVote.findFirstOrThrow({
+        where: { requestId, voterId: voter, rescindedAt: null },
+      });
+    const rescind = (voteId: number, who = asVoter(), notes?: string) =>
+      request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/votes/${voteId}/rescind`)
+        .set(who)
+        .send(notes ? { notes } : {});
+    const statusNow = async () =>
+      (
+        await prisma.promotionRequest.findUniqueOrThrow({
+          where: { id: requestId },
+        })
+      ).status;
+
+    beforeAll(async () => {
+      hopeful = await createMember('Rescindee', ['O', 'A']);
+      voter = await createMember('Rescinder', ['O', 'A']);
+      outsider = await createMember('Bystander', ['O', 'A']);
+      const committee = await prisma.role.findUniqueOrThrow({
+        where: { name: 'Training Committee' },
+      });
+      await prisma.memberRole.create({
+        data: {
+          memberId: voter,
+          roleId: committee.id,
+          startDate: toDbDate(nyNow().dateStr),
+        },
+      });
+      typeId = (
+        await prisma.credentialType.findUniqueOrThrow({ where: { key: 'CC' } })
+      ).id;
+    });
+
+    beforeEach(async () => {
+      const made = await prisma.promotionRequest.create({
+        data: {
+          memberId: hopeful,
+          credentialTypeId: typeId,
+          status: 'IN_VOTE',
+        },
+      });
+      requestId = made.id;
+    });
+
+    afterEach(async () => {
+      await prisma.promotionApproval.deleteMany({ where: { requestId } });
+      await prisma.promotionVote.deleteMany({ where: { requestId } });
+      await prisma.promotionRequest.deleteMany({ where: { id: requestId } });
+    });
+
+    afterAll(async () => {
+      await prisma.memberRole.deleteMany({ where: { memberId: voter } });
+    });
+
+    it('keeps the vote on record, and lets the seat be voted again', async () => {
+      await vote('APPROVE');
+      const first = await liveVote();
+      await rescind(
+        first.id,
+        asVoter(),
+        'Meant to wait for the ride-along',
+      ).expect(201);
+      await vote('DENY');
+
+      // Both are in the record, the way a vote is: the one taken back says
+      // so and when, with why.
+      const review = await request(app.getHttpServer())
+        .get(`/v1/promotions/requests/${requestId}`)
+        .set(as(voter))
+        .set('x-test-permissions', 'promotions:review')
+        .expect(200);
+      const votes = (review.body as { votes: unknown }).votes as Array<{
+        vote: string;
+        rescindedAt: string | null;
+        rescindNote: string | null;
+      }>;
+      expect(votes.map((v) => v.vote)).toEqual(['APPROVE', 'DENY']);
+      expect(votes[0].rescindedAt).not.toBeNull();
+      expect(votes[0].rescindNote).toBe('Meant to wait for the ride-along');
+      expect(votes[1].rescindedAt).toBeNull();
+    });
+
+    it('is only for whoever cast it', async () => {
+      await vote('APPROVE');
+      const cast = await liveVote();
+      await rescind(cast.id, as(outsider)).expect(403);
+      await rescind(cast.id).expect(201);
+      await rescind(cast.id).expect(409);
+    });
+
+    // The case it exists for: one mistaken denial ends the request.
+    it('reopens a request a single denial ended, and tells the member', async () => {
+      await vote('DENY');
+      expect(await statusNow()).toBe('DENIED');
+
+      await rescind((await liveVote()).id).expect(201);
+      expect(await statusNow()).toBe('IN_VOTE');
+
+      const told = await prisma.inboxMessage.findMany({
+        where: {
+          memberId: hopeful,
+          subject: { contains: 'back under review' },
+        },
+      });
+      expect(told).toHaveLength(1);
+    });
+
+    it('takes a request back from the captain when the committee is no longer unanimous', async () => {
+      await vote('APPROVE');
+      await prisma.promotionRequest.update({
+        where: { id: requestId },
+        data: { status: 'TC_APPROVED' },
+      });
+      await rescind((await liveVote()).id).expect(201);
+      expect(await statusNow()).toBe('IN_VOTE');
+    });
+
+    it('is closed once the captain has ruled', async () => {
+      await vote('APPROVE');
+      const cast = await liveVote();
+      await prisma.promotionApproval.create({
+        data: { requestId, approvedById: outsider, approved: true },
+      });
+      await prisma.promotionRequest.update({
+        where: { id: requestId },
+        data: { status: 'APPROVED' },
+      });
+      await rescind(cast.id).expect(400);
+    });
+  });
+
   describe('the station whiteboard', () => {
     // A display is a television, not a person: the token in its URL is the
     // whole credential, so what that token does and does not open is the

@@ -146,7 +146,7 @@ export class PromotionsService {
           },
         },
         credentialType: true,
-        votes: true,
+        votes: { where: { rescindedAt: null } },
         proxies: true,
         captainApproval: true,
       },
@@ -168,6 +168,7 @@ export class PromotionsService {
         },
         credentialType: true,
         votes: {
+          orderBy: { castAt: 'asc' },
           include: {
             voter: {
               select: {
@@ -342,6 +343,7 @@ export class PromotionsService {
     const vote = await this.prisma.promotionVote.findFirst({
       where: {
         requestId,
+        rescindedAt: null,
         OR: [
           { proxyForId: principalId },
           { voterId: principalId, proxyForId: null },
@@ -410,7 +412,11 @@ export class PromotionsService {
   ) {
     const request = await this.prisma.promotionRequest.findUnique({
       where: { id: requestId },
-      include: { votes: true, proxies: true, credentialType: true },
+      include: {
+        votes: { where: { rescindedAt: null } },
+        proxies: true,
+        credentialType: true,
+      },
     });
     if (!request) throw new NotFoundException('Request not found');
     if (request.status !== 'IN_VOTE') {
@@ -458,11 +464,132 @@ export class PromotionsService {
     return this.tally(requestId);
   }
 
+  /**
+   * Taking a vote back, so it can be cast again.
+   *
+   * Only by whoever cast it — a proxy takes back the vote they cast, not the
+   * member who appointed them. The vote is kept, marked as withdrawn and
+   * when, so the record shows what happened rather than a seat that seems
+   * to have changed its mind silently.
+   *
+   * Open until the captain has ruled. That includes a request a single
+   * denial has already ended, because one mistaken press is all it takes to
+   * end one, and that is exactly the vote somebody needs to take back. Once
+   * the captain has decided, the committee's vote is history.
+   */
+  async rescindVote(
+    voterId: number,
+    requestId: number,
+    voteId: number,
+    note?: string,
+  ) {
+    const vote = await this.prisma.promotionVote.findUnique({
+      where: { id: voteId },
+      include: { request: { include: { captainApproval: true } } },
+    });
+    if (!vote || vote.requestId !== requestId) {
+      throw new NotFoundException('No such vote on this request');
+    }
+    if (vote.voterId !== voterId) {
+      throw new ForbiddenException('Only whoever cast a vote can take it back');
+    }
+    if (vote.rescindedAt) {
+      throw new ConflictException('That vote has already been taken back');
+    }
+
+    const request = vote.request;
+    const endedByTheCommittee =
+      request.status === 'DENIED' && !request.captainApproval;
+    if (
+      request.status !== 'IN_VOTE' &&
+      request.status !== 'TC_APPROVED' &&
+      !endedByTheCommittee
+    ) {
+      throw new BadRequestException(
+        'This request has been decided, so its votes can no longer be taken back',
+      );
+    }
+    if (endedByTheCommittee) {
+      // Reopening this one beside a newer request for the same credential
+      // would leave the member with two being voted on at once.
+      const newer = await this.prisma.promotionRequest.findFirst({
+        where: {
+          memberId: request.memberId,
+          credentialTypeId: request.credentialTypeId,
+          id: { not: request.id },
+          status: { in: ['PENDING', 'IN_VOTE', 'TC_APPROVED'] },
+        },
+        select: { id: true },
+      });
+      if (newer) {
+        throw new ConflictException(
+          'A newer request for this credential is open; vote on that one instead',
+        );
+      }
+    }
+
+    await this.prisma.promotionVote.update({
+      where: { id: voteId },
+      data: { rescindedAt: new Date(), rescindNote: note?.trim() || null },
+    });
+    return this.reconsider(requestId, request.status);
+  }
+
+  /**
+   * Where a request stands once a vote has been taken back.
+   *
+   * Taking a vote back can only undo: it cannot add a denial or fill a seat.
+   * So the request returns to being voted on, unless somebody else's denial
+   * still stands. A member who was told their request was denied is told it
+   * is back in front of the committee — leaving them believing it is over
+   * would be the one outcome worse than not reopening it.
+   */
+  private async reconsider(requestId: number, was: string) {
+    const request = await this.prisma.promotionRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      include: {
+        votes: { where: { rescindedAt: null } },
+        credentialType: true,
+      },
+    });
+    if (request.votes.some((v) => v.vote === 'DENY')) {
+      return { status: request.status };
+    }
+
+    const committee = await this.trainingCommittee();
+    const covered = new Set(
+      request.votes.map((v) => v.proxyForId ?? v.voterId),
+    );
+    const unanimous =
+      committee.length > 0 && committee.every((id) => covered.has(id));
+    const status = unanimous ? 'TC_APPROVED' : 'IN_VOTE';
+    if (status !== request.status) {
+      await this.prisma.promotionRequest.update({
+        where: { id: requestId },
+        data: { status, resolvedAt: null },
+      });
+    }
+    if (was === 'DENIED') {
+      await this.notifications.notify(request.memberId, {
+        type: 'promotion.decided',
+        subject: `${request.credentialType.name} request is back under review`,
+        body: `A vote on your request for ${request.credentialType.name} was taken back, so it is no longer denied and is in front of the Training Committee again.`,
+      });
+    }
+    return {
+      status,
+      votesRemaining: committee.length - covered.size,
+    };
+  }
+
   /** Recompute status after a vote: any DENY → DENIED; all covered APPROVE → TC_APPROVED. */
   private async tally(requestId: number) {
     const request = await this.prisma.promotionRequest.findUniqueOrThrow({
       where: { id: requestId },
-      include: { votes: true, credentialType: true },
+      include: {
+        votes: { where: { rescindedAt: null } },
+        credentialType: true,
+      },
     });
     const committee = await this.trainingCommittee();
 

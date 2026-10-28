@@ -751,11 +751,18 @@ model PromotionVote {
   notes      String?
   castAt     DateTime   @default(now())
 
+  /// Taken back by whoever cast it, so the seat can be voted again. Kept
+  /// rather than deleted: the vote record says that this was voted and then
+  /// withdrawn, and when, the same way it says what was voted. A seat has
+  /// one vote that counts at a time — any number that were taken back.
+  rescindedAt DateTime?
+  rescindNote String?
+
   request  PromotionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   voter    Member           @relation("Voter", fields: [voterId], references: [id])
   proxyFor Member?          @relation("ProxyFor", fields: [proxyForId], references: [id])
 
-  @@unique([requestId, voterId, proxyForId])
+  @@index([requestId])
 }
 
 model PromotionProxy {

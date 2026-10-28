@@ -70,6 +70,13 @@ class AdjustmentDto {
   note?: string;
 }
 
+/** Why a vote is being taken back. Optional, like a vote's own notes. */
+class RescindDto {
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 class CaptainDto {
   @IsIn([true, false])
   approved!: boolean;
@@ -144,6 +151,22 @@ export class PromotionsController {
     @Body() body: VoteDto,
   ) {
     return this.promotions.vote(requireMember(auth), id, body.vote, body.notes);
+  }
+
+  /** Take back a vote you cast, so the seat can be voted again. */
+  @Post('requests/:id/votes/:voteId/rescind')
+  rescind(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('voteId', ParseIntPipe) voteId: number,
+    @Body() body: RescindDto,
+  ) {
+    return this.promotions.rescindVote(
+      requireMember(auth),
+      id,
+      voteId,
+      body.notes,
+    );
   }
 
   @Post('requests/:id/captain-decision')
