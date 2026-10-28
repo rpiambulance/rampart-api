@@ -96,6 +96,7 @@ model Member {
   checklistRevoked         ChecklistSignoff[]               @relation("ChecklistRevoker")
   promotionRequests        PromotionRequest[]
   promotionVotes           PromotionVote[]                  @relation("Voter")
+  meetingVotesRecorded     PromotionMeetingVote[]
   proxiedVotes             PromotionVote[]                  @relation("ProxyFor")
   proxyPrincipalOf         PromotionProxy[]                 @relation("ProxyPrincipal")
   proxyAgentOf             PromotionProxy[]                 @relation("ProxyAgent")
@@ -726,11 +727,12 @@ model PromotionRequest {
   createdAt        DateTime    @default(now())
   resolvedAt       DateTime?
 
-  member             Member             @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  credentialType     CredentialType     @relation(fields: [credentialTypeId], references: [id])
+  member             Member                @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  credentialType     CredentialType        @relation(fields: [credentialTypeId], references: [id])
   votes              PromotionVote[]
   proxies            PromotionProxy[]
   captainApproval    PromotionApproval?
+  meetingVote        PromotionMeetingVote?
   grantedCredentials MemberCredential[]
 
   @@index([memberId])
@@ -740,6 +742,33 @@ model PromotionRequest {
 enum VoteChoice {
   APPROVE
   DENY
+}
+
+/// A promotion vote the Training Committee took in person, at a meeting,
+/// as entered by somebody permitted to record it. It stands in for the
+/// committee's online vote: the request moves on from it the same way it
+/// would from the last online vote, and whatever was voted online beforehand
+/// stays on the record but no longer decides anything.
+///
+/// The tallies are kept as they were counted in the room. Nobody here can
+/// check who was there, so they are the recorder's word, and saying so is
+/// what recordedBy is for.
+model PromotionMeetingVote {
+  id          Int      @id @default(autoincrement())
+  /// One per request: a request leaves the committee the moment it is
+  /// recorded, so there is never a second meeting to record for it.
+  requestId   Int      @unique
+  meetingDate DateTime @db.Date
+  approve     Int
+  deny        Int
+  abstain     Int      @default(0)
+  notes       String?
+
+  recordedById Int
+  recordedAt   DateTime @default(now())
+
+  request    PromotionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  recordedBy Member           @relation(fields: [recordedById], references: [id])
 }
 
 model PromotionVote {

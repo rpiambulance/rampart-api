@@ -26,6 +26,9 @@ export const PERMISSIONS = {
   PROMOTIONS_VOTE: 'promotions:vote',
   PROMOTIONS_CAPTAIN_APPROVE: 'promotions:captain-approve',
   PROMOTIONS_ADJUST: 'promotions:adjust-requirements',
+  /** Record a Training Committee vote taken in person, which then stands in
+   *  for the committee's online vote. The TC chair and the captain. */
+  PROMOTIONS_RECORD_MEETING: 'promotions:record-meeting',
   SCHEDULE_CREWS_ASSIGN: 'schedule:crews:assign',
   /** May fill the duty supervisor seat without holding the DS credential. */
   SCHEDULE_DUTY_SUP: 'schedule:crews:duty-sup',

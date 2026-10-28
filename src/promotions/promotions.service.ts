@@ -12,7 +12,7 @@ import { CredentialsService } from '../credentials/credentials.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
-import { nyToday } from '../common/dates';
+import { isDateOnly, nyNow, nyToday, toDbDate } from '../common/dates';
 import { displayName } from '../common/name';
 
 /**
@@ -167,6 +167,18 @@ export class PromotionsService {
           },
         },
         credentialType: true,
+        meetingVote: {
+          include: {
+            recordedBy: {
+              select: {
+                id: true,
+                firstName: true,
+                preferredFirstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
         votes: {
           orderBy: { castAt: 'asc' },
           include: {
@@ -485,7 +497,9 @@ export class PromotionsService {
   ) {
     const vote = await this.prisma.promotionVote.findUnique({
       where: { id: voteId },
-      include: { request: { include: { captainApproval: true } } },
+      include: {
+        request: { include: { captainApproval: true, meetingVote: true } },
+      },
     });
     if (!vote || vote.requestId !== requestId) {
       throw new NotFoundException('No such vote on this request');
@@ -498,6 +512,13 @@ export class PromotionsService {
     }
 
     const request = vote.request;
+    // Decided in the room, the online votes are history: taking one back
+    // would reopen a request the committee settled in person.
+    if (request.meetingVote) {
+      throw new BadRequestException(
+        'The committee decided this request in person, so its online votes can no longer be taken back',
+      );
+    }
     const endedByTheCommittee =
       request.status === 'DENIED' && !request.captainApproval;
     if (
@@ -631,6 +652,124 @@ export class PromotionsService {
       status: 'IN_VOTE',
       votesRemaining: committee.length - covered.size,
     };
+  }
+
+  /**
+   * A Training Committee vote taken in person, at a meeting.
+   *
+   * Stands in for the committee's online vote: the request leaves the
+   * committee from here exactly as it would from the last online vote. The
+   * same rule decides it — unanimity, so a single denial in the room fails
+   * it — and the counts are kept as they were taken.
+   *
+   * It does not stand in for the captain. Passing takes the request to the
+   * captain like any other, unless whoever is recording it can give the
+   * captain's approval and does so in the same breath; the captain's assent
+   * is a separate key and stays one.
+   */
+  async recordMeetingVote(
+    auth: AuthContext & { kind: 'member' },
+    requestId: number,
+    input: {
+      meetingDate: string;
+      approve: number;
+      deny: number;
+      abstain?: number;
+      notes?: string;
+      approveAsCaptain?: boolean;
+    },
+  ) {
+    const request = await this.prisma.promotionRequest.findUnique({
+      where: { id: requestId },
+      include: { credentialType: true },
+    });
+    if (!request) throw new NotFoundException('Request not found');
+    if (request.status !== 'IN_VOTE') {
+      throw new BadRequestException(
+        'Only a request still in front of the committee can be decided at a meeting',
+      );
+    }
+    if (!isDateOnly(input.meetingDate)) {
+      throw new BadRequestException('The meeting date is not a date');
+    }
+    if (input.meetingDate > nyNow().dateStr) {
+      throw new BadRequestException('The meeting has not happened yet');
+    }
+    const abstain = input.abstain ?? 0;
+    if (input.approve + input.deny === 0) {
+      throw new BadRequestException(
+        'Nobody voted for or against it, so there is nothing to record',
+      );
+    }
+    if (
+      input.approveAsCaptain &&
+      !auth.permissions.has(PERMISSIONS.PROMOTIONS_CAPTAIN_APPROVE)
+    ) {
+      throw new ForbiddenException(
+        "Recording the meeting does not carry the captain's approval",
+      );
+    }
+    const passed = input.deny === 0;
+    await this.prisma.promotionMeetingVote.create({
+      data: {
+        requestId,
+        meetingDate: toDbDate(input.meetingDate),
+        approve: input.approve,
+        deny: input.deny,
+        abstain,
+        notes: input.notes?.trim() || null,
+        recordedById: auth.memberId,
+      },
+    });
+    await this.audit.log(
+      auth,
+      'promotions.in-person-vote',
+      'PromotionRequest',
+      requestId,
+      {
+        meetingDate: input.meetingDate,
+        approve: input.approve,
+        deny: input.deny,
+        abstain,
+        passed,
+      },
+    );
+
+    const tally = `${input.approve} for, ${input.deny} against${
+      abstain ? `, ${abstain} abstaining` : ''
+    }`;
+    if (!passed) {
+      await this.prisma.promotionRequest.update({
+        where: { id: requestId },
+        data: { status: 'DENIED', resolvedAt: new Date() },
+      });
+      await this.notifications.notify(request.memberId, {
+        type: 'promotion.decided',
+        subject: `${request.credentialType.name} request denied`,
+        body: `The Training Committee voted on your request for ${request.credentialType.name} at its meeting (${tally}) and did not pass it. You may submit a new request when ready.`,
+      });
+      return { status: 'DENIED' };
+    }
+
+    await this.prisma.promotionRequest.update({
+      where: { id: requestId },
+      data: { status: 'TC_APPROVED' },
+    });
+    // Conditional by nature: asked for "if it passes", and only reached
+    // when it did.
+    if (input.approveAsCaptain) {
+      return this.captainDecision(auth, requestId, true, input.notes);
+    }
+    await this.notifications.notifyOfficerInboxes({
+      type: 'promotion.vote',
+      subject: `${request.credentialType.name} awaiting captain approval`,
+      body: `${request.credentialType.name} passed the Training Committee at its meeting (${tally}).`,
+      task: {
+        actionLabel: 'Give a decision',
+        actionUrl: `/promotions/${requestId}`,
+      },
+    });
+    return { status: 'TC_APPROVED' };
   }
 
   /** Captain's final approval — grants the credential automatically. */

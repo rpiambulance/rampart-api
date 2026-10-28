@@ -10,7 +10,14 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { RequirePermissions } from '../auth/require-permissions.decorator';
@@ -75,6 +82,34 @@ class RescindDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+/** What was counted in the room. */
+class MeetingVoteDto {
+  @IsString()
+  meetingDate!: string;
+
+  @IsInt()
+  @Min(0)
+  approve!: number;
+
+  @IsInt()
+  @Min(0)
+  deny!: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  abstain?: number;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  /** Give the captain's approval too, for somebody who can. */
+  @IsOptional()
+  @IsBoolean()
+  approveAsCaptain?: boolean;
 }
 
 class CaptainDto {
@@ -169,6 +204,22 @@ export class PromotionsController {
     );
   }
 
+  /** The committee voted in person; record what it decided, and the count. */
+  @Post('requests/:id/in-person-vote')
+  @RequirePermissions(PERMISSIONS.PROMOTIONS_RECORD_MEETING)
+  recordMeetingVote(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: MeetingVoteDto,
+  ) {
+    requireMember(auth);
+    return this.promotions.recordMeetingVote(
+      auth as AuthContext & { kind: 'member' },
+      id,
+      body,
+    );
+  }
+
   @Post('requests/:id/captain-decision')
   @RequirePermissions(PERMISSIONS.PROMOTIONS_CAPTAIN_APPROVE)
   captain(
@@ -198,7 +249,10 @@ export class PromotionsController {
 
   @Post('adjustments')
   @RequirePermissions(PERMISSIONS.PROMOTIONS_ADJUST)
-  createAdjustment(@CurrentAuth() auth: AuthContext, @Body() body: AdjustmentDto) {
+  createAdjustment(
+    @CurrentAuth() auth: AuthContext,
+    @Body() body: AdjustmentDto,
+  ) {
     requireMember(auth);
     return this.promotions.createAdjustment(
       auth as AuthContext & { kind: 'member' },
@@ -218,12 +272,18 @@ export class PromotionsController {
 
   @Delete('adjustments/:id')
   @RequirePermissions(PERMISSIONS.PROMOTIONS_ADJUST)
-  removeAdjustment(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  removeAdjustment(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.promotions.removeAdjustment(auth, id);
   }
 
   @Delete('requests/:id')
-  withdraw(@CurrentAuth() auth: AuthContext, @Param('id', ParseIntPipe) id: number) {
+  withdraw(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.promotions.withdraw(requireMember(auth), id);
   }
 }

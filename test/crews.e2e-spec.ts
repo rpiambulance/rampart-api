@@ -2907,6 +2907,150 @@ describe('Night crews engine (e2e)', () => {
     });
   });
 
+  // Sometimes the committee votes in the room rather than online, and
+  // somebody has to be able to say so.
+  describe('deciding a promotion at a meeting', () => {
+    let candidate: number;
+    let chair: number;
+    let typeId: number;
+    let requestId: number;
+
+    const meeting = { meetingDate: nyNow().dateStr };
+    const asChair = (permissions = 'promotions:record-meeting') => ({
+      ...as(chair),
+      'x-test-permissions': permissions,
+    });
+    const record = (
+      body: Record<string, unknown>,
+      who: Record<string, string> = asChair(),
+    ) =>
+      request(app.getHttpServer())
+        .post(`/v1/promotions/requests/${requestId}/in-person-vote`)
+        .set(who)
+        .send({ ...meeting, ...body });
+    const requestNow = () =>
+      prisma.promotionRequest.findUniqueOrThrow({
+        where: { id: requestId },
+        include: { meetingVote: true },
+      });
+
+    beforeAll(async () => {
+      candidate = await createMember('Candidate', ['O', 'A', 'A_CC', 'P_CC']);
+      chair = await createMember('Chair', ['O', 'A']);
+      typeId = (
+        await prisma.credentialType.findUniqueOrThrow({ where: { key: 'CC' } })
+      ).id;
+    });
+
+    beforeEach(async () => {
+      requestId = (
+        await prisma.promotionRequest.create({
+          data: {
+            memberId: candidate,
+            credentialTypeId: typeId,
+            status: 'IN_VOTE',
+          },
+        })
+      ).id;
+    });
+
+    afterEach(async () => {
+      await prisma.memberCredential.deleteMany({
+        where: { memberId: candidate, typeId },
+      });
+      await prisma.promotionApproval.deleteMany({ where: { requestId } });
+      await prisma.promotionVote.deleteMany({ where: { requestId } });
+      await prisma.promotionRequest.deleteMany({ where: { id: requestId } });
+    });
+
+    it('is only for whoever may record it', async () => {
+      await record({ approve: 5, deny: 0 }, as(chair)).expect(403);
+    });
+
+    it('sends a unanimous meeting on to the captain, with the count kept', async () => {
+      await record({
+        approve: 5,
+        deny: 0,
+        abstain: 1,
+        notes: 'Oct meeting',
+      }).expect(201);
+      const decided = await requestNow();
+      expect(decided.status).toBe('TC_APPROVED');
+      expect(decided.meetingVote).toMatchObject({
+        approve: 5,
+        deny: 0,
+        abstain: 1,
+        notes: 'Oct meeting',
+        recordedById: chair,
+      });
+
+      // In the audit log, since it stands in for the committee.
+      const logged = await prisma.auditLog.findFirst({
+        where: {
+          action: 'promotions.in-person-vote',
+          entityId: String(requestId),
+        },
+      });
+      expect(logged?.diff).toMatchObject({
+        approve: 5,
+        deny: 0,
+        abstain: 1,
+        passed: true,
+      });
+    });
+
+    it('fails on a single denial, as the online vote would', async () => {
+      await record({ approve: 4, deny: 1 }).expect(201);
+      expect((await requestNow()).status).toBe('DENIED');
+      const told = await prisma.inboxMessage.findFirst({
+        where: { memberId: candidate, body: { contains: '4 for, 1 against' } },
+      });
+      expect(told).toBeTruthy();
+    });
+
+    it("lets somebody who can give the captain's approval finish it", async () => {
+      await record(
+        { approve: 6, deny: 0, approveAsCaptain: true },
+        asChair('promotions:record-meeting,promotions:captain-approve'),
+      ).expect(201);
+      expect((await requestNow()).status).toBe('APPROVED');
+      expect(
+        await prisma.memberCredential.count({
+          where: { memberId: candidate, typeId, status: 'ACTIVE' },
+        }),
+      ).toBe(1);
+    });
+
+    // Asked for "if it passes": a failed vote is simply recorded as failed.
+    it("leaves the captain's approval out when the vote fails", async () => {
+      await record(
+        { approve: 5, deny: 1, approveAsCaptain: true },
+        asChair('promotions:record-meeting,promotions:captain-approve'),
+      ).expect(201);
+      expect((await requestNow()).status).toBe('DENIED');
+      expect(
+        await prisma.promotionApproval.count({ where: { requestId } }),
+      ).toBe(0);
+    });
+
+    it("does not carry the captain's approval for somebody who cannot give it", async () => {
+      await record({ approve: 6, deny: 0, approveAsCaptain: true }).expect(403);
+      expect((await requestNow()).status).toBe('IN_VOTE');
+    });
+
+    it('refuses what no meeting could have decided', async () => {
+      await record({ approve: 0, deny: 0, abstain: 3 }).expect(400);
+      await record({
+        approve: 3,
+        deny: 0,
+        meetingDate: addDays(nyNow().dateStr, 2),
+      }).expect(400);
+      await record({ approve: 3, deny: 0 }).expect(201);
+      // Already decided: there is no second meeting for it.
+      await record({ approve: 3, deny: 0 }).expect(400);
+    });
+  });
+
   describe('the station whiteboard', () => {
     // A display is a television, not a person: the token in its URL is the
     // whole credential, so what that token does and does not open is the
