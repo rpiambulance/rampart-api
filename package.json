@@ -36,7 +36,7 @@
     "dotenv": "^17.4.2",
     "jose": "^6.2.3",
     "mysql2": "^3.22.6",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.3.1",
     "pdfkit": "^0.20.2",
     "prisma": "^7.8.0",
     "reflect-metadata": "^0.2.2",
@@ -88,6 +88,12 @@
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
+    }
+  },
+  "overrides": {
+    "multer": "2.5.0",
+    "@nestjs/swagger": {
+      "js-yaml": "5.5.0"
     }
   }
 }
