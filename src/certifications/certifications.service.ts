@@ -10,6 +10,10 @@ import type { AuthContext } from '../auth/auth-context';
 import { addDays, nyNow, nyToday, toDbDate } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from './certification-graph.service';
+import {
+  requirementLabel,
+  RequirementEvidenceService,
+} from './requirement-evidence.service';
 import { CredentialGraphService } from '../credentials/credential-graph.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,8 +40,62 @@ export interface SuspensionChange {
   memberId: number;
   memberName: string;
   credential: string;
-  /** Certifications not held, current and unwaived. Empty on a reinstatement. */
+  /** Requirements not met, in force and unwaived. Empty on a reinstatement. */
   missing: string[];
+  /**
+   * Every unmet requirement was announced ahead of taking effect, and the
+   * member reminded. Such a suspension is the rule doing what everybody was
+   * told it would, so the crowd guard lets it through.
+   */
+  announced: boolean;
+}
+
+/**
+ * Ongoing requirements in force on a day: checked continuously, past the
+ * date they take effect, and not past the date they stop.
+ */
+export function requirementsInForce(
+  today: Date,
+): Prisma.CredentialRequirementWhereInput {
+  return {
+    scope: { in: ['ONGOING', 'BOTH'] },
+    AND: [
+      { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: today } }] },
+      { OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: today } }] },
+    ],
+  };
+}
+
+/** Enough of what a requirement names to say it in words, and check it. */
+const REQUIREMENT_NAMES = {
+  certificationType: { select: { name: true } },
+  evalTemplate: { select: { name: true } },
+  class: { select: { name: true } },
+  classSeries: { select: { name: true } },
+} as const;
+
+/**
+ * What a requirement asks for, regardless of which rung wrote it — so the
+ * same card asked for by Attendant and by Crew Chief is one thing to have.
+ */
+function requirementIdentity(req: {
+  kind: string;
+  certificationTypeId: number | null;
+  evalTemplateId: number | null;
+  classId: number | null;
+  classSeriesId: number | null;
+  count: number | null;
+  countsFrom: Date | null;
+  validThrough: Date | null;
+}): string {
+  return [
+    req.kind,
+    req.certificationTypeId ?? req.evalTemplateId ?? req.classId,
+    req.classSeriesId,
+    req.count,
+    req.countsFrom?.toISOString() ?? '',
+    req.validThrough?.toISOString() ?? '',
+  ].join(':');
 }
 
 /**
@@ -71,6 +129,7 @@ export class CertificationsService {
     private readonly storage: StorageService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly evidence: RequirementEvidenceService,
   ) {}
 
   listTypes() {
@@ -1021,13 +1080,8 @@ export class CertificationsService {
         type: {
           include: {
             requirements: {
-              where: {
-                kind: 'CERTIFICATION',
-                scope: { in: ['ONGOING', 'BOTH'] },
-                // Announced before it bites: a requirement dated ahead is a
-                // warning, not yet a rule.
-                OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }],
-              },
+              where: requirementsInForce(now),
+              include: REQUIREMENT_NAMES,
             },
           },
         },
@@ -1040,6 +1094,8 @@ export class CertificationsService {
     // Ongoing requirements inherit downward as well: a Crew Chief whose
     // Attendant-level card has lapsed no longer meets what a Crew Chief must
     // keep meeting, even though the requirement is written a rung below.
+    // Every kind inherits, not only certifications — this season's refresher
+    // asked of every Observer is asked of everybody who started as one.
     const inheritedByType = new Map<
       number,
       (typeof credentials)[number]['type']['requirements']
@@ -1052,40 +1108,32 @@ export class CertificationsService {
           ? await this.prisma.credentialRequirement.findMany({
               where: {
                 credentialTypeId: { in: belowIds },
-                kind: 'CERTIFICATION',
-                scope: { in: ['ONGOING', 'BOTH'] },
-                OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }],
+                ...requirementsInForce(now),
               },
+              include: REQUIREMENT_NAMES,
             })
           : [],
       );
     }
 
-    const certNames = new Map(
-      (
-        await this.prisma.certificationType.findMany({
-          select: { id: true, name: true },
-        })
-      ).map((type) => [type.id, type.name]),
-    );
-
     const changes: SuspensionChange[] = [];
     for (const cred of credentials) {
-      // Deduplicated on the certification, so a card demanded by two rungs is
+      // Deduplicated on what is asked for, so a card demanded by two rungs is
       // checked once and waived once.
-      const seen = new Set<number>();
-      const certReqs = [
+      const seen = new Set<string>();
+      const reqs = [
         ...cred.type.requirements,
         ...(inheritedByType.get(cred.typeId) ?? []),
       ].filter((req) => {
-        if (req.certificationTypeId === null) return false;
-        if (seen.has(req.certificationTypeId)) return false;
-        seen.add(req.certificationTypeId);
+        const key = requirementIdentity(req);
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
       });
-      if (!certReqs.length) {
+      if (!reqs.length) {
         // Nothing ongoing to fail. A credential suspended under an older rule
-        // that has since been relaxed comes back rather than staying stuck.
+        // that has since been relaxed — or whose season has ended — comes
+        // back rather than staying stuck.
         if (cred.status === 'SUSPENDED') {
           changes.push({
             id: cred.id,
@@ -1094,6 +1142,7 @@ export class CertificationsService {
             memberName: displayName(cred.member),
             credential: cred.type.name,
             missing: [],
+            announced: false,
           });
         }
         continue;
@@ -1101,14 +1150,16 @@ export class CertificationsService {
 
       // A waiver says this member was excused this requirement. It excused
       // them at promotion and it excuses them now — otherwise the waiver
-      // quietly expires the moment it has served its purpose.
+      // quietly expires the moment it has served its purpose. It excuses
+      // them on every rung the requirement reaches, not only the one it is
+      // written on.
       const waived = new Set(
         (
           await this.prisma.promotionRequirementAdjustment.findMany({
             where: {
               memberId: cred.memberId,
-              credentialTypeId: cred.typeId,
               kind: 'WAIVER',
+              requirementId: { in: reqs.map((req) => req.id) },
             },
             select: { requirementId: true },
           })
@@ -1117,32 +1168,47 @@ export class CertificationsService {
           .filter((id): id is number => id !== null),
       );
 
+      // Alternatives are one requirement with several ways to meet it, so
+      // they are judged together: any option met, or waived, is enough.
+      const units = new Map<string, typeof reqs>();
+      for (const req of reqs) {
+        const unit = req.alternativeGroup
+          ? `${req.credentialTypeId}:${req.alternativeGroup}`
+          : `req:${req.id}`;
+        units.set(unit, [...(units.get(unit) ?? []), req]);
+      }
+
       // Every unmet requirement, not merely the first: somebody reviewing a
       // proposed suspension needs to know what it would take to lift it, and
       // "renew this one card" is a different answer from "renew four".
       const missing: string[] = [];
-      for (const req of certReqs) {
-        if (waived.has(req.id)) continue;
-        // A higher certification answers the requirement: a Paramedic meets a
-        // requirement for EMT. Checked here as well as on the promotion
-        // checklist — matching the exact type would suspend every medic on
-        // the roster for not holding the card they outrank.
-        const accepted = await this.graph.satisfying(req.certificationTypeId!);
-        const ok = await this.prisma.memberCertification.findFirst({
-          where: {
-            memberId: cred.memberId,
-            typeId: { in: accepted },
-            status: 'VERIFIED',
-            OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
-          },
-          select: { id: true },
-        });
-        if (!ok) {
-          missing.push(
-            certNames.get(req.certificationTypeId!) ??
-              `certification ${req.certificationTypeId!}`,
-          );
+      let announced = true;
+      for (const options of units.values()) {
+        let met = false;
+        for (const req of options) {
+          if (
+            waived.has(req.id) ||
+            (await this.evidence.isMet(cred.memberId, req, now))
+          ) {
+            met = true;
+            break;
+          }
         }
+        if (met) continue;
+        missing.push(
+          options.length > 1
+            ? `${options[0].alternativeGroup} (any of: ${options.map(requirementLabel).join('; ')})`
+            : requirementLabel(options[0]),
+        );
+        // Announced means warned about this, ahead of time. A cut-off that
+        // has passed was never announced as a reason to suspend: the usual
+        // cause is the next cycle's dates not having been set yet, which is
+        // exactly what the crowd guard is there to catch.
+        announced &&= options.every(
+          (req) =>
+            req.announcedAt !== null &&
+            (!req.validThrough || req.validThrough >= now),
+        );
       }
       const target = missing.length ? 'SUSPENDED' : 'ACTIVE';
       if (cred.status !== target) {
@@ -1153,6 +1219,7 @@ export class CertificationsService {
           memberName: displayName(cred.member),
           credential: cred.type.name,
           missing,
+          announced: target === 'SUSPENDED' && announced,
         });
       }
     }
@@ -1171,7 +1238,15 @@ export class CertificationsService {
     // that would take out a crowd is almost certainly a misconfigured
     // requirement rather than a crowd who all lapsed overnight. It stops and
     // asks instead — for one member's recompute there is nothing to weigh up.
-    const suspensions = changes.filter((change) => change.to === 'SUSPENDED');
+    //
+    // Except for a rule people were told about. A requirement dated ahead
+    // and announced with reminders is expected to catch a crowd on the day
+    // it takes effect — this season's flu shot, this year's refresher — and
+    // holding that back would make every such rule need an officer to push
+    // it through by hand.
+    const suspensions = changes.filter(
+      (change) => change.to === 'SUSPENDED' && !change.announced,
+    );
     const limit = Number(process.env.MAX_AUTO_SUSPENSIONS ?? 10);
     if (!memberId && suspensions.length > limit) {
       this.logger.error(
@@ -1179,9 +1254,12 @@ export class CertificationsService {
           `(limit ${limit}). Check for an ongoing requirement that was just added.`,
       );
       // Reinstatements are safe and still applied: nobody is harmed by
-      // getting a credential back.
-      const reinstated = changes.filter((change) => change.to === 'ACTIVE');
-      await this.applyStatusChanges(reinstated);
+      // getting a credential back. Nor are suspensions everybody was warned
+      // about held up by ones nobody was.
+      const safe = changes.filter(
+        (change) => change.to === 'ACTIVE' || change.announced,
+      );
+      await this.applyStatusChanges(safe);
       // Once per situation, not once per night. The same warning every
       // morning for a fortnight teaches everybody to filter the one message
       // that most needs reading; a different set of people means a genuinely
@@ -1194,9 +1272,10 @@ export class CertificationsService {
             subject: `${suspensions.length} credentials would have been suspended`,
             body:
               `Tonight's check found ${suspensions.length} credentials failing an ongoing ` +
-              'requirement, which is more than one night of lapses looks like. Nothing was ' +
-              'changed, and this will not be repeated nightly unless the list changes. ' +
-              'An ongoing requirement added recently is the usual cause — the review page ' +
+              'requirement, which is more than one night of lapses looks like. None of ' +
+              'them was suspended, and this will not be repeated nightly unless the list ' +
+              'changes. An ongoing requirement added recently, or a renewal cut-off that ' +
+              'passed before the next one was set, is the usual cause — the review page ' +
               'lists who would be affected and what each of them is missing, and can ' +
               'apply the lot if the rule is right.',
             task: {
@@ -1206,7 +1285,7 @@ export class CertificationsService {
           },
         );
       }
-      return { changed: reinstated.length, blocked: suspensions.length };
+      return { changed: safe.length, blocked: suspensions.length };
     }
 
     await this.applyStatusChanges(changes);

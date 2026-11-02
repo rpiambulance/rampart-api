@@ -4,6 +4,7 @@ import { addDays, AGENCY_TZ, nyNow, toDbDate } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CertificationsService } from './certifications.service';
+import { RequirementRemindersService } from './requirement-reminders.service';
 
 const REMINDER_DAYS = [60, 30, 7];
 
@@ -16,12 +17,14 @@ export class CertificationsJobs {
     private readonly prisma: PrismaService,
     private readonly certs: CertificationsService,
     private readonly notifications: NotificationsService,
+    private readonly reminders: RequirementRemindersService,
   ) {}
 
   @Cron('0 7 * * *', { timeZone: AGENCY_TZ })
   async dailySweep() {
     const { changed } = await this.certs.recomputeSuspensions();
     this.logger.log(`Suspension recompute: ${changed} credential(s) changed`);
+    await this.reminders.run();
 
     for (const days of REMINDER_DAYS) {
       // The day being warned about is a New York calendar day counted from

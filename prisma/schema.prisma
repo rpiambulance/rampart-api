@@ -375,11 +375,42 @@ model CredentialRequirement {
   /// An ongoing requirement does not bite until this date, so people can be
   /// told and given time. Null means immediately.
   effectiveFrom       DateTime?        @db.Date
+  /// The last day it applies. Seasonal and recurring things — a flu shot for
+  /// the season, this year's refresher — stop being asked for after a date,
+  /// and a credential suspended only for one comes back once it passes. Null
+  /// means it never stops.
+  effectiveUntil      DateTime?        @db.Date
+  /// Only what was done on or after this date counts: a certification issued,
+  /// an evaluation dated, a checklist line signed. Last season's flu shot is
+  /// on file and verified, but it is not this season's. Null means anything
+  /// on record counts. Not used for a class, which names its own session.
+  countsFrom          DateTime?        @db.Date
+  /// Whatever meets this stops counting after this date, for everybody — an
+  /// annual refresher cycle that ends on a fixed day. Unlike
+  /// `effectiveUntil`, the requirement carries on: once it passes, nothing
+  /// done before it meets the requirement until an officer sets the next
+  /// cycle's dates. Null means things count for as long as they themselves
+  /// last — a certification until it expires, a class in a series for the
+  /// series' validity.
+  validThrough        DateTime?        @db.Date
+  /// Met by completing any class in this series — next year's refresher as
+  /// well as this year's — rather than one particular session. Used instead
+  /// of `classId` by a CLASS requirement.
+  classSeriesId       Int?
+  /// When members were first told this was coming. Set by the reminders sent
+  /// ahead of `effectiveFrom`, and cleared when the dates move. A rule people
+  /// were warned about is expected to suspend whoever ignored the warning, so
+  /// those suspensions are not held back as a probable misconfiguration.
+  announcedAt         DateTime?
+  /// How many of the advance reminders have gone out, so a missed night
+  /// catches up instead of skipping one, and a rerun sends nothing twice.
+  remindersSent       Int              @default(0)
 
   credentialType    CredentialType                   @relation(fields: [credentialTypeId], references: [id], onDelete: Cascade)
   certificationType CertificationType?               @relation(fields: [certificationTypeId], references: [id])
   evalTemplate      EvalFormTemplate?                @relation(fields: [evalTemplateId], references: [id])
   class             TrainingClass?                   @relation(fields: [classId], references: [id])
+  classSeries       ClassSeries?                     @relation(fields: [classSeriesId], references: [id])
   adjustments       PromotionRequirementAdjustment[]
 }
 
@@ -1190,12 +1221,31 @@ model MemberAnnualTraining {
   @@id([requirementId, memberId])
 }
 
+/// Sessions of the same class over time — this year's safety refresher and
+/// next year's. A requirement can name the series, so whichever session
+/// somebody went to counts, and the series says how long one lasts.
+model ClassSeries {
+  id             Int     @id @default(autoincrement())
+  name           String  @unique
+  description    String?
+  /// How long completing a session counts for, from the day of the session.
+  /// Null means it does not lapse.
+  validityMonths Int?
+  active         Boolean @default(true)
+
+  classes                TrainingClass[]
+  credentialRequirements CredentialRequirement[]
+}
+
 model TrainingClass {
   id          Int       @id @default(autoincrement())
   name        String
   description String?
   sessionAt   DateTime?
   location    String?
+  seriesId    Int?
+
+  series ClassSeries? @relation(fields: [seriesId], references: [id])
 
   attendance             ClassAttendance[]
   credentialRequirements CredentialRequirement[]
@@ -1210,9 +1260,12 @@ enum AttendanceStatus {
 }
 
 model ClassAttendance {
-  classId  Int
-  memberId Int
-  status   AttendanceStatus @default(REGISTERED)
+  classId     Int
+  memberId    Int
+  status      AttendanceStatus @default(REGISTERED)
+  /// When it was marked completed. A session with no date of its own is
+  /// dated by this for anything that lapses.
+  completedAt DateTime?
 
   class  TrainingClass @relation(fields: [classId], references: [id], onDelete: Cascade)
   member Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)

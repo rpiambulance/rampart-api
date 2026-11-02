@@ -7,10 +7,13 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthContext } from '../auth/auth-context';
-import { nyToday } from '../common/dates';
+import { fromDbDate, nyToday } from '../common/dates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CertificationGraphService } from '../certifications/certification-graph.service';
-import { ChecklistsService } from '../checklists/checklists.service';
+import {
+  requirementLabel,
+  RequirementEvidenceService,
+} from '../certifications/requirement-evidence.service';
 import { PERMISSIONS } from '../permissions/catalog';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
@@ -19,23 +22,45 @@ import { displayName } from '../common/name';
 
 export const SDS_TITLE = 'Senior Duty Supervisor';
 
-function requirementLabelFor(req: {
-  kind: string;
-  count: number | null;
-  certificationType: { name: string } | null;
-  evalTemplate: { name: string } | null;
-  class: { name: string } | null;
-}): string {
-  if (req.kind === 'CERTIFICATION' && req.certificationType) {
-    return `Verified ${req.certificationType.name}`;
+/** The dates on a requirement that say when it applies and what counts. */
+const REQUIREMENT_DATES = [
+  'effectiveFrom',
+  'effectiveUntil',
+  'countsFrom',
+  'validThrough',
+] as const;
+type RequirementDate = (typeof REQUIREMENT_DATES)[number];
+
+/** The dates given, as dates; a blank or null one clears it. */
+function requirementDates(
+  data: Partial<Record<RequirementDate, string | null>>,
+): Partial<Record<RequirementDate, Date | null>> {
+  const out: Partial<Record<RequirementDate, Date | null>> = {};
+  for (const field of REQUIREMENT_DATES) {
+    if (data[field] === undefined) continue;
+    out[field] = data[field] ? new Date(data[field]) : null;
   }
-  if (req.kind === 'EVALUATION_COUNT' && req.evalTemplate) {
-    return `${req.count} signed “${req.evalTemplate.name}” evaluations`;
+  return out;
+}
+
+/**
+ * Refuses dates that contradict each other — a season that ends before it
+ * starts, a cycle whose evidence would have to be dated after it closes.
+ * Either would quietly mean nobody can ever meet it, or that it never
+ * applies, and neither is what anybody setting it meant.
+ */
+function checkRequirementDates(dates: Record<RequirementDate, Date | null>) {
+  const { effectiveFrom, effectiveUntil, countsFrom, validThrough } = dates;
+  if (effectiveFrom && effectiveUntil && effectiveUntil < effectiveFrom) {
+    throw new BadRequestException(
+      `It would stop applying (${fromDbDate(effectiveUntil)}) before it starts (${fromDbDate(effectiveFrom)})`,
+    );
   }
-  if (req.kind === 'CLASS' && req.class) {
-    return `Complete ${req.class.name}`;
+  if (countsFrom && validThrough && validThrough < countsFrom) {
+    throw new BadRequestException(
+      `Nothing could count: the cycle ends (${fromDbDate(validThrough)}) before what counts begins (${fromDbDate(countsFrom)})`,
+    );
   }
-  return 'Requirement';
 }
 
 export interface ChecklistItem {
@@ -117,42 +142,13 @@ function collapseAlternatives(items: ChecklistItem[]): ChecklistItem[] {
 export class CredentialsService {
   constructor(
     private readonly certGraph: CertificationGraphService,
-    private readonly checklists: ChecklistsService,
     private readonly prisma: PrismaService,
     private readonly graph: CredentialGraphService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     private readonly webhooks: WebhooksService,
+    private readonly evidence: RequirementEvidenceService,
   ) {}
-
-  /**
-   * Signed evaluations on a form, counted across every version of it.
-   *
-   * Editing a form that has been filled in mints a new row — new id, same
-   * name, next version — and the evaluations already written stay pinned to
-   * the row they were answered on, which is right: an evaluation is a record
-   * of the questions somebody was actually asked.
-   *
-   * A requirement is not about a revision, though. "Two signed Driver Call
-   * Evaluations" means the form. Counting the row id meant that revising a
-   * form silently emptied the requirement that named it: evaluations on
-   * either side of the edit stopped counting together, and a member with
-   * three signed evaluations was told she had one. The name is the form's
-   * identity — it is what reviseTemplate itself counts versions by, and
-   * nothing can change it.
-   */
-  private signedEvaluations(
-    memberId: number,
-    templateName: string,
-  ): Promise<number> {
-    return this.prisma.evaluation.count({
-      where: {
-        subjectId: memberId,
-        status: 'SIGNED',
-        template: { name: templateName },
-      },
-    });
-  }
 
   listTypes() {
     return this.prisma.credentialType.findMany({
@@ -167,6 +163,9 @@ export class CredentialsService {
             certificationType: true,
             evalTemplate: { select: { id: true, name: true } },
             class: { select: { id: true, name: true } },
+            classSeries: {
+              select: { id: true, name: true, validityMonths: true },
+            },
           },
         },
       },
@@ -192,17 +191,21 @@ export class CredentialsService {
     });
   }
 
-  addRequirement(
+  async addRequirement(
     credentialTypeId: number,
     data: {
       kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
       alternativeGroup?: string;
       scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
       effectiveFrom?: string;
+      effectiveUntil?: string;
+      countsFrom?: string;
+      validThrough?: string;
       certificationTypeId?: number;
       evalTemplateId?: number;
       count?: number;
       classId?: number;
+      classSeriesId?: number;
     },
   ) {
     if (data.kind === 'CERTIFICATION' && !data.certificationTypeId) {
@@ -217,27 +220,34 @@ export class CredentialsService {
     if (data.kind === 'CHECKLIST' && !data.evalTemplateId) {
       throw new BadRequestException('evalTemplateId required');
     }
-    if (data.kind === 'CLASS' && !data.classId) {
-      throw new BadRequestException('classId required');
-    }
-    // Only a certification lapses on its own. An "ongoing" evaluation or class
-    // requirement would never be re-checked, so it would quietly mean nothing.
-    if (
-      data.scope &&
-      data.scope !== 'PROMOTION' &&
-      data.kind !== 'CERTIFICATION'
-    ) {
+    if (data.kind === 'CLASS' && !data.classId === !data.classSeriesId) {
       throw new BadRequestException(
-        'Only certification requirements can be checked on an ongoing basis',
+        'A class requirement names either one class or a class series',
       );
     }
+    // Any kind can be ongoing. Once a requirement can be dated — only this
+    // season's, only this cycle's — a class or an evaluation can stop
+    // meeting it just as a card can, so re-checking it means something.
+    const dates = requirementDates(data);
+    checkRequirementDates({
+      effectiveFrom: null,
+      effectiveUntil: null,
+      countsFrom: null,
+      validThrough: null,
+      ...dates,
+    });
     return this.prisma.credentialRequirement.create({
       data: {
         credentialTypeId,
-        ...data,
+        kind: data.kind,
+        certificationTypeId: data.certificationTypeId,
+        evalTemplateId: data.evalTemplateId,
+        count: data.count,
+        classId: data.kind === 'CLASS' ? data.classId : undefined,
+        classSeriesId: data.kind === 'CLASS' ? data.classSeriesId : undefined,
         alternativeGroup: data.alternativeGroup?.trim() || null,
         scope: data.scope ?? 'PROMOTION',
-        effectiveFrom: data.effectiveFrom ? new Date(data.effectiveFrom) : null,
+        ...dates,
       },
     });
   }
@@ -250,37 +260,61 @@ export class CredentialsService {
   }
 
   /**
-   * Who an ongoing requirement would suspend if it were switched on right now.
+   * Who an ongoing requirement would suspend once it applies.
    *
    * Turning a requirement ongoing is the one edit here that can reach back and
    * take a credential off somebody — usually somebody migrated in, or promoted
    * before the rule existed, who never had to meet it. So it is previewable
    * before it is real.
+   *
+   * Judged on the day it takes effect, if that is still to come — a flu shot
+   * that will have expired by then does not meet it — and against everybody
+   * it reaches: holders of the credential and of every one above it.
    */
   async requirementImpact(requirementId: number) {
     const req = await this.prisma.credentialRequirement.findUnique({
       where: { id: requirementId },
-      include: { certificationType: { select: { name: true } } },
+      include: {
+        certificationType: { select: { name: true } },
+        evalTemplate: { select: { name: true } },
+        class: { select: { name: true } },
+        classSeries: { select: { name: true } },
+      },
     });
     if (!req) throw new NotFoundException('No such requirement');
-    if (req.kind !== 'CERTIFICATION') {
-      // Only certifications expire on their own, so only they can put a
-      // credential out from under somebody without anyone doing anything.
-      return {
-        requirementId,
-        kind: req.kind,
-        enforceable: false,
-        certificationType: null,
-        members: [] as Array<{ id: number; name: string; reason: string }>,
-      };
-    }
 
-    const now = nyToday();
+    const today = nyToday();
+    const asOf =
+      req.effectiveFrom && req.effectiveFrom > today
+        ? req.effectiveFrom
+        : today;
+    const members: Array<{ id: number; name: string; reason: string }> = [];
+    const result = {
+      requirementId,
+      kind: req.kind,
+      requirement: requirementLabel(req),
+      asOf: fromDbDate(asOf),
+      members,
+    };
+    // A season that is over catches nobody.
+    if (req.effectiveUntil && req.effectiveUntil < asOf) return result;
+
+    const reaching: number[] = [];
+    for (const type of await this.prisma.credentialType.findMany({
+      select: { id: true },
+    })) {
+      if (
+        (await this.graph.idsAtOrBelow(type.id)).includes(req.credentialTypeId)
+      ) {
+        reaching.push(type.id);
+      }
+    }
     const holders = await this.prisma.memberCredential.findMany({
       where: {
-        typeId: req.credentialTypeId,
+        typeId: { in: reaching },
         status: { in: ['ACTIVE', 'SUSPENDED'] },
       },
+      distinct: ['memberId'],
       include: {
         member: {
           select: {
@@ -295,56 +329,62 @@ export class CredentialsService {
     const waived = new Set(
       (
         await this.prisma.promotionRequirementAdjustment.findMany({
-          where: {
-            credentialTypeId: req.credentialTypeId,
-            kind: 'WAIVER',
-            requirementId,
-          },
+          where: { kind: 'WAIVER', requirementId },
           select: { memberId: true },
         })
       ).map((row) => row.memberId),
     );
 
-    const accepted = await this.certGraph.satisfying(req.certificationTypeId!);
-    const members: Array<{ id: number; name: string; reason: string }> = [];
     for (const holder of holders) {
       if (waived.has(holder.memberId)) continue;
-      // Anything that outranks it counts, exactly as the nightly check and
-      // the promotion checklist count it — otherwise this previews a
-      // different rule from the one that would actually be applied, and
-      // grandfathers the wrong people.
-      const held = await this.prisma.memberCertification.findFirst({
-        where: {
-          memberId: holder.memberId,
-          typeId: { in: accepted },
-          status: 'VERIFIED',
-          OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
-        },
-        select: { id: true },
-      });
-      if (held) continue;
-      const lapsed = await this.prisma.memberCertification.findFirst({
-        where: { memberId: holder.memberId, typeId: { in: accepted } },
-        orderBy: { expiresAt: 'desc' },
-        select: { status: true, expiresAt: true },
-      });
+      // The same check the nightly sweep makes — anything that outranks a
+      // required card counts, only what is recent enough counts — otherwise
+      // this previews a different rule from the one that would be applied,
+      // and grandfathers the wrong people.
+      if (await this.evidence.isMet(holder.memberId, req, asOf)) continue;
       members.push({
         id: holder.memberId,
         name: displayName(holder.member),
-        reason: !lapsed
-          ? 'never held it'
-          : lapsed.status !== 'VERIFIED'
-            ? `on file but ${lapsed.status.toLowerCase()}`
-            : `expired ${lapsed.expiresAt?.toISOString().slice(0, 10) ?? 'unknown'}`,
+        reason: await this.unmetReason(holder.memberId, req, asOf),
       });
     }
-    return {
-      requirementId,
-      kind: req.kind,
-      enforceable: true,
-      certificationType: req.certificationType?.name ?? null,
-      members,
-    };
+    return result;
+  }
+
+  /** Why somebody falls short of a requirement, in a few words. */
+  private async unmetReason(
+    memberId: number,
+    req: {
+      kind: string;
+      certificationTypeId: number | null;
+      countsFrom: Date | null;
+      validThrough: Date | null;
+    },
+    asOf: Date,
+  ): Promise<string> {
+    if (req.validThrough && req.validThrough < asOf) {
+      return `the cycle ended ${fromDbDate(req.validThrough)}`;
+    }
+    const since = req.countsFrom
+      ? `nothing dated ${fromDbDate(req.countsFrom)} or later`
+      : null;
+    if (req.kind !== 'CERTIFICATION' || req.certificationTypeId === null) {
+      return since ?? 'not on record';
+    }
+    const accepted = await this.certGraph.satisfying(req.certificationTypeId);
+    const latest = await this.prisma.memberCertification.findFirst({
+      where: { memberId, typeId: { in: accepted } },
+      orderBy: { expiresAt: 'desc' },
+      select: { status: true, expiresAt: true },
+    });
+    if (!latest) return 'never held it';
+    if (latest.status !== 'VERIFIED') {
+      return `on file but ${latest.status.toLowerCase()}`;
+    }
+    if (latest.expiresAt && latest.expiresAt < asOf) {
+      return `expired ${fromDbDate(latest.expiresAt)}`;
+    }
+    return since ?? 'not on record';
   }
 
   /**
@@ -357,11 +397,6 @@ export class CredentialsService {
    */
   async grandfatherRequirement(auth: AuthContext, requirementId: number) {
     const impact = await this.requirementImpact(requirementId);
-    if (!impact.enforceable) {
-      throw new BadRequestException(
-        'Only certification requirements can suspend, so there is nobody to excuse',
-      );
-    }
     const req = await this.prisma.credentialRequirement.findUniqueOrThrow({
       where: { id: requirementId },
       select: { credentialTypeId: true },
@@ -403,33 +438,36 @@ export class CredentialsService {
     data: {
       scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
       effectiveFrom?: string | null;
+      effectiveUntil?: string | null;
+      countsFrom?: string | null;
+      validThrough?: string | null;
     },
   ) {
     const req = await this.prisma.credentialRequirement.findUnique({
       where: { id: requirementId },
-      select: { kind: true },
+      select: {
+        effectiveFrom: true,
+        effectiveUntil: true,
+        countsFrom: true,
+        validThrough: true,
+      },
     });
     if (!req) throw new NotFoundException('No such requirement');
-    if (
-      data.scope &&
-      data.scope !== 'PROMOTION' &&
-      req.kind !== 'CERTIFICATION'
-    ) {
-      throw new BadRequestException(
-        'Only certification requirements can be checked on an ongoing basis',
-      );
-    }
+    const dates = requirementDates(data);
+    checkRequirementDates({ ...req, ...dates });
+    // Moving when it starts, or what counts, is a different announcement:
+    // the reminders already sent described a rule that no longer exists,
+    // so they go out again, and until they have it is not announced.
+    const changed = (field: 'effectiveFrom' | 'countsFrom') =>
+      dates[field] !== undefined &&
+      dates[field]?.getTime() !== req[field]?.getTime();
+    const reannounce = changed('effectiveFrom') || changed('countsFrom');
     const updated = await this.prisma.credentialRequirement.update({
       where: { id: requirementId },
       data: {
         ...(data.scope ? { scope: data.scope } : {}),
-        ...(data.effectiveFrom === undefined
-          ? {}
-          : {
-              effectiveFrom: data.effectiveFrom
-                ? new Date(data.effectiveFrom)
-                : null,
-            }),
+        ...dates,
+        ...(reannounce ? { announcedAt: null, remindersSent: 0 } : {}),
       },
     });
     await this.audit.log(
@@ -461,8 +499,14 @@ export class CredentialsService {
         credentialTypeId: { in: belowIds },
         kind: 'CERTIFICATION',
         scope: { in: scopes },
+        OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: nyToday() } }],
       },
-      include: { certificationType: true, evalTemplate: true, class: true },
+      include: {
+        certificationType: true,
+        evalTemplate: true,
+        class: true,
+        classSeries: true,
+      },
     });
     // One line per certification, however many rungs below ask for it — and
     // none at all for one this credential already asks for itself.
@@ -489,12 +533,21 @@ export class CredentialsService {
         // condition of keeping it, not of getting it, so listing it here
         // would ask somebody to prove something that is not yet theirs to
         // maintain.
+        //
+        // Nor one whose season is over: it is no longer asked of anybody.
         requirements: {
-          where: { scope: { in: ['PROMOTION', 'BOTH'] } },
+          where: {
+            scope: { in: ['PROMOTION', 'BOTH'] },
+            OR: [
+              { effectiveUntil: null },
+              { effectiveUntil: { gte: nyToday() } },
+            ],
+          },
           include: {
             certificationType: true,
             evalTemplate: true,
             class: true,
+            classSeries: true,
           },
         },
       },
@@ -557,7 +610,7 @@ export class CredentialsService {
       if (waiver) {
         items.push({
           kind: req.kind,
-          label: `${requirementLabelFor(req)} — waived`,
+          label: `${requirementLabel(req)} — waived`,
           satisfied: true,
           waived: true,
           detail: waiver.note ?? undefined,
@@ -567,58 +620,30 @@ export class CredentialsService {
         tag();
         continue;
       }
-      if (req.kind === 'CERTIFICATION' && req.certificationType) {
-        // A higher certification answers the requirement: a Paramedic meets a
-        // requirement for EMT.
-        const accepted = await this.certGraph.satisfying(
-          req.certificationTypeId!,
-        );
-        const cert = await this.prisma.memberCertification.findFirst({
-          where: {
-            memberId,
-            typeId: { in: accepted },
-            status: 'VERIFIED',
-            OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
-          },
-        });
-        items.push({
-          kind: 'CERTIFICATION',
-          label: `Verified ${req.certificationType.name}`,
-          satisfied: !!cert,
-          requirementId: req.id,
-        });
-      } else if (req.kind === 'EVALUATION_COUNT' && req.evalTemplate) {
-        const count = await this.signedEvaluations(
+      // The same judgement the nightly check makes, dates and all.
+      const standing = await this.evidence.standing(memberId, req, today);
+      const good = standing.until
+        ? `good through ${fromDbDate(standing.until)}`
+        : undefined;
+      if (req.kind === 'EVALUATION_COUNT' && req.evalTemplate) {
+        const count = await this.evidence.signedEvaluations(
           memberId,
           req.evalTemplate.name,
+          req.countsFrom,
         );
         items.push({
           kind: 'EVALUATION_COUNT',
-          label: `${req.count} signed “${req.evalTemplate.name}” evaluations`,
-          satisfied: count >= (req.count ?? 1),
-          detail: `${count}/${req.count}`,
+          label: requirementLabel(req),
+          satisfied: standing.met,
+          detail: `${Math.min(count, req.count ?? count)}/${req.count}`,
           requirementId: req.id,
         });
-      } else if (req.kind === 'CHECKLIST' && req.evalTemplate) {
-        // Every line signed off, by whoever each line calls for.
-        const done = await this.checklists.isComplete(
-          req.evalTemplateId!,
-          memberId,
-        );
+      } else {
         items.push({
-          kind: 'CHECKLIST',
-          label: `Complete the “${req.evalTemplate.name}” checklist`,
-          satisfied: done,
-          requirementId: req.id,
-        });
-      } else if (req.kind === 'CLASS' && req.class) {
-        const attendance = await this.prisma.classAttendance.findUnique({
-          where: { classId_memberId: { classId: req.classId!, memberId } },
-        });
-        items.push({
-          kind: 'CLASS',
-          label: `Complete ${req.class.name}`,
-          satisfied: attendance?.status === 'COMPLETED',
+          kind: req.kind,
+          label: requirementLabel(req),
+          satisfied: standing.met,
+          detail: standing.met ? good : undefined,
           requirementId: req.id,
         });
       }
@@ -656,7 +681,7 @@ export class CredentialsService {
         adjustment.reqKind === 'EVALUATION_COUNT' &&
         adjustment.evalTemplate
       ) {
-        const count = await this.signedEvaluations(
+        const count = await this.evidence.signedEvaluations(
           memberId,
           adjustment.evalTemplate.name,
         );

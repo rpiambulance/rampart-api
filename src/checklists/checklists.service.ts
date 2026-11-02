@@ -656,8 +656,18 @@ export class ChecklistsService {
     );
   }
 
-  /** Whether a member has finished a checklist — for credential requirements. */
-  async isComplete(templateId: number, memberId: number): Promise<boolean> {
+  /**
+   * Whether a member has finished a checklist — for credential requirements.
+   *
+   * With `since`, only lines signed off at or after that instant count: a
+   * requirement that wants this season's run through the checklist is not
+   * met by last season's sign-offs.
+   */
+  async isComplete(
+    templateId: number,
+    memberId: number,
+    since?: Date,
+  ): Promise<boolean> {
     const template = await this.prisma.evalFormTemplate.findUnique({
       where: { id: templateId },
       include: {
@@ -674,7 +684,12 @@ export class ChecklistsService {
     const lineIds = this.lines(template);
     if (!lineIds.length) return false;
     const signed = await this.prisma.checklistSignoff.count({
-      where: { ...LIVE, memberId, itemId: { in: lineIds } },
+      where: {
+        ...LIVE,
+        memberId,
+        itemId: { in: lineIds },
+        ...(since ? { signedAt: { gte: since } } : {}),
+      },
     });
     return signed === lineIds.length;
   }

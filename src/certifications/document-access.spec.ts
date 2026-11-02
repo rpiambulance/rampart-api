@@ -26,6 +26,7 @@ function serviceFor(doc: unknown) {
     storage as never,
     {} as never,
     {} as never,
+    {} as never,
   );
 }
 

@@ -78,6 +78,33 @@ export const MESSAGE_TYPES: MessageType[] = [
     defaults: { email: true, slack: true },
   },
   {
+    key: 'credential.requirement-upcoming',
+    label: 'A requirement is coming',
+    description:
+      'A requirement for a credential the member holds takes effect soon, ' +
+      'and they have not met it yet.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
+    key: 'credential.requirement-renewal',
+    label: 'Due for renewal',
+    description:
+      'Something a credential requirement depends on — a refresher, this ' +
+      'cycle’s training — stops counting soon.',
+    audience: 'member',
+    defaults: { email: true, slack: true },
+  },
+  {
+    key: 'credential.requirement-upcoming.officers',
+    label: 'Requirement starting or cycle ending',
+    description:
+      'A credential requirement takes effect soon, or a renewal cycle ends ' +
+      'soon and the next one needs setting.',
+    audience: 'officers',
+    defaults: { email: true, slack: false },
+  },
+  {
     key: 'checksheet.completed',
     label: 'Checksheet completed',
     description: 'Somebody finished a truck, bag or equipment check.',

@@ -102,6 +102,21 @@ class RequirementDto {
   @IsDateString()
   effectiveFrom?: string;
 
+  /** The last day it applies — the end of a season. */
+  @IsOptional()
+  @IsDateString()
+  effectiveUntil?: string;
+
+  /** Only what was done on or after this date counts. */
+  @IsOptional()
+  @IsDateString()
+  countsFrom?: string;
+
+  /** Nothing counts past this date — the end of a renewal cycle. */
+  @IsOptional()
+  @IsDateString()
+  validThrough?: string;
+
   @IsOptional()
   @IsInt()
   count?: number;
@@ -109,6 +124,11 @@ class RequirementDto {
   @IsOptional()
   @IsInt()
   classId?: number;
+
+  /** Met by any session in the series, rather than one class. */
+  @IsOptional()
+  @IsInt()
+  classSeriesId?: number;
 }
 
 class RequirementScopeDto {
@@ -120,6 +140,21 @@ class RequirementScopeDto {
   @IsOptional()
   @IsDateString()
   effectiveFrom?: string | null;
+
+  /** Null clears it, so the rule never stops applying. */
+  @IsOptional()
+  @IsDateString()
+  effectiveUntil?: string | null;
+
+  /** Null clears it, so anything on record counts. */
+  @IsOptional()
+  @IsDateString()
+  countsFrom?: string | null;
+
+  /** Null clears it, so things count for as long as they themselves last. */
+  @IsOptional()
+  @IsDateString()
+  validThrough?: string | null;
 }
 
 class AppointDto {
@@ -178,7 +213,7 @@ export class CredentialsController {
     return this.credentials.addRequirement(credentialTypeId, body);
   }
 
-  /** Who this requirement would suspend if it were ongoing as of today. */
+  /** Who this requirement would suspend if it were ongoing, from when it applies. */
   @Get('requirements/:requirementId/impact')
   @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
   requirementImpact(

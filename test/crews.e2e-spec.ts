@@ -24,6 +24,8 @@ import { EvalsService } from '../src/evals/evals.service';
 import { PromotionsService } from '../src/promotions/promotions.service';
 import { backfillObservers } from '../src/credentials/observer';
 import { CertificationGraphService } from '../src/certifications/certification-graph.service';
+import { CertificationsService } from '../src/certifications/certifications.service';
+import { RequirementRemindersService } from '../src/certifications/requirement-reminders.service';
 import { NotificationsService } from '../src/notifications/notifications.service';
 import {
   addDays,
@@ -6275,6 +6277,324 @@ describe('Night crews engine (e2e)', () => {
       const entries = timeline.body as Array<{ kind: string; text: string }>;
       const entry = entries.find((e) => e.kind === 'encounter.reopened');
       expect(entry?.text).toMatch(/^Encounter #\d+ reopened$/);
+    });
+  });
+
+  describe('requirements with dates, and ones that must be renewed', () => {
+    let typeId: number;
+    let fluTypeId: number;
+    let keeper: number; // has this season's flu shot
+    let lapsed: number; // has only last season's
+    let certs: CertificationsService;
+    let reminders: RequirementRemindersService;
+    let notifications: NotificationsService;
+    const today = () => nyNow().dateStr;
+    const dayOffset = (days: number) => toDbDate(addDays(today(), days));
+    const iso = (days: number) => `${addDays(today(), days)}T00:00:00.000Z`;
+    const settings = { 'x-test-permissions': 'settings:write' };
+    const trainer = { 'x-test-permissions': 'trainings:manage' };
+
+    const credentialStatus = async (memberId: number) =>
+      (
+        await prisma.memberCredential.findFirstOrThrow({
+          where: { memberId, typeId },
+        })
+      ).status;
+
+    beforeAll(async () => {
+      certs = app.get(CertificationsService);
+      reminders = app.get(RequirementRemindersService);
+      notifications = app.get(NotificationsService);
+      typeId = (
+        await prisma.credentialType.create({
+          data: { key: `RW${stamp}`, name: `Renewing ${stamp}` },
+        })
+      ).id;
+      fluTypeId = (
+        await prisma.certificationType.create({
+          data: { name: `Flu vaccine ${stamp}`, abbreviation: 'FLU' },
+        })
+      ).id;
+      keeper = await createMember('Shotkeeper', []);
+      lapsed = await createMember('Shotlapsed', []);
+      for (const memberId of [keeper, lapsed]) {
+        await prisma.memberCredential.create({
+          data: { memberId, typeId },
+        });
+      }
+      await prisma.memberCertification.createMany({
+        data: [
+          {
+            memberId: keeper,
+            typeId: fluTypeId,
+            status: 'VERIFIED',
+            issuedAt: dayOffset(-5),
+          },
+          {
+            memberId: lapsed,
+            typeId: fluTypeId,
+            status: 'VERIFIED',
+            issuedAt: dayOffset(-400),
+          },
+        ],
+      });
+    });
+
+    afterEach(async () => {
+      jest.restoreAllMocks();
+      await prisma.credentialRequirement.deleteMany({
+        where: { credentialTypeId: typeId },
+      });
+      await prisma.memberCredential.updateMany({
+        where: { typeId },
+        data: { status: 'ACTIVE' },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.memberCredential.deleteMany({ where: { typeId } });
+      await prisma.credentialType.delete({ where: { id: typeId } });
+      await prisma.memberCertification.deleteMany({
+        where: { typeId: fluTypeId },
+      });
+      await prisma.certificationType.delete({ where: { id: fluTypeId } });
+      await prisma.trainingClass.deleteMany({
+        where: { series: { name: { endsWith: String(stamp) } } },
+      });
+      await prisma.classSeries.deleteMany({
+        where: { name: { endsWith: String(stamp) } },
+      });
+    });
+
+    const fluSeason = (over: Record<string, unknown> = {}) =>
+      request(app.getHttpServer())
+        .post(`/v1/credentials/types/${typeId}/requirements`)
+        .set({ ...as(keeper), ...settings })
+        .send({
+          kind: 'CERTIFICATION',
+          certificationTypeId: fluTypeId,
+          scope: 'ONGOING',
+          effectiveFrom: iso(10),
+          effectiveUntil: iso(100),
+          countsFrom: iso(-30),
+          ...over,
+        });
+
+    it('refuses a season that ends before it starts', async () => {
+      await fluSeason({ effectiveUntil: iso(5) }).expect(400);
+    });
+
+    it('reminds whoever has not met it, twice, and only twice', async () => {
+      const id = ((await fluSeason().expect(201)).body as { id: number }).id;
+      const notify = jest.spyOn(notifications, 'notify');
+      const officers = jest
+        .spyOn(notifications, 'notifyPermissionHolders')
+        .mockResolvedValue();
+      const sentTo = () =>
+        notify.mock.calls
+          .filter(([memberId]) => [keeper, lapsed].includes(memberId))
+          .map(([memberId, notice]) => [memberId, notice.type]);
+
+      // Ten days out: inside the fortnight, so the first one goes.
+      await reminders.remindUpcoming(dayOffset(0));
+      expect(sentTo()).toEqual([[lapsed, 'credential.requirement-upcoming']]);
+      expect(officers).toHaveBeenCalledTimes(1);
+      let req = await prisma.credentialRequirement.findUniqueOrThrow({
+        where: { id },
+      });
+      expect(req.remindersSent).toBe(1);
+      expect(req.announcedAt).not.toBeNull();
+
+      // A rerun the same day sends nothing more.
+      await reminders.remindUpcoming(dayOffset(0));
+      expect(sentTo()).toHaveLength(1);
+
+      // Two days out, the second.
+      await reminders.remindUpcoming(dayOffset(8));
+      expect(sentTo()).toHaveLength(2);
+      req = await prisma.credentialRequirement.findUniqueOrThrow({
+        where: { id },
+      });
+      expect(req.remindersSent).toBe(2);
+
+      // Moving the start is a new announcement.
+      await request(app.getHttpServer())
+        .patch(`/v1/credentials/requirements/${id}`)
+        .set({ ...as(keeper), ...settings })
+        .send({ effectiveFrom: iso(20) })
+        .expect(200);
+      req = await prisma.credentialRequirement.findUniqueOrThrow({
+        where: { id },
+      });
+      expect([req.remindersSent, req.announcedAt]).toEqual([0, null]);
+    });
+
+    it('previews who it would catch on the day it starts', async () => {
+      const id = ((await fluSeason().expect(201)).body as { id: number }).id;
+      const res = await request(app.getHttpServer())
+        .get(`/v1/credentials/requirements/${id}/impact`)
+        .set({ ...as(keeper), ...settings })
+        .expect(200);
+      const impact = res.body as { asOf: string; members: unknown[] };
+      expect(impact.asOf).toBe(addDays(today(), 10));
+      expect(impact.members).toEqual([
+        expect.objectContaining({
+          id: lapsed,
+          reason: `nothing dated ${addDays(today(), -30)} or later`,
+        }),
+      ]);
+    });
+
+    it('suspends only while in season, and gives it back after', async () => {
+      await fluSeason({ effectiveFrom: iso(-10) }).expect(201);
+      await certs.recomputeSuspensions(lapsed);
+      await certs.recomputeSuspensions(keeper);
+      expect(await credentialStatus(lapsed)).toBe('SUSPENDED');
+      expect(await credentialStatus(keeper)).toBe('ACTIVE');
+
+      await prisma.credentialRequirement.updateMany({
+        where: { credentialTypeId: typeId },
+        data: { effectiveUntil: dayOffset(-1) },
+      });
+      await certs.recomputeSuspensions(lapsed);
+      expect(await credentialStatus(lapsed)).toBe('ACTIVE');
+    });
+
+    describe('a refresher class series', () => {
+      let seriesId: number;
+      let requirementId: number;
+
+      const session = async (daysAgo: number) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .post('/v1/trainings/classes')
+              .set({ ...as(keeper), ...trainer })
+              .send({
+                name: `Safety refresher ${stamp}`,
+                // Midday in New York, so the session's day is the day meant.
+                sessionAt: `${addDays(today(), -daysAgo)}T16:00:00.000Z`,
+                seriesId,
+              })
+              .expect(201)
+          ).body as { id: number }
+        ).id;
+      const complete = (classId: number, memberId: number) =>
+        request(app.getHttpServer())
+          .put(`/v1/trainings/classes/${classId}/attendance/${memberId}`)
+          .set({ ...as(keeper), ...trainer })
+          .send({ status: 'COMPLETED' })
+          .expect(200);
+
+      beforeEach(async () => {
+        seriesId ??= (
+          (
+            await request(app.getHttpServer())
+              .post('/v1/trainings/series')
+              .set({ ...as(keeper), ...trainer })
+              .send({ name: `Safety refresher ${stamp}`, validityMonths: 12 })
+              .expect(201)
+          ).body as { id: number }
+        ).id;
+        requirementId = (
+          (
+            await request(app.getHttpServer())
+              .post(`/v1/credentials/types/${typeId}/requirements`)
+              .set({ ...as(keeper), ...settings })
+              .send({ kind: 'CLASS', classSeriesId: seriesId, scope: 'BOTH' })
+              .expect(201)
+          ).body as { id: number }
+        ).id;
+      });
+
+      it('does not take a class and a series at once', async () => {
+        await request(app.getHttpServer())
+          .post(`/v1/credentials/types/${typeId}/requirements`)
+          .set({ ...as(keeper), ...settings })
+          .send({ kind: 'CLASS', classSeriesId: seriesId, classId: 1 })
+          .expect(400);
+      });
+
+      it('counts a session for the series validity, then lapses', async () => {
+        const lastYear = await session(400);
+        await complete(lastYear, keeper);
+        const attendance = await prisma.classAttendance.findUniqueOrThrow({
+          where: { classId_memberId: { classId: lastYear, memberId: keeper } },
+        });
+        expect(attendance.completedAt).not.toBeNull();
+
+        await certs.recomputeSuspensions(keeper);
+        expect(await credentialStatus(keeper)).toBe('SUSPENDED');
+
+        // This year's session renews it.
+        await complete(await session(30), keeper);
+        await certs.recomputeSuspensions(keeper);
+        expect(await credentialStatus(keeper)).toBe('ACTIVE');
+
+        const checklist = await request(app.getHttpServer())
+          .get(`/v1/credentials/my-checklist/${typeId}`)
+          .set(as(keeper))
+          .expect(200);
+        const items = checklist.body as Array<{
+          label: string;
+          satisfied: boolean;
+          detail?: string;
+        }>;
+        expect(items).toHaveLength(1);
+        expect(items[0].label).toBe(
+          `Complete a Safety refresher ${stamp} session`,
+        );
+        expect(items[0].satisfied).toBe(true);
+        expect(items[0].detail).toMatch(/^good through \d{4}-\d{2}-\d{2}$/);
+      });
+
+      it('reminds the member before their session stops counting', async () => {
+        const notify = jest.spyOn(notifications, 'notify');
+        const sessionDay = addDays(today(), -60);
+        const classId = await session(60);
+        await complete(classId, lapsed);
+        // Twelve months on from the session, less thirty days.
+        const lapse = new Date(`${sessionDay}T00:00:00Z`);
+        lapse.setUTCMonth(lapse.getUTCMonth() + 12);
+        const reminderDay = toDbDate(
+          addDays(lapse.toISOString().slice(0, 10), -30),
+        );
+        await reminders.remindRenewals(reminderDay);
+        const mine = notify.mock.calls.filter(([id]) => id === lapsed);
+        expect(mine.map(([, notice]) => notice.type)).toEqual([
+          'credential.requirement-renewal',
+        ]);
+      });
+
+      it('warns officers and members before a shared cycle ends', async () => {
+        await complete(await session(10), keeper);
+        await prisma.credentialRequirement.update({
+          where: { id: requirementId },
+          data: { validThrough: dayOffset(7) },
+        });
+        const notify = jest.spyOn(notifications, 'notify');
+        const officers = jest
+          .spyOn(notifications, 'notifyPermissionHolders')
+          .mockResolvedValue();
+
+        await reminders.remindCutoffs(dayOffset(0));
+        expect(officers).toHaveBeenCalledTimes(1);
+        expect(officers.mock.calls[0][0]).toBe('credentials:grant');
+        expect(officers.mock.calls[0][1].subject).toMatch(/this cycle ends/);
+
+        await reminders.remindRenewals(dayOffset(0));
+        const mine = notify.mock.calls.filter(([id]) => id === keeper);
+        expect(mine).toHaveLength(1);
+        expect(mine[0][1].body).toMatch(/when this cycle ends for everybody/);
+
+        // And once it has passed, nothing done before counts.
+        await prisma.credentialRequirement.update({
+          where: { id: requirementId },
+          data: { validThrough: dayOffset(-1) },
+        });
+        await certs.recomputeSuspensions(keeper);
+        expect(await credentialStatus(keeper)).toBe('SUSPENDED');
+      });
     });
   });
 });
