@@ -12,6 +12,12 @@ export const PERMISSIONS = {
   CERTS_VERIFY: 'certs:verify',
   CREDENTIALS_GRANT: 'credentials:grant',
   CREDENTIALS_APPOINT: 'credentials:appoint', // DS — Captain
+  /**
+   * When credential requirements apply and what renews them: seasons, the
+   * date evidence must be from, renewal cut-offs, class series. Set in
+   * Central, apart from what a requirement is, which is settings:write.
+   */
+  CREDENTIALS_REQUIREMENT_DATES: 'credentials:requirement-dates',
   EVALS_WRITE: 'evals:write',
   EVALS_MANAGE_FORMS: 'evals:manage-forms',
   EVALS_READ_ALL: 'evals:read-all',

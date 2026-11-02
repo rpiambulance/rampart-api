@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -97,26 +98,6 @@ class RequirementDto {
   @IsIn(['PROMOTION', 'ONGOING', 'BOTH'])
   scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
 
-  /** An ongoing requirement does not suspend anybody until this date. */
-  @IsOptional()
-  @IsDateString()
-  effectiveFrom?: string;
-
-  /** The last day it applies — the end of a season. */
-  @IsOptional()
-  @IsDateString()
-  effectiveUntil?: string;
-
-  /** Only what was done on or after this date counts. */
-  @IsOptional()
-  @IsDateString()
-  countsFrom?: string;
-
-  /** Nothing counts past this date — the end of a renewal cycle. */
-  @IsOptional()
-  @IsDateString()
-  validThrough?: string;
-
   @IsOptional()
   @IsInt()
   count?: number;
@@ -124,34 +105,60 @@ class RequirementDto {
   @IsOptional()
   @IsInt()
   classId?: number;
+}
 
+/**
+ * A requirement that applies for a season or has to be renewed, made in
+ * Central. What any requirement takes, plus the dates — at least one of
+ * them, or a class series, or it is an ordinary requirement and belongs
+ * with the others.
+ */
+class DatedRequirementDto extends RequirementDto {
   /** Met by any session in the series, rather than one class. */
   @IsOptional()
   @IsInt()
   classSeriesId?: number;
+
+  @IsOptional()
+  @IsDateString()
+  effectiveFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  effectiveUntil?: string;
+
+  @IsOptional()
+  @IsDateString()
+  countsFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  validThrough?: string;
 }
 
 class RequirementScopeDto {
-  @IsOptional()
   @IsIn(['PROMOTION', 'ONGOING', 'BOTH'])
-  scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
+  scope!: 'PROMOTION' | 'ONGOING' | 'BOTH';
+}
 
-  /** Null clears it, so the rule applies to every lapse regardless of date. */
+/** Every date is optional; null clears one. */
+class RequirementDatesDto {
+  /** Suspends nobody for anything before this date. */
   @IsOptional()
   @IsDateString()
   effectiveFrom?: string | null;
 
-  /** Null clears it, so the rule never stops applying. */
+  /** The last day it applies — the end of a season. */
   @IsOptional()
   @IsDateString()
   effectiveUntil?: string | null;
 
-  /** Null clears it, so anything on record counts. */
+  /** Only what was done on or after this date counts. */
   @IsOptional()
   @IsDateString()
   countsFrom?: string | null;
 
-  /** Null clears it, so things count for as long as they themselves last. */
+  /** Nothing counts past this date — the end of a renewal cycle. */
   @IsOptional()
   @IsDateString()
   validThrough?: string | null;
@@ -213,13 +220,60 @@ export class CredentialsController {
     return this.credentials.addRequirement(credentialTypeId, body);
   }
 
-  /** Who this requirement would suspend if it were ongoing, from when it applies. */
+  /**
+   * Who this requirement would suspend if it were ongoing, from when it
+   * applies. Asked by whoever is about to change either half of it: what it
+   * is, in Admin, or when it applies, in Central.
+   */
   @Get('requirements/:requirementId/impact')
-  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
   requirementImpact(
+    @CurrentAuth() auth: AuthContext,
     @Param('requirementId', ParseIntPipe) requirementId: number,
   ) {
+    if (
+      !auth.permissions.has(PERMISSIONS.SETTINGS_WRITE) &&
+      !auth.permissions.has(PERMISSIONS.CREDENTIALS_REQUIREMENT_DATES)
+    ) {
+      throw new ForbiddenException(
+        `Requires ${PERMISSIONS.SETTINGS_WRITE} or ${PERMISSIONS.CREDENTIALS_REQUIREMENT_DATES}`,
+      );
+    }
     return this.credentials.requirementImpact(requirementId);
+  }
+
+  /** A seasonal or renewing requirement, made in Central. */
+  @Post('types/:id/dated-requirements')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_REQUIREMENT_DATES)
+  addDatedRequirement(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseIntPipe) credentialTypeId: number,
+    @Body() body: DatedRequirementDto,
+  ) {
+    return this.credentials.addDatedRequirement(auth, credentialTypeId, body);
+  }
+
+  /** When a requirement applies, and what counts — set in Central. */
+  @Patch('requirements/:requirementId/dates')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_REQUIREMENT_DATES)
+  setRequirementDates(
+    @CurrentAuth() auth: AuthContext,
+    @Param('requirementId', ParseIntPipe) requirementId: number,
+    @Body() body: RequirementDatesDto,
+  ) {
+    return this.credentials.setRequirementDates(auth, requirementId, body);
+  }
+
+  /**
+   * Take away a seasonal or renewing requirement from Central. Only one of
+   * those: an ordinary requirement is Admin's to remove.
+   */
+  @Delete('requirements/:requirementId/dated')
+  @RequirePermissions(PERMISSIONS.CREDENTIALS_REQUIREMENT_DATES)
+  removeDatedRequirement(
+    @CurrentAuth() auth: AuthContext,
+    @Param('requirementId', ParseIntPipe) requirementId: number,
+  ) {
+    return this.credentials.removeDatedRequirement(auth, requirementId);
   }
 
   /** Excuse everybody it would currently catch, so it only bites going forward. */
@@ -239,7 +293,11 @@ export class CredentialsController {
     @Param('requirementId', ParseIntPipe) requirementId: number,
     @Body() body: RequirementScopeDto,
   ) {
-    return this.credentials.updateRequirement(auth, requirementId, body);
+    return this.credentials.setRequirementScope(
+      auth,
+      requirementId,
+      body.scope,
+    );
   }
 
   @Delete('requirements/:requirementId')

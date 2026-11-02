@@ -182,6 +182,7 @@ const ALL = [
   'certs:verify',
   'credentials:grant',
   'credentials:appoint',
+  'credentials:requirement-dates',
   'evals:write',
   'evals:manage-forms',
   'evals:read-all',

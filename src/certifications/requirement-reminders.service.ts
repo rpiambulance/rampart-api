@@ -224,7 +224,7 @@ export class RequirementRemindersService {
     for (const req of requirements) {
       const until = longDate(req.validThrough!);
       await this.notifications.notifyPermissionHolders(
-        PERMISSIONS.CREDENTIALS_GRANT,
+        PERMISSIONS.CREDENTIALS_REQUIREMENT_DATES,
         {
           type: 'credential.requirement-upcoming.officers',
           subject: `${requirementLabel(req)}: this cycle ends ${until}`,
@@ -236,7 +236,7 @@ export class RequirementRemindersService {
             'on the requirement before then.',
           task: {
             actionLabel: 'Set the next cycle',
-            actionUrl: '/admin/settings/credentials',
+            actionUrl: '/admin/credentials/requirements',
           },
         },
       );

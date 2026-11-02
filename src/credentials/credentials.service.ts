@@ -31,6 +31,34 @@ const REQUIREMENT_DATES = [
 ] as const;
 type RequirementDate = (typeof REQUIREMENT_DATES)[number];
 
+/** What any requirement is: the thing asked for, and when it is checked. */
+interface RequirementInput {
+  kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
+  alternativeGroup?: string;
+  scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
+  certificationTypeId?: number;
+  evalTemplateId?: number;
+  count?: number;
+  classId?: number;
+}
+
+/**
+ * Seasonal or renewing: it has a date on it, or is met by a class series.
+ * These are Central's to make and remove; the rest are Admin's.
+ */
+function isDated(req: {
+  effectiveFrom: Date | null;
+  effectiveUntil: Date | null;
+  countsFrom: Date | null;
+  validThrough: Date | null;
+  classSeriesId: number | null;
+}): boolean {
+  return (
+    req.classSeriesId !== null ||
+    REQUIREMENT_DATES.some((field) => req[field] !== null)
+  );
+}
+
 /** The dates given, as dates; a blank or null one clears it. */
 function requirementDates(
   data: Partial<Record<RequirementDate, string | null>>,
@@ -191,22 +219,55 @@ export class CredentialsService {
     });
   }
 
-  async addRequirement(
+  /**
+   * A requirement, as Admin sets one up: what it asks for and whether it is
+   * checked at promotion, ongoing, or both. When it applies and what renews
+   * it are Central's — see addDatedRequirement.
+   */
+  addRequirement(
     credentialTypeId: number,
-    data: {
-      kind: 'CERTIFICATION' | 'EVALUATION_COUNT' | 'CLASS' | 'CHECKLIST';
-      alternativeGroup?: string;
-      scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
-      effectiveFrom?: string;
-      effectiveUntil?: string;
-      countsFrom?: string;
-      validThrough?: string;
-      certificationTypeId?: number;
-      evalTemplateId?: number;
-      count?: number;
-      classId?: number;
-      classSeriesId?: number;
-    },
+    data: RequirementInput & { classSeriesId?: undefined },
+  ) {
+    return this.createRequirement(credentialTypeId, data);
+  }
+
+  /**
+   * A seasonal or renewing requirement, made in Central: one with a date on
+   * it, or met by a class series. Without either it is an ordinary
+   * requirement, and those are set up in Admin with the rest.
+   */
+  async addDatedRequirement(
+    auth: AuthContext,
+    credentialTypeId: number,
+    data: RequirementInput &
+      Partial<Record<RequirementDate, string>> & { classSeriesId?: number },
+  ) {
+    if (
+      !data.classSeriesId &&
+      !REQUIREMENT_DATES.some((field) => data[field])
+    ) {
+      throw new BadRequestException(
+        'Give it a date or a class series — a requirement with neither is set up in Admin',
+      );
+    }
+    const created = await this.createRequirement(credentialTypeId, {
+      ...data,
+      scope: data.scope ?? 'ONGOING',
+    });
+    await this.audit.log(
+      auth,
+      'credentials.requirement.create-dated',
+      'CredentialRequirement',
+      created.id,
+      data,
+    );
+    return created;
+  }
+
+  private createRequirement(
+    credentialTypeId: number,
+    data: RequirementInput &
+      Partial<Record<RequirementDate, string>> & { classSeriesId?: number },
   ) {
     if (data.kind === 'CERTIFICATION' && !data.certificationTypeId) {
       throw new BadRequestException('certificationTypeId required');
@@ -250,6 +311,29 @@ export class CredentialsService {
         ...dates,
       },
     });
+  }
+
+  /** Remove a seasonal or renewing requirement — not an ordinary one. */
+  async removeDatedRequirement(auth: AuthContext, requirementId: number) {
+    const req = await this.prisma.credentialRequirement.findUnique({
+      where: { id: requirementId },
+    });
+    if (!req) throw new NotFoundException('No such requirement');
+    if (!isDated(req)) {
+      throw new ForbiddenException(
+        'This requirement has no dates or class series; it is removed in Admin',
+      );
+    }
+    await this.prisma.credentialRequirement.delete({
+      where: { id: requirementId },
+    });
+    await this.audit.log(
+      auth,
+      'credentials.requirement.remove-dated',
+      'CredentialRequirement',
+      requirementId,
+    );
+    return { ok: true };
   }
 
   async removeRequirement(requirementId: number) {
@@ -428,20 +512,38 @@ export class CredentialsService {
   }
 
   /**
-   * Change when a requirement applies, without losing the requirement itself
-   * — the alternative being delete-and-re-add, which drops any waivers hung
-   * off it.
+   * Whether a requirement is checked at promotion, ongoing, or both — set in
+   * Admin. Changed in place rather than by delete-and-re-add, which would drop
+   * any waivers hung off it.
    */
-  async updateRequirement(
+  async setRequirementScope(
     auth: AuthContext,
     requirementId: number,
-    data: {
-      scope?: 'PROMOTION' | 'ONGOING' | 'BOTH';
-      effectiveFrom?: string | null;
-      effectiveUntil?: string | null;
-      countsFrom?: string | null;
-      validThrough?: string | null;
-    },
+    scope: 'PROMOTION' | 'ONGOING' | 'BOTH',
+  ) {
+    const updated = await this.prisma.credentialRequirement
+      .update({ where: { id: requirementId }, data: { scope } })
+      .catch(() => {
+        throw new NotFoundException('No such requirement');
+      });
+    await this.audit.log(
+      auth,
+      'credentials.requirement.update',
+      'CredentialRequirement',
+      requirementId,
+      { scope },
+    );
+    return updated;
+  }
+
+  /**
+   * When a requirement applies and what counts toward it — set in Central.
+   * Only the dates given change; null clears one.
+   */
+  async setRequirementDates(
+    auth: AuthContext,
+    requirementId: number,
+    data: Partial<Record<RequirementDate, string | null>>,
   ) {
     const req = await this.prisma.credentialRequirement.findUnique({
       where: { id: requirementId },
@@ -465,14 +567,13 @@ export class CredentialsService {
     const updated = await this.prisma.credentialRequirement.update({
       where: { id: requirementId },
       data: {
-        ...(data.scope ? { scope: data.scope } : {}),
         ...dates,
         ...(reannounce ? { announcedAt: null, remindersSent: 0 } : {}),
       },
     });
     await this.audit.log(
       auth,
-      'credentials.requirement.update',
+      'credentials.requirement.dates',
       'CredentialRequirement',
       requirementId,
       data,

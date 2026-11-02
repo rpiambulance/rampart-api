@@ -6292,6 +6292,7 @@ describe('Night crews engine (e2e)', () => {
     const dayOffset = (days: number) => toDbDate(addDays(today(), days));
     const iso = (days: number) => `${addDays(today(), days)}T00:00:00.000Z`;
     const settings = { 'x-test-permissions': 'settings:write' };
+    const dating = { 'x-test-permissions': 'credentials:requirement-dates' };
     const trainer = { 'x-test-permissions': 'trainings:manage' };
 
     const credentialStatus = async (memberId: number) =>
@@ -6368,8 +6369,8 @@ describe('Night crews engine (e2e)', () => {
 
     const fluSeason = (over: Record<string, unknown> = {}) =>
       request(app.getHttpServer())
-        .post(`/v1/credentials/types/${typeId}/requirements`)
-        .set({ ...as(keeper), ...settings })
+        .post(`/v1/credentials/types/${typeId}/dated-requirements`)
+        .set({ ...as(keeper), ...dating })
         .send({
           kind: 'CERTIFICATION',
           certificationTypeId: fluTypeId,
@@ -6382,6 +6383,48 @@ describe('Night crews engine (e2e)', () => {
 
     it('refuses a season that ends before it starts', async () => {
       await fluSeason({ effectiveUntil: iso(5) }).expect(400);
+    });
+
+    // What a requirement is, is Admin's; when it applies, Central's.
+    it('keeps dates to the permission that sets them', async () => {
+      const id = ((await fluSeason().expect(201)).body as { id: number }).id;
+      await request(app.getHttpServer())
+        .patch(`/v1/credentials/requirements/${id}/dates`)
+        .set({ ...as(keeper), ...settings })
+        .send({ effectiveUntil: iso(50) })
+        .expect(403);
+      // Admin's own edit takes the scope and nothing else.
+      await request(app.getHttpServer())
+        .patch(`/v1/credentials/requirements/${id}`)
+        .set({ ...as(keeper), ...settings })
+        .send({ scope: 'BOTH', effectiveUntil: iso(50) })
+        .expect(200);
+      const req = await prisma.credentialRequirement.findUniqueOrThrow({
+        where: { id },
+      });
+      expect(req.scope).toBe('BOTH');
+      expect(req.effectiveUntil).toEqual(dayOffset(100));
+    });
+
+    it('sends an undated requirement back to Admin', async () => {
+      await request(app.getHttpServer())
+        .post(`/v1/credentials/types/${typeId}/dated-requirements`)
+        .set({ ...as(keeper), ...dating })
+        .send({ kind: 'CERTIFICATION', certificationTypeId: fluTypeId })
+        .expect(400);
+      const ordinary = (
+        (
+          await request(app.getHttpServer())
+            .post(`/v1/credentials/types/${typeId}/requirements`)
+            .set({ ...as(keeper), ...settings })
+            .send({ kind: 'CERTIFICATION', certificationTypeId: fluTypeId })
+            .expect(201)
+        ).body as { id: number }
+      ).id;
+      await request(app.getHttpServer())
+        .delete(`/v1/credentials/requirements/${ordinary}/dated`)
+        .set({ ...as(keeper), ...dating })
+        .expect(403);
     });
 
     it('reminds whoever has not met it, twice, and only twice', async () => {
@@ -6419,8 +6462,8 @@ describe('Night crews engine (e2e)', () => {
 
       // Moving the start is a new announcement.
       await request(app.getHttpServer())
-        .patch(`/v1/credentials/requirements/${id}`)
-        .set({ ...as(keeper), ...settings })
+        .patch(`/v1/credentials/requirements/${id}/dates`)
+        .set({ ...as(keeper), ...dating })
         .send({ effectiveFrom: iso(20) })
         .expect(200);
       req = await prisma.credentialRequirement.findUniqueOrThrow({
@@ -6499,8 +6542,8 @@ describe('Night crews engine (e2e)', () => {
         requirementId = (
           (
             await request(app.getHttpServer())
-              .post(`/v1/credentials/types/${typeId}/requirements`)
-              .set({ ...as(keeper), ...settings })
+              .post(`/v1/credentials/types/${typeId}/dated-requirements`)
+              .set({ ...as(keeper), ...dating })
               .send({ kind: 'CLASS', classSeriesId: seriesId, scope: 'BOTH' })
               .expect(201)
           ).body as { id: number }
@@ -6509,8 +6552,8 @@ describe('Night crews engine (e2e)', () => {
 
       it('does not take a class and a series at once', async () => {
         await request(app.getHttpServer())
-          .post(`/v1/credentials/types/${typeId}/requirements`)
-          .set({ ...as(keeper), ...settings })
+          .post(`/v1/credentials/types/${typeId}/dated-requirements`)
+          .set({ ...as(keeper), ...dating })
           .send({ kind: 'CLASS', classSeriesId: seriesId, classId: 1 })
           .expect(400);
       });
@@ -6579,7 +6622,7 @@ describe('Night crews engine (e2e)', () => {
 
         await reminders.remindCutoffs(dayOffset(0));
         expect(officers).toHaveBeenCalledTimes(1);
-        expect(officers.mock.calls[0][0]).toBe('credentials:grant');
+        expect(officers.mock.calls[0][0]).toBe('credentials:requirement-dates');
         expect(officers.mock.calls[0][1].subject).toMatch(/this cycle ends/);
 
         await reminders.remindRenewals(dayOffset(0));
