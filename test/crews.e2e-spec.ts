@@ -6503,6 +6503,35 @@ describe('Night crews engine (e2e)', () => {
       expect(await credentialStatus(lapsed)).toBe('ACTIVE');
     });
 
+    it('judges a member straight away when they come back', async () => {
+      const id = (
+        (await fluSeason({ effectiveFrom: iso(-10) }).expect(201)).body as {
+          id: number;
+        }
+      ).id;
+      await prisma.member.update({
+        where: { id: lapsed },
+        data: { active: false },
+      });
+
+      // Away: not suspended, and not counted as somebody it would catch.
+      await certs.recomputeSuspensions(lapsed);
+      expect(await credentialStatus(lapsed)).toBe('ACTIVE');
+      const impact = await request(app.getHttpServer())
+        .get(`/v1/credentials/requirements/${id}/impact`)
+        .set({ ...as(keeper), ...settings })
+        .expect(200);
+      expect((impact.body as { members: unknown[] }).members).toEqual([]);
+
+      // Back: owes this season's shot, so suspended now, not next morning.
+      await request(app.getHttpServer())
+        .patch(`/v1/members/${lapsed}`)
+        .set({ ...as(keeper), 'x-test-permissions': 'members:write' })
+        .send({ active: true })
+        .expect(200);
+      expect(await credentialStatus(lapsed)).toBe('SUSPENDED');
+    });
+
     describe('a refresher class series', () => {
       let seriesId: number;
       let requirementId: number;

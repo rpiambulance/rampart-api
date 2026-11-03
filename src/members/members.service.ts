@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import { CertificationsService } from '../certifications/certifications.service';
 import type { AuthContext } from '../auth/auth-context';
 import { KeycloakAdminService } from '../integrations/keycloak-admin.service';
 import { fromDbDate, nyDayStart, nyNow, toDbDate } from '../common/dates';
@@ -21,6 +22,7 @@ export class MembersService {
     private readonly audit: AuditService,
     private readonly keycloak: KeycloakAdminService,
     private readonly webhooks: WebhooksService,
+    private readonly certifications: CertificationsService,
   ) {}
 
   list(includeInactive = false) {
@@ -340,6 +342,13 @@ export class MembersService {
     }>,
     auth?: AuthContext,
   ) {
+    const before =
+      data.active === true
+        ? await this.prisma.member.findUnique({
+            where: { id },
+            select: { active: true },
+          })
+        : null;
     const member = await this.prisma.member.update({
       where: { id },
       data: {
@@ -359,6 +368,13 @@ export class MembersService {
     });
     if (auth) {
       await this.audit.log(auth, 'members.update', 'Member', id, data);
+    }
+    // Back from inactive: judged now against whatever is required today. The
+    // nightly check skips inactive members, so without this somebody could
+    // come back owing a requirement that took effect while they were away
+    // and ride on the credential until morning.
+    if (before && !before.active && member.active) {
+      await this.certifications.recomputeSuspensions(id);
     }
     return member;
   }

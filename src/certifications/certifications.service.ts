@@ -1071,10 +1071,16 @@ export class CertificationsService {
     // A certification is good through the whole of its expiry date, so this
     // compares against today's calendar day, not the current instant.
     const now = nyToday();
+    // Active members only. An inactive member is not riding, so suspending
+    // them changes nothing, and listing them on the review page or counting
+    // them in a warning is noise about people who are not there. Their
+    // credentials are left exactly as they are, and judged afresh the moment
+    // they are made active again (see MembersService.update).
     const credentials = await this.prisma.memberCredential.findMany({
       where: {
         ...(memberId ? { memberId } : {}),
         status: { in: ['ACTIVE', 'SUSPENDED'] },
+        member: { active: true },
       },
       include: {
         type: {

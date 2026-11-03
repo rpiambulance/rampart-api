@@ -44,6 +44,8 @@ function serviceWith(options: {
     holdsCert: boolean | number[];
     /** When what they hold was issued, for requirements that ask. */
     issuedAt?: Date;
+    /** Whether the member is active. Defaults to yes. */
+    memberActive?: boolean;
   }>;
   waivers?: Array<{ memberId: number; requirementId: number }>;
 }) {
@@ -66,19 +68,27 @@ function serviceWith(options: {
       delete: () => Promise.resolve({}),
     },
     memberCredential: {
-      findMany: () => {
+      findMany: ({ where }: { where: { member?: { active?: boolean } } }) => {
         // Stands in for the nested `where` Prisma would apply to requirements.
         const now = nyToday();
         return Promise.resolve(
-          options.holders.map((holder) => ({
-            ...holder,
-            typeId: 1,
-            member: { firstName: 'Test', lastName: 'Member' },
-            type: {
-              name: 'Crew Chief',
-              requirements: options.requirements.filter((r) => matches(r, now)),
-            },
-          })),
+          options.holders
+            .filter(
+              (holder) =>
+                where.member?.active === undefined ||
+                (holder.memberActive ?? true) === where.member.active,
+            )
+            .map((holder) => ({
+              ...holder,
+              typeId: 1,
+              member: { firstName: 'Test', lastName: 'Member' },
+              type: {
+                name: 'Crew Chief',
+                requirements: options.requirements.filter((r) =>
+                  matches(r, now),
+                ),
+              },
+            })),
         );
       },
       update: ({
@@ -412,5 +422,74 @@ describe('requirements with dates', () => {
     await service.recomputeSuspensions();
     expect(updates).toEqual([]);
     expect(notified.map((n) => n.type)).toEqual(['credential.mass-suspension']);
+  });
+});
+
+describe('who is judged', () => {
+  // An inactive member is not riding. Suspending them changes nothing, and
+  // listing them as pending is noise about somebody who is not there.
+  it('leaves inactive members out of the sweep and its count', async () => {
+    const { service, updates } = serviceWith({
+      requirements: [ongoing],
+      holders: [
+        { id: 1, memberId: 7, status: 'ACTIVE', holdsCert: false },
+        {
+          id: 2,
+          memberId: 8,
+          status: 'ACTIVE',
+          holdsCert: false,
+          memberActive: false,
+        },
+      ],
+    });
+    expect(
+      (await service.previewSuspensionsByMember()).map((m) => m.memberId),
+    ).toEqual([7]);
+    await service.recomputeSuspensions();
+    expect(updates).toEqual([{ id: 1, status: 'SUSPENDED' }]);
+  });
+
+  it('does not count inactive members toward the crowd guard', async () => {
+    const holders = Array.from({ length: 12 }, (_, i) => ({
+      id: i + 1,
+      memberId: i + 1,
+      status: 'ACTIVE',
+      holdsCert: false,
+      // Three active, nine who have left.
+      memberActive: i < 3,
+    }));
+    const { service, updates, notified } = serviceWith({
+      requirements: [ongoing],
+      holders,
+    });
+    await service.recomputeSuspensions();
+    expect(updates).toHaveLength(3);
+    expect(notified).toEqual([]);
+  });
+
+  // The season ending is the one thing that should never wait on an
+  // officer, even on a night the guard is holding something else back.
+  it('gives back what an ended season took, while holding a crowd', async () => {
+    const yesterday = nyToday();
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const { service, updates } = serviceWith({
+      requirements: [
+        { ...ongoing, effectiveUntil: yesterday },
+        // Switched on today, unannounced, and failed by everybody else.
+        { ...ongoing, id: 11, certificationTypeId: 6 },
+      ],
+      holders: [
+        // Suspended for the season; holds what the new rule wants.
+        { id: 99, memberId: 99, status: 'SUSPENDED', holdsCert: [6] },
+        ...Array.from({ length: 12 }, (_, i) => ({
+          id: i + 1,
+          memberId: i + 1,
+          status: 'ACTIVE',
+          holdsCert: false,
+        })),
+      ],
+    });
+    await service.recomputeSuspensions();
+    expect(updates).toEqual([{ id: 99, status: 'ACTIVE' }]);
   });
 });

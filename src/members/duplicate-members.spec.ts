@@ -36,6 +36,7 @@ function serviceWith(existing: {
     { log: () => Promise.resolve() } as never,
     { provisionUser: () => Promise.resolve('kc-1') } as never,
     { emit: () => Promise.resolve() } as never,
+    {} as never,
   );
   return { service, created };
 }

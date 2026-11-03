@@ -393,10 +393,13 @@ export class CredentialsService {
         reaching.push(type.id);
       }
     }
+    // Active members, as the nightly check judges: an inactive one is judged
+    // when they come back, not before.
     const holders = await this.prisma.memberCredential.findMany({
       where: {
         typeId: { in: reaching },
         status: { in: ['ACTIVE', 'SUSPENDED'] },
+        member: { active: true },
       },
       distinct: ['memberId'],
       include: {
